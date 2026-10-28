@@ -1,0 +1,2 @@
+# commit-msg 钩子：用 commitlint 校验提交信息是否符合 conventional 规范
+pnpm exec commitlint --edit "$1"

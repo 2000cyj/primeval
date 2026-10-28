@@ -1,0 +1,16 @@
+{
+  // packages 库包共享的严格管控配置，继承仓库根基础配置
+  // 各库包通过 "extends": "../tsconfig.base.json" 继承本文件
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "sourceMap": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  }
+}

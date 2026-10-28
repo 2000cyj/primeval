@@ -1,0 +1,40 @@
+{
+  "name": "@remote/components",
+  "version": "0.0.0",
+  "type": "module",
+  "private": true,
+  "sideEffects": false,
+  "exports": {
+    "./ContentWrap": "./vue/ContentWrap/index.ts",
+    "./Dialog": "./vue/Dialog/index.ts",
+    "./Descriptions": "./vue/Descriptions/index.ts",
+    "./Hamburger": "./vue/Hamburger/index.vue",
+    "./iFrame": "./vue/iFrame/index.vue",
+    "./JsonEditor": "./vue/JsonEditor/index.ts",
+    "./Echart": "./vue/Echart/index.ts",
+    "./Screenfull": "./vue/Screenfull/index.vue"
+  },
+  "scripts": {
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@remote/utils": "workspace:*"
+  },
+  "peerDependencies": {
+    "@element-plus/icons-vue": "catalog:",
+    "@vueuse/core": "catalog:",
+    "echarts": "5.6.0",
+    "element-plus": "catalog:",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@element-plus/icons-vue": "catalog:",
+    "@vue/tsconfig": "0.5.1",
+    "@vueuse/core": "catalog:",
+    "echarts": "5.6.0",
+    "element-plus": "catalog:",
+    "typescript": "catalog:",
+    "vue": "catalog:",
+    "vue-tsc": "catalog:"
+  }
+}

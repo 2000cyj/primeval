@@ -1,0 +1,17 @@
+{
+  // 共享 Vue 组件包：source-only（不产出 dist，消费方 app 的 vite 直接编译 .vue 源码）。
+  // 用 @vue/tsconfig 的 dom 预设支持 SFC + jsxImportSource，仅做类型自检（typecheck 脚本）。
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom"],
+    "jsx": "preserve",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["vue/**/*.ts", "vue/**/*.vue"]
+}

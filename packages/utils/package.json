@@ -1,0 +1,71 @@
+{
+  "name": "@remote/utils",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./is": {
+      "types": "./dist/is.d.ts",
+      "import": "./dist/is.js",
+      "require": "./dist/is.cjs"
+    },
+    "./validate": {
+      "types": "./dist/validate.d.ts",
+      "import": "./dist/validate.js",
+      "require": "./dist/validate.cjs"
+    },
+    "./scroll-to": {
+      "types": "./dist/scroll-to.d.ts",
+      "import": "./dist/scroll-to.js",
+      "require": "./dist/scroll-to.cjs"
+    },
+    "./cron": {
+      "types": "./dist/cron.d.ts",
+      "import": "./dist/cron.js",
+      "require": "./dist/cron.cjs"
+    },
+    "./propTypes": {
+      "types": "./dist/propTypes.d.ts",
+      "import": "./dist/propTypes.js",
+      "require": "./dist/propTypes.cjs"
+    },
+    "./formatTime": {
+      "types": "./dist/formatTime.d.ts",
+      "import": "./dist/formatTime.js",
+      "require": "./dist/formatTime.cjs"
+    },
+    "./jsencrypt": {
+      "types": "./dist/jsencrypt.d.ts",
+      "import": "./dist/jsencrypt.js",
+      "require": "./dist/jsencrypt.cjs"
+    },
+    "./errorCode": {
+      "types": "./dist/errorCode.d.ts",
+      "import": "./dist/errorCode.js",
+      "require": "./dist/errorCode.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.13",
+    "jsencrypt": "3.3.2"
+  },
+  "devDependencies": {
+    "tsup": "catalog:",
+    "typescript": "catalog:"
+  }
+}

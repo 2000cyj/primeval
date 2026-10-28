@@ -1,0 +1,24 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 依赖
+node_modules/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+# 构建产物
+dist/
+coverage/
+# turbo 本地缓存(内容寻址,跨机器哈希不同,不提交)
+.turbo/
+
+# apps/remote-control-vue3 是独立 git 仓库,有自己的 gitee 远端,
+# 父仓库不追踪其内部文件,整目录屏蔽
+apps/remote-control-vue3/

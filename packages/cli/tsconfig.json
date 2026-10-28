@@ -1,0 +1,10 @@
+{
+  // 继承 packages 严格管控配置，仅追加本包路径相关选项
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,30 @@
+{
+  // 继承仓库根基础配置，追加 Vue3 + TS 的严格类型校验（对齐 Vue3 + Vite 官方模板）
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Vue3 SFC 使用 jsdom/浏览器环境，且需保留原始 JSX 交由 vue 编译器处理
+    "jsx": "preserve",
+    "jsxImportSource": "vue",
+    "useDefineForClassFields": true,
+    "sourceMap": true,
+
+    // 严格类型校验
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    // 允许通过 @/* 引用 src 下模块
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+
+    // 应用不产出类型声明，交由打包器处理
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"]
+}

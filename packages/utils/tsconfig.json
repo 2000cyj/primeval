@@ -1,0 +1,11 @@
+{
+  // 继承 packages 严格管控配置，仅追加本包路径相关选项
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // scroll-to.ts 用到 window / document，需要 DOM 类型
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,14 @@
+{
+  // 根级基础配置：只放全仓库共享的最基本编译选项
+  // 各子包通过 "extends": "../../tsconfig.json" 继承，并在各自 tsconfig 中追加严格/特化选项
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  }
+}

@@ -1,0 +1,18 @@
+node_modules
+dist
+pnpm-lock.yaml
+
+# 自动生成文件，不参与格式化
+apps/remote-control-vue3/auto-imports.d.ts
+apps/remote-control-vue3/.gen-tables-types.cache.json
+
+# 构建产物与缓存
+.turbo
+.cache
+coverage
+
+# Figma 下载的页面产物（figma-home.js 是打包后的第三方 JS / GIF / PNG）
+**/.claude/figma-home.js
+**/.claude/figma-home-full.gif
+**/.claude/figma-home-index.json
+**/.claude/figma-*.png
