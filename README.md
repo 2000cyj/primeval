@@ -49,7 +49,8 @@ corepack enable && corepack prepare pnpm@10.18.1 --activate   # 激活指定版�
 ```
 remote-monorepo/
 ├── apps/
-│   └── vue/                    # @remote/app-vue(private) Vite 应用
+│   ├── vue/                    # @remote/app-vue(private) Vite 应用
+│   └── desktop/                # @remote/desktop(private) Electron 壳,渲染层复用 apps/vue
 ├── packages/
 │   ├── utils/                  # @remote/utils      叶子工具包
 │   ├── components/             # @remote/components 共享 UI 组件
@@ -82,16 +83,18 @@ remote-monorepo/
 app-vue ──► components ──► utils
    └──────────────────────► utils
 cli ──────────────────────► utils
+desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 ```
 
 `utils` 是**叶子包**,不得依赖任何其它 workspace 包。内部依赖统一使用 `workspace:*` 协议,pnpm 软链本地源码而非从 registry 拉取。
 
-| Package              | 目录                  | 可见性  | 角色         |
-| -------------------- | --------------------- | ------- | ------------ |
-| `@remote/app-vue`    | `apps/vue`            | private | Vue 3 应用   |
-| `@remote/components` | `packages/components` | public  | 共享 UI 组件 |
-| `@remote/cli`        | `packages/cli`        | public  | CLI 工具     |
-| `@remote/utils`      | `packages/utils`      | public  | 叶子工具函数 |
+| Package              | 目录                  | 可见性  | 角色            |
+| -------------------- | --------------------- | ------- | --------------- |
+| `@remote/app-vue`    | `apps/vue`            | private | Vue 3 应用      |
+| `@remote/desktop`    | `apps/desktop`        | private | Electron 桌面壳 |
+| `@remote/components` | `packages/components` | public  | 共享 UI 组件    |
+| `@remote/cli`        | `packages/cli`        | public  | CLI 工具        |
+| `@remote/utils`      | `packages/utils`      | public  | 叶子工具函数    |
 
 ---
 
@@ -100,7 +103,7 @@ cli ──────────────────────► utils
 ```bash
 pnpm install                  # 装依赖并初始化 husky
 pnpm -r list --depth -1       # 查看所有 workspace 包
-pnpm dev                      # turbo 启动应用 dev server
+pnpm --filter @remote/app-vue dev  # 启动 Web 端 dev server(5173)
 pnpm build                    # turbo 拓扑构建所有包
 pnpm typecheck                # turbo 类型检查(含 .vue)
 pnpm test                     # vitest 跑全仓测试
@@ -114,7 +117,19 @@ pnpm commit                   # cz-git 中文交互式提交
 ```bash
 pnpm --filter @remote/cli build       # 仅在某个包执行
 pnpm --filter @remote/components dev  # 注意 dev 通常需要 cd 到该包或用 turbo filter
+
+# 桌面壳(Electron):渲染层复用 apps/vue,dev server 用独立端口 5174
+pnpm --filter @remote/desktop dev     # 起 Vite dev server(5174)+ 原生窗口,改 .vue 热更新
+pnpm --filter @remote/desktop build   # out/* + electron-builder 出 release/win-unpacked(未签名)
+pnpm --filter @remote/desktop build:bundle # 只构建 out/main、out/preload、out/renderer
+pnpm --filter @remote/desktop package:dir  # 只跑 electron-builder --dir(需先 build:bundle)
+pnpm --filter @remote/desktop start   # 用已构建产物直接启动 Electron
+pnpm --filter @remote/desktop test    # 桌面壳主进程/preload 单测(node 环境)
 ```
+
+> 首次运行桌面壳需联网下载 Electron 二进制(约 158MB),Electron 45 已无 postinstall,改为首次 `require('electron')` 时懒下载;内网环境需配置 `ELECTRON_MIRROR`。
+
+> 根目录未定义 `dev` 脚本;`turbo run dev` 会把所有带 `dev` 脚本的包排进任务图(含 `@remote/desktop`),只起 Web 端请用 `pnpm --filter @remote/app-vue dev`。
 
 > `dev` 类长进程任务已配置 `cache: false, persistent: true`,turbo 不会缓存也不会超时强杀。
 
@@ -126,6 +141,7 @@ pnpm --filter @remote/components dev  # 注意 dev 通常需要 cd 到该包或�
 
 - `build` / `typecheck` / `test` 任务:`dependsOn: ["^build"]`,意味着**某个库包变更时,下游所有依赖它的包会重跑**
 - `build` 任务:`outputs: ["dist/**"]`,产物纳入本地缓存(`.turbo/`,已 gitignore)
+- `@remote/desktop#build` 声明 `dependsOn: ["^build"]` + `outputs: ["out/**", "release/**"]`:桌面壳的渲染层直接消费 `apps/vue` **源码**,必须先跑上游 `build` 才能把 `apps/vue` 的改动传导进缓存键,否则产物会陈旧
 - `dev` 任务:`cache: false, persistent: true`,常驻进程不缓存
 - `format` / `commit` / `lint:spelling` 等交互或不稳定输出:`cache: false`
 
@@ -386,22 +402,24 @@ pnpm commit   # 启动 cz-git 中文 prompt
 
 ## 十五、命令速查
 
-| 命令                                | 作用                        |
-| ----------------------------------- | --------------------------- |
-| `pnpm install`                      | 装依赖并初始化 husky 钩子   |
-| `pnpm dev`                          | turbo 启动应用 dev server   |
-| `pnpm build`                        | turbo 拓扑构建所有包        |
-| `pnpm typecheck`                    | turbo 类型检查              |
-| `pnpm test` / `pnpm test:watch`     | vitest 全仓测试 / watch     |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint 检查 / 自动修复      |
-| `pnpm format` / `pnpm format:check` | Prettier 格式化 / 仅检查    |
-| `pnpm lint:spelling`                | cspell 拼写检查             |
-| `pnpm commit`                       | cz-git 交互式提交           |
-| `pnpm commit:lint`                  | 对已有提交信息跑 commitlint |
-| `pnpm changeset`                    | 新建 changeset              |
-| `pnpm release:version`              | 打版本号 + 生成 CHANGELOG   |
-| `pnpm release:publish`              | 拓扑发布到 npm              |
-| `pnpm --filter <pkg> <cmd>`         | 在指定包执行                |
+| 命令                                  | 作用                                                     |
+| ------------------------------------- | -------------------------------------------------------- |
+| `pnpm install`                        | 装依赖并初始化 husky 钩子                                |
+| `pnpm --filter @remote/app-vue dev`   | 启动 Web 端 dev server(5173)                             |
+| `pnpm build`                          | turbo 拓扑构建所有包                                     |
+| `pnpm typecheck`                      | turbo 类型检查                                           |
+| `pnpm test` / `pnpm test:watch`       | vitest 全仓测试 / watch                                  |
+| `pnpm lint` / `pnpm lint:fix`         | ESLint 检查 / 自动修复                                   |
+| `pnpm format` / `pnpm format:check`   | Prettier 格式化 / 仅检查                                 |
+| `pnpm lint:spelling`                  | cspell 拼写检查                                          |
+| `pnpm commit`                         | cz-git 交互式提交                                        |
+| `pnpm commit:lint`                    | 对已有提交信息跑 commitlint                              |
+| `pnpm changeset`                      | 新建 changeset                                           |
+| `pnpm release:version`                | 打版本号 + 生成 CHANGELOG                                |
+| `pnpm release:publish`                | 拓扑发布到 npm                                           |
+| `pnpm --filter <pkg> <cmd>`           | 在指定包执行                                             |
+| `pnpm --filter @remote/desktop dev`   | 启动 Electron 桌面壳(渲染层复用 `apps/vue`,端口 5174)    |
+| `pnpm --filter @remote/desktop build` | 构建 out/* 并打出 `release/win-unpacked`(win x64 未签名) |
 
 > ⚠️ 不提供 `pnpm version` / `pnpm publish`——这些名被 pnpm 内置子命令占据,改用 `release:version` / `release:publish`。
 

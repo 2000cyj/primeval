@@ -16,6 +16,13 @@
       "cache": false,
       "persistent": true
     },
+    "@remote/desktop#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["out/**", "release/**"]
+    },
+    "@remote/desktop#typecheck": {
+      "dependsOn": ["^build"]
+    },
     "lint": {},
     "lint:fix": {},
     "format": {

@@ -12,6 +12,9 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/.turbo/**',
       '**/coverage/**',
+      // 桌面壳构建产物(electron-vite / electron-builder)
+      'apps/desktop/out/**',
+      'apps/desktop/release/**',
       // Figma 下载的页面源码（figma-home.js 是打包后的第三方 JS，不可 lint/format）
       '**/.claude/figma-home.js',
       '**/.claude/figma-home-full.gif',
@@ -90,7 +93,7 @@ export default tseslint.config(
   // vue-eslint-parser 不感知这些全局名，所以这里补齐浏览器+Vue+Node 全局 + 关掉 no-undef；
   // 类型层仍由 vue-tsc 把守，真用了不存在的标识符会在 build 时暴露。
   {
-    files: ['apps/vue/**/*.{ts,tsx,vue,js}'],
+    files: ['apps/vue/**/*.{ts,tsx,vue,js}', 'apps/desktop/**/*.{ts,tsx,vue,js}'],
     languageOptions: {
       // .vue 文件中的 <script lang="ts"> 交给 ts 解析器处理
       parserOptions: {
@@ -207,7 +210,12 @@ export default tseslint.config(
 
   // apps 下的 Node 端 .mjs 脚本（vite.config.ts / scripts/*.mjs）需要 Node 全局
   {
-    files: ['apps/**/vite.config.ts', 'apps/**/scripts/**/*.{js,mjs,ts}', 'apps/**/vite/**/*.ts'],
+    files: [
+      'apps/**/vite.config.ts',
+      'apps/**/electron.vite.config.ts',
+      'apps/**/scripts/**/*.{js,mjs,ts}',
+      'apps/**/vite/**/*.ts',
+    ],
     languageOptions: {
       parserOptions: {
         parser: tseslint.parser,

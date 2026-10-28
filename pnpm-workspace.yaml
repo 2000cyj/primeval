@@ -30,5 +30,6 @@ overrides:
   quill: 2.0.2
 
 # pnpm 10 默认 ignored build scripts,显式声明只允许 esbuild 跑 install script(vite 依赖 esbuild 的 native binary)
+# 注:Electron 45 起已移除 postinstall,改为首次 require('electron') 时懒下载二进制,无需加入白名单
 onlyBuiltDependencies:
   - esbuild

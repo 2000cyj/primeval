@@ -16,5 +16,8 @@ Thumbs.db
 # 构建产物
 dist/
 coverage/
+# 桌面壳(electron-vite 产物 + electron-builder 未打包目录)
+apps/desktop/out/
+apps/desktop/release/
 # turbo 本地缓存(内容寻址,跨机器哈希不同,不提交)
 .turbo/

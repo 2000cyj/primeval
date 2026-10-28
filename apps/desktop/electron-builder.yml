@@ -1,0 +1,15 @@
+appId: com.remote.primeval
+productName: Primeval
+directories:
+  output: release
+# 只打包运行时需要的产物,不把仓库、源码、node_modules 带进去
+files:
+  - out/**
+  - package.json
+asar: true
+# 本轮只出 win x64 未签名、未安装的目录产物(不生成 NSIS 安装包)
+win:
+  target:
+    - target: dir
+      arch:
+        - x64

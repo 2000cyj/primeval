@@ -1,0 +1,30 @@
+{
+  "name": "@remote/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Primeval 桌面壳:Electron 包裹 @remote/app-vue 渲染层",
+  "author": "primeval",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "build": "pnpm build:bundle && pnpm package:dir",
+    "build:bundle": "electron-vite build",
+    "package:dir": "electron-builder --dir --win --x64",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "start": "electron .",
+    "dev": "electron-vite dev"
+  },
+  "devDependencies": {
+    "@remote/app-vue": "workspace:*",
+    "@types/node": "^26.1.1",
+    "@vitejs/plugin-vue": "catalog:",
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0",
+    "electron-vite": "6.0.0",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "vue": "catalog:"
+  }
+}
