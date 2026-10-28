@@ -18,7 +18,3 @@ dist/
 coverage/
 # turbo 本地缓存(内容寻址,跨机器哈希不同,不提交)
 .turbo/
-
-# apps/remote-control-vue3 是独立 git 仓库,有自己的 gitee 远端,
-# 父仓库不追踪其内部文件,整目录屏蔽
-apps/remote-control-vue3/

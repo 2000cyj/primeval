@@ -93,18 +93,18 @@ git log --oneline origin/master..HEAD   # 看本批有几条 commit
 git push origin <branch>     # 默认 master
 ```
 
-### 7. 多仓库工作流(嵌套子仓库场景)
+### 7. 多仓库工作流(可选：存在嵌套子仓库时)
 
-本仓库结构:`remote-monorepo/`(父)+ `apps/remote-control-vue3/`(子,独立 gitee 仓库)+ 未来可能更多的嵌套子仓库。**每个仓库独立 commit + push,互不污染**。
+当前仓库默认只有父仓库。如果任务涉及 `apps/*` 或 `packages/*` 下自带 `.git` 的嵌套仓库，按本节处理；否则跳过。
 
 #### 7.1 摸底时识别所有仓库
 
 ```bash
 # 在父仓库根目录
 git status                              # 父仓库的变更
-ls apps/*/.git 2>/dev/null              # 找出所有嵌套子仓库的 .git
+ls -d apps/*/.git packages/*/.git 2>/dev/null   # 找出所有嵌套子仓库的 .git
 # 然后对每个子仓库,逐个 cd 进去看状态:
-for d in apps/*/; do
+for d in apps/*/ packages/*/; do
   [ -d "$d/.git" ] && echo "=== $d ===" && git -C "$d" status --short
 done
 ```
@@ -113,29 +113,26 @@ done
 
 按"文件的最近 git 根目录"分流:
 
-| 仓库                     | 归属判据                               | 远端                                                  |
-| ------------------------ | -------------------------------------- | ----------------------------------------------------- |
-| 父 `remote-monorepo`     | 除子仓库目录外的所有文件               | `https://gitee.com/gitcyj007/remote-monorepo.git`     |
-| 子 `remote-control-vue3` | `apps/remote-control-vue3/` 下所有文件 | `https://gitee.com/gitcyj007/remote-control-vue3.git` |
-
-父仓库必须在 `.gitignore` 屏蔽子仓库目录(如 `apps/remote-control-vue3/`),否则父仓库 `git status` 会把它当 embedded git repo。
+- 父仓库只提交自己目录下、不属于嵌套仓库的文件。
+- 嵌套仓库的文件由它自己的 git 管理。
+- 各仓库远端以 `git remote -v` 为准，不要复用旧 URL 或旧分支名。
 
 #### 7.3 串行 commit(按依赖顺序:子 → 父)
 
 ```bash
-# 第一步:子仓库先 commit + push(父仓库的 catalog/lock 改动会引用子仓库声明的依赖,先子后父更稳)
-cd apps/remote-control-vue3
-# 走一遍前面 1-6 步的流程(摸底/设计边界/staging/commit)
-git push origin master
-cd ../..
+# 第一步:先提交嵌套子仓库
+git -C apps/<sub-app> status
+git -C apps/<sub-app> add <files>
+git -C apps/<sub-app> commit -m "<type>: <subject>"
+git -C apps/<sub-app> push origin <branch>
 
-# 第二步:父仓库 commit + push
-cd <parent-root>
-# 走一遍 1-6 步,注意 .gitignore 已经屏蔽了子仓库目录
-git push origin master
+# 第二步:再提交父仓库
+git add <files>
+git commit -m "<type>: <subject>"
+git push origin <branch>
 ```
 
-**为什么先子后父**:子仓库的 `package.json` 引用父仓库 catalog 里的版本(如 `vue: catalog:`),先推子仓库再推父仓库的 catalog 更新,远端历史更连贯;反过来,父仓库先推 catalog 但子仓库还没声明 catalog 引用,中间会出现"孤儿 commit"。
+**为什么先子后父**:子仓库的 `package.json` 可能引用父仓库 catalog 里的版本;先推子仓库再推父仓库,远端历史更连贯。
 
 #### 7.4 失败回滚
 
@@ -146,9 +143,9 @@ git push origin master
 3. 修好后单独重 push 子仓库
 4. 父仓库不用动
 
-#### 7.5 用户明确说"两个 git 分别识别,互不相关"
+#### 7.5 不要用 submodule 伪装嵌套仓库
 
-直接按 7.3 走,**不要尝试用 `git submodule`** 把子仓库挂回父仓库——会丢失子仓库独立的 commit 历史与远端 URL 配置。
+如果用户明确要求两个仓库独立识别，**不要尝试用 `git submodule`** 把子仓库挂回父仓库——会丢失子仓库独立的 commit 历史与远端 URL 配置。
 
 ## commit message 模板(中文)
 
@@ -195,7 +192,7 @@ pnpm catalog 集中管理多包共用工具版本,后续升级改一处即可
 6. **commit message 长度限制**:commitlint 有 header-max-length(默认 100)限制,正文不限,但 type 必须小写、必填。
 7. **subject-case 必须小写**:本仓库 commitlint 配置了 `subject-case`,subject 中**禁止 sentence-case / start-case / pascal-case / upper-case**。`docs: CLAUDE.md ...`、`chore(eslint): ...` 都会被拒;`docs: claude.md ...` 才过。**subject 里出现的文件/工具名(CLAUDE.md、ESLint、Vue)也得小写或避开**(实在避不开就用 `claude.md`、`eslint`、`vue` 这样的全小写)。正文(body)语言不限制。
 8. **body-max-line-length 100**:正文每行不能超 100 字符。中文字符在 UTF-8 下占 3 字节但 commitlint 按字符数算,中文 1 字符算 1,所以一行中文约可写 ~33 字(留余量就按 30 字换行)。**写正文时心里默念"超 30 个中文字就换行"**。
-9. **嵌套子仓库(embedded git repo)**:本仓库 `apps/remote-control-vue3/` 是独立 git 仓库(自带 `.git`,有自己的 gitee 远端),不是普通 workspace package。父仓库 `git status` 会显示 `?? apps/remote-control-vue3/`(整个目录未追踪),`git add` 时 git 会把它当 gitlink 提示 `adding embedded git repository`——这种状态下文件不会被追踪。**处理方式**:根 `.gitignore` 加 `apps/remote-control-vue3/` 把整目录屏蔽,父仓库完全不管它,由子仓库自己提交到自己的远端。
+9. **嵌套子仓库(embedded git repo)**:如果某个 `apps/*` 或 `packages/*` 子目录自带 `.git`，它不是普通 workspace package。父仓库 `git status` 会显示整个目录未追踪，`git add` 时 git 会把它当 gitlink 提示 `adding embedded git repository`——这种状态下文件不会被追踪。**处理方式**:确认它确实独立后，在根 `.gitignore` 屏蔽该目录，由子仓库自己提交到自己的远端；不要把它 add 进父仓库。
 10. **`git status --short` vs `git diff --stat` 可能不一致**:`git status --short` 显示 6 个文件 modified,但 `git diff --stat` 可能只显示 3 个真实改动(其它 3 个的变更被某种机制 revert 了或本来就是空 diff)。**提交前一定要用 `git diff --cached --stat` 确认 staging 区到底是什么**,不要信 `--short` 的初始数字。
 11. **`core.autocrlf=true` 会让 git status 报一堆假阳性**:`git status` 显示 25 个文件 modified,但 `git diff --stat` 只显示 2 个真改动,其余是 autocrlf 把 LF 转 CRLF 的"将 LF 替换为 CRLF"警告。_*多仓库工作流下,父仓库 status 里看到所有 packages/* 与 apps/_ 都 modified 但 diff 空,基本就是这个原因**,提交时只看 diff 为准,不要被 status 的 modify 数量吓到。永久解决:`git config core.autocrlf false`(若团队能接受 LF 提交)。
 

@@ -14,7 +14,7 @@ catalog:
   '@vue/test-utils': ^2.4.11
   jsdom: ^29.1.1
 
-  # Vue 3 + Element Plus 前端栈（apps/remote-control-vue3 使用，将来其他 app 可复用）
+  # Vue 3 + Element Plus 前端栈（预留给后续 Vue 应用复用）
   vue: ^3.5.40
   '@vitejs/plugin-vue': ^6.0.8
   '@vitejs/plugin-vue-jsx': ^5.1.5

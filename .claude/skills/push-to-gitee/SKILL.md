@@ -36,7 +36,7 @@ git status                   # 应 working tree clean
 git push origin <branch>
 ```
 
-> ⚠️ 本仓库的远端是 Gitee,但**默认走 HTTPS**。如果配置了 SSH 远端(`git@gitee.com:...`)会用 SSH。两种都支持。
+> ⚠️ 仅当第 1 步确认远端确实是 Gitee 时使用本 skill。HTTPS 和 SSH(`git@gitee.com:...`)两种远端都支持。
 
 ### 4. 验证
 
@@ -88,20 +88,18 @@ pnpm catalog 集中管理多包共用工具版本,后续升级改一处即可
 - [ ] `git push origin <branch>` 成功(无错误码)
 - [ ] 远端页面验证 commit 已出现
 
-## 跨多个仓库串行 push
+## 跨多个仓库串行 push(可选)
 
-当工作区里有多个 git 仓库(如父 monorepo + 嵌套子仓库 `apps/<x>/`,各自有独立 gitee 远端),推送流程要**逐个仓库串行执行**,互不依赖。
+如果工作区里有多个 git 仓库(父 monorepo + 自带 `.git` 的子目录)，每个仓库的远端以 `git remote -v` 为准，逐个仓库串行推送，互不依赖。
 
 ### 适用结构
 
-```
-remote-monorepo/                         # 父仓库
-├── .git/                                # → gitee.com/gitcyj007/remote-monorepo
+```text
+workspace/                    # 父仓库
+├── .git/                     # 远端以 git remote -v 为准
 ├── apps/
-│   ├── remote-control-vue3/.git/        # → gitee.com/gitcyj007/remote-control-vue3(独立)
-│   └── ...
+│   └── <sub-app>/.git/       # 可选：独立子仓库
 └── packages/
-    ├── components/.git/
     └── ...
 ```
 
@@ -111,17 +109,17 @@ remote-monorepo/                         # 父仓库
 # 1. 找出所有仓库根目录
 ls -d apps/*/.git packages/*/.git .git 2>/dev/null
 
-# 2. 先推子仓库(后推父仓库会让 catalog 引用指向未推送的子仓库声明)
-for repo in apps/remote-control-vue3 packages/components packages/cli packages/utils; do
+# 2. 先推子仓库；只处理确实带 .git 的目录
+for repo in apps/* packages/*; do
+  [ -d "$repo/.git" ] || continue
   echo "=== pushing $repo ==="
-  ( cd "$repo" && \
-    git status && \
-    git log --oneline origin/$(git branch --show-current)..HEAD && \
-    git push origin $(git branch --show-current) )
+  git -C "$repo" status
+  git -C "$repo" log --oneline "origin/$(git -C "$repo" branch --show-current)..HEAD"
+  git -C "$repo" push origin "$(git -C "$repo" branch --show-current)"
 done
 
 # 3. 最后推父仓库
-git push origin master
+git push origin "$(git branch --show-current)"
 ```
 
 ### 推送顺序原则

@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Early-stage pnpm monorepo skeleton. Packages exist as `package.json` + placeholder
-source only — there is no build, lint, or test tooling wired up yet. When adding a
-package's first real code, also add its `scripts` (build/test/lint) and update this file.
+Early-stage pnpm monorepo. The build, typecheck, test, lint, and formatting
+toolchain is wired up. `apps/vue` is still a placeholder Vue 3 + Vite app; the
+shared packages contain placeholder or source-only implementations. When adding
+a package's first real code, add the matching scripts and update this file.
 
 ## Package Manager
 
@@ -24,14 +25,14 @@ pnpm -r <cmd>             # run a script across all packages that define it
 
 Workspace globs (`pnpm-workspace.yaml`): `apps/*` and `packages/*`.
 
-| Package                       | Dir                        | Role                                                                                        |
-| ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------- |
-| `@remote/remote-control-vue3` | `apps/remote-control-vue3` | Vue 3 + Element Plus admin frontend (private); see its own CLAUDE.md for internal structure |
-| `@remote/components`          | `packages/components`      | Shared UI components; depends on `@remote/utils`                                            |
-| `@remote/cli`                 | `packages/cli`             | CLI tool (`bin: remote-cli`); depends on `@remote/utils`                                    |
-| `@remote/utils`               | `packages/utils`           | Leaf shared utilities; no internal deps                                                     |
+| Package              | Dir                   | Role                                                     |
+| -------------------- | --------------------- | -------------------------------------------------------- |
+| `@remote/app-vue`    | `apps/vue`            | Vue 3 + Vite frontend (private, placeholder)             |
+| `@remote/components` | `packages/components` | Shared UI components; depends on `@remote/utils`         |
+| `@remote/cli`        | `packages/cli`        | CLI tool (`bin: remote-cli`); depends on `@remote/utils` |
+| `@remote/utils`      | `packages/utils`      | Leaf shared utilities; no internal deps                  |
 
 Internal deps use the `workspace:*` protocol, so pnpm symlinks local packages
 instead of fetching from a registry. Dependency direction is one-way:
-`remote-control-vue3 → components → utils` and `cli → utils`. Keep `utils`
+`app-vue → components → utils` and `cli → utils`. Keep `utils`
 dependency-free of other workspace packages to avoid cycles.

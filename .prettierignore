@@ -2,10 +2,6 @@ node_modules
 dist
 pnpm-lock.yaml
 
-# 自动生成文件，不参与格式化
-apps/remote-control-vue3/auto-imports.d.ts
-apps/remote-control-vue3/.gen-tables-types.cache.json
-
 # 构建产物与缓存
 .turbo
 .cache
