@@ -10,9 +10,12 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "catalog:",
     "@remote/components": "workspace:*",
     "@remote/utils": "workspace:*",
-    "vue": "catalog:"
+    "element-plus": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "catalog:",
