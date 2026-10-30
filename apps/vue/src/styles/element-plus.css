@@ -1,0 +1,79 @@
+/* Element Plus 主题覆写：把 EP 组件的默认色板对齐原型的 --accent 紫色与全局字号 */
+
+/* ---------- 主题变量 ---------- */
+:root {
+  --el-color-primary: #5b4cf0;
+  --el-color-primary-light-3: #8b7ff4;
+  --el-color-primary-light-5: #a79ef6;
+  --el-color-primary-light-7: #c3bdf9;
+  --el-color-primary-light-8: #d5d1fa;
+  --el-color-primary-light-9: #eeecff;
+  --el-color-primary-dark-2: #4939dd;
+  --el-border-radius-base: 8px;
+  --el-font-size-base: 13px;
+  --el-text-color-primary: #181b22;
+  --el-text-color-regular: #555c6d;
+  --el-border-color: #dde0e6;
+  --el-border-color-lighter: #eef0f3;
+  --el-fill-color-blank: #fff;
+}
+
+/* ---------- 版式对齐 ---------- */
+.el-card {
+  --el-card-padding: 16px;
+  border-radius: 10px;
+}
+
+.el-table {
+  font-size: 12px;
+}
+
+.el-table th.el-table__cell {
+  background: #fcfcfd;
+  color: #949bab;
+  font-weight: 600;
+}
+
+/* 工具栏里的搜索框：与原型 .search-box 同宽 */
+.toolbar .el-input {
+  width: 290px;
+}
+
+.toolbar .el-select {
+  width: 150px;
+}
+
+.interval-select {
+  width: 132px;
+}
+
+.toolbar .el-input__wrapper {
+  height: 36px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--ink-200) inset;
+}
+
+/* 搜索框文字：Figma #3:113 为 11px，占位色 #949BAB */
+.toolbar .el-input__inner {
+  color: var(--ink-800);
+  font-size: 11px;
+}
+
+.toolbar .el-input__inner::placeholder {
+  color: var(--ink-400);
+}
+
+/* 搜索图标：Figma #3:109 描边 #949BAB */
+.toolbar .el-input__prefix {
+  color: var(--ink-400);
+}
+
+.toolbar .el-input__wrapper.is-focus {
+  box-shadow:
+    0 0 0 1px #9d94f6 inset,
+    0 0 0 3px var(--accent-soft);
+}
+
+.full-width {
+  width: 100%;
+}
