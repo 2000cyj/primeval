@@ -1,0 +1,38 @@
+[package]
+name = "agent-data-grid"
+description = "Agent Data Grid: a DataGrip-style database client (Tauri + Rust + React)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "agent_data_grid_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
+specta.workspace = true
+specta-typescript.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dirs.workspace = true
+ide-core.workspace = true
+ide-ssh.workspace = true
+ide-db.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Keeps the custom protocol working on Windows in release builds.
+custom-protocol = ["tauri/custom-protocol"]
