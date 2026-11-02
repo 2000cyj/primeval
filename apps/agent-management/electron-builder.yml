@@ -1,5 +1,5 @@
-appId: com.remote.primeval
-productName: Primeval
+appId: com.remote.agentmanagement
+productName: Agent Management
 directories:
   output: release
 # 只打包运行时需要的产物,不把仓库、源码、node_modules 带进去

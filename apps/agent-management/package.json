@@ -1,22 +1,30 @@
 {
-  "name": "@remote/desktop",
+  "name": "@remote/agent-management",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Primeval 桌面壳:Electron 包裹 @remote/app-vue 渲染层",
+  "description": "Primeval 智能体管理桌面端:Electron 壳 + Vue 3 渲染层合一的单体应用",
   "author": "primeval",
   "main": "./out/main/index.js",
   "scripts": {
+    "dev": "electron-vite dev",
+    "dev:web": "vite",
     "build": "pnpm build:bundle && pnpm package:dir",
     "build:bundle": "electron-vite build",
     "package:dir": "electron-builder --dir --win --x64",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p tsconfig.renderer.json",
     "test": "vitest run",
-    "start": "electron .",
-    "dev": "electron-vite dev"
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "catalog:",
+    "@remote/components": "workspace:*",
+    "@remote/utils": "workspace:*",
+    "element-plus": "catalog:",
+    "vue": "catalog:",
+    "vue-router": "catalog:"
   },
   "devDependencies": {
-    "@remote/app-vue": "workspace:*",
     "@types/node": "^26.1.1",
     "@vitejs/plugin-vue": "catalog:",
     "electron": "45.1.0",
@@ -25,6 +33,6 @@
     "typescript": "catalog:",
     "vite": "catalog:",
     "vitest": "catalog:",
-    "vue": "catalog:"
+    "vue-tsc": "catalog:"
   }
 }

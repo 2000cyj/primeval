@@ -4,8 +4,8 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'electron-vite'
 import type { Plugin } from 'vite'
 
-// 渲染层复用 apps/vue 源码,不复制、不改它的 vite 配置
-const rendererRoot = fileURLToPath(new URL('../vue', import.meta.url))
+// 渲染层就在本包内:src/renderer
+const rendererRoot = fileURLToPath(new URL('./src/renderer', import.meta.url))
 
 // 生产 CSP:注入构建产物 index.html,开发态不加(Vite HMR 需要内联脚本)
 const PRODUCTION_CSP = [
@@ -66,19 +66,19 @@ export default defineConfig({
     plugins: [vue(), productionCspMeta()],
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('../vue/src', import.meta.url)),
+        '@': fileURLToPath(new URL('./src/renderer/src', import.meta.url)),
       },
     },
     build: {
       outDir: fileURLToPath(new URL('./out/renderer', import.meta.url)),
       emptyOutDir: true,
-      // electron-vite 默认只在 <包>/src/renderer 下找 index.html,渲染层在 apps/vue 时必须显式指定
+      // electron-vite 默认只在 <包>/src/renderer 下找 index.html,渲染层在 src/renderer 时必须显式指定
       rolldownOptions: {
-        input: fileURLToPath(new URL('../vue/index.html', import.meta.url)),
+        input: fileURLToPath(new URL('./src/renderer/index.html', import.meta.url)),
       },
     },
     server: {
-      // 独立端口,避免与 apps/vue 自己的 dev server(默认 5173)抢端口
+      // 独立端口,避免与纯 Web dev(dev:web,默认 5173)抢端口
       port: 5174,
       strictPort: true,
     },

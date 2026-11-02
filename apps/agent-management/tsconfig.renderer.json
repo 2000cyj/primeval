@@ -1,5 +1,5 @@
 {
-  // 继承仓库根基础配置，追加 Vue3 + TS 的严格类型校验（对齐 Vue3 + Vite 官方模板）
+  // 渲染层(Vue3 + TS)的类型检查,继承仓库根基础配置
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
@@ -17,14 +17,19 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
 
-    // 允许通过 @/* 引用 src 下模块
+    // 允许通过 @/* 引用渲染层 src 下模块
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/renderer/src/*"]
     },
 
     // 应用不产出类型声明，交由打包器处理
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"]
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.d.ts",
+    "src/renderer/src/**/*.tsx",
+    "src/renderer/src/**/*.vue"
+  ]
 }

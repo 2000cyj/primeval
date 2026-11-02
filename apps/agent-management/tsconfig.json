@@ -1,5 +1,5 @@
 {
-  // 桌面壳主进程 / preload / 配置文件的类型检查(DOM 类型不进入主进程)
+  // 主进程 / preload / IPC 契约 + 构建配置的类型检查(DOM 类型不进入主进程)
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2022"],
@@ -13,5 +13,11 @@
     "exactOptionalPropertyTypes": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "electron.vite.config.ts"]
+  "include": [
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/shared/**/*.ts",
+    "electron.vite.config.ts",
+    "vite.config.ts"
+  ]
 }
