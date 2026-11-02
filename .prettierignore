@@ -12,3 +12,11 @@ coverage
 **/.claude/figma-home-full.gif
 **/.claude/figma-home-index.json
 **/.claude/figma-*.png
+
+# 移植自 openidea 的 UI 套件与 platform 层:上游用 oxfmt 格式化,保持原样便于同步
+apps/agent-data-grid/src/ui/**
+apps/agent-data-grid/src/platform/**
+apps/agent-data-grid/src/features/database/**
+apps/agent-data-grid/src/bindings.ts
+apps/agent-data-grid/src/styles/tokens.css
+apps/agent-data-grid/src/styles/global.css

@@ -12,9 +12,17 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/.turbo/**',
       '**/coverage/**',
+      // 移植自 openidea 的 UI 套件、platform 层与数据表组件(上游用 oxlint,不由本仓库规则校验)
+      'apps/agent-data-grid/src/ui/**',
+      'apps/agent-data-grid/src/platform/**',
+      'apps/agent-data-grid/src/features/database/**',
+      // tauri-specta 生成的类型绑定(勿手改)
+      'apps/agent-data-grid/src/bindings.ts',
       // 桌面端构建产物(electron-vite / electron-builder)
       'apps/agent-management/out/**',
       'apps/agent-management/release/**',
+      'apps/agent-data-grid/out/**',
+      'apps/agent-data-grid/release/**',
       // Figma 下载的页面源码（figma-home.js 是打包后的第三方 JS，不可 lint/format）
       '**/.claude/figma-home.js',
       '**/.claude/figma-home-full.gif',
@@ -93,7 +101,10 @@ export default tseslint.config(
   // vue-eslint-parser 不感知这些全局名，所以这里补齐浏览器+Vue+Node 全局 + 关掉 no-undef；
   // 类型层仍由 vue-tsc 把守，真用了不存在的标识符会在 build 时暴露。
   {
-    files: ['apps/agent-management/**/*.{ts,tsx,vue,js}'],
+    files: [
+      'apps/agent-management/**/*.{ts,tsx,vue,js}',
+      'apps/agent-data-grid/**/*.{ts,tsx,vue,js}',
+    ],
     languageOptions: {
       // .vue 文件中的 <script lang="ts"> 交给 ts 解析器处理
       parserOptions: {
