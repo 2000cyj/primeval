@@ -49,7 +49,8 @@ corepack enable && corepack prepare pnpm@10.18.1 --activate   # 激活指定版�
 ```
 remote-monorepo/
 ├── apps/
-│   └── agent-management/       # @remote/agent-management(private) 桌面端:Electron 壳 + Vue 3 渲染层合一
+│   ├── agent-management/       # @remote/agent-management(private) 桌面端:Electron 壳 + Vue 3 渲染层合一
+│   └── agent-data-grid/        # @remote/agent-data-grid(private) 数据表格桌面端(Tauri + Rust + React)
 ├── packages/
 │   ├── utils/                  # @remote/utils      叶子工具包
 │   ├── components/             # @remote/components 共享 UI 组件
@@ -88,12 +89,13 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 
 `utils` 是**叶子包**,不得依赖任何其它 workspace 包。内部依赖统一使用 `workspace:*` 协议,pnpm 软链本地源码而非从 registry 拉取。
 
-| Package                    | 目录                    | 可见性  | 角色                               |
-| -------------------------- | ----------------------- | ------- | ---------------------------------- |
-| `@remote/agent-management` | `apps/agent-management` | private | 桌面端(Electron 壳 + Vue 3 渲染层) |
-| `@remote/components`       | `packages/components`   | public  | 共享 UI 组件                       |
-| `@remote/cli`              | `packages/cli`          | public  | CLI 工具                           |
-| `@remote/utils`            | `packages/utils`        | public  | 叶子工具函数                       |
+| Package                    | 目录                    | 可见性  | 角色                                             |
+| -------------------------- | ----------------------- | ------- | ------------------------------------------------ |
+| `@remote/agent-management` | `apps/agent-management` | private | 桌面端(Electron 壳 + Vue 3 渲染层)               |
+| `@remote/agent-data-grid`  | `apps/agent-data-grid`  | private | 数据表格桌面端(Tauri + Rust 引擎 + React 渲染层) |
+| `@remote/components`       | `packages/components`   | public  | 共享 UI 组件                                     |
+| `@remote/cli`              | `packages/cli`          | public  | CLI 工具                                         |
+| `@remote/utils`            | `packages/utils`        | public  | 叶子工具函数                                     |
 
 ---
 
@@ -125,6 +127,12 @@ pnpm --filter @remote/agent-management build:bundle # 只构建 out/main、out/p
 pnpm --filter @remote/agent-management package:dir  # 只跑 electron-builder --dir(需先 build:bundle)
 pnpm --filter @remote/agent-management start   # 用已构建产物直接启动 Electron
 pnpm --filter @remote/agent-management test    # 主进程/preload 单测(node 环境)
+
+# 数据表格桌面端(apps/agent-data-grid):tauri + rust 引擎 + react 渲染层
+pnpm --filter @remote/agent-data-grid dev        # tauri dev(vite 5175 + 原生窗口)
+pnpm --filter @remote/agent-data-grid dev:web    # 只起 vite dev server(5175),不起壳
+pnpm --filter @remote/agent-data-grid build      # tauri build(前端 dist + rust 可执行文件)
+pnpm --filter @remote/agent-data-grid gen:bindings  # cargo test 重新生成 src/bindings.ts
 ```
 
 > 首次运行桌面壳需联网下载 Electron 二进制(约 158MB),Electron 45 已无 postinstall,改为首次 `require('electron')` 时懒下载;内网环境需配置 `ELECTRON_MIRROR`。

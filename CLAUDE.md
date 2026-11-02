@@ -27,12 +27,13 @@ pnpm -r <cmd>             # run a script across all packages that define it
 
 Workspace globs (`pnpm-workspace.yaml`): `apps/*` and `packages/*`.
 
-| Package                    | Dir                     | Role                                                          |
-| -------------------------- | ----------------------- | ------------------------------------------------------------- |
-| `@remote/agent-management` | `apps/agent-management` | Desktop app (private): Electron shell + Vue 3 renderer in one |
-| `@remote/components`       | `packages/components`   | Shared UI components; depends on `@remote/utils`              |
-| `@remote/cli`              | `packages/cli`          | CLI tool (`bin: remote-cli`); depends on `@remote/utils`      |
-| `@remote/utils`            | `packages/utils`        | Leaf shared utilities; no internal deps                       |
+| Package                    | Dir                     | Role                                                            |
+| -------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `@remote/agent-management` | `apps/agent-management` | Desktop app (private): Electron shell + Vue 3 renderer in one   |
+| `@remote/agent-data-grid`  | `apps/agent-data-grid`  | Data-grid desktop app (private): Tauri + Rust engine + React UI |
+| `@remote/components`       | `packages/components`   | Shared UI components; depends on `@remote/utils`                |
+| `@remote/cli`              | `packages/cli`          | CLI tool (`bin: remote-cli`); depends on `@remote/utils`        |
+| `@remote/utils`            | `packages/utils`        | Leaf shared utilities; no internal deps                         |
 
 Internal deps use the `workspace:*` protocol, so pnpm symlinks local packages
 instead of fetching from a registry. Dependency direction is one-way:
@@ -58,7 +59,24 @@ pnpm --filter @remote/agent-management test       # main/preload unit tests (nod
 ```
 
 Ports differ on purpose: `dev:web` uses Vite's default 5173, the desktop
-renderer dev server uses 5174, so both can run at the same time.
+renderer dev server uses 5174 (`agent-data-grid` uses 5175), so they can run
+at the same time.
+
+`@remote/agent-data-grid` is a **Tauri** app: the shell and the database
+engine are Rust, the renderer is React 19. Layout inside the package:
+`crates/ide-core`, `crates/ide-ssh` and `crates/ide-db` are vendored from
+[OpenIDEA](https://github.com/l0ng-ai/openidea) (Apache-2.0) — the real
+database engine (sqlx + tiberius + bb8, hand-written dialect introspection) —
+and `src-tauri/src/commands/db.rs` exposes 28 typed commands through
+`tauri-specta`; `pnpm gen:bindings` regenerates `src/bindings.ts`.
+The renderer (`src/`, package root `index.html`) uses the vendored OpenIDEA UI
+kit in `src/ui` (components + IntelliJ expui icons) and platform layer in
+`src/platform`; theme tokens come from `src/styles/tokens.css` with app
+aliases in `styles/app-tokens.css`. `apps/agent-data-grid/SPEC.md` is the UI
+contract and `apps/agent-data-grid/THIRD_PARTY_LICENSES.md` records the
+vendored licences. Vendored `ui/`, `platform/`, `features/database/` and the
+generated `bindings.ts` are excluded from prettier/eslint (upstream uses
+oxfmt).
 
 TypeScript is split in two: `tsconfig.json` (main/preload/shared + build
 configs, Node types, no DOM) and `tsconfig.renderer.json` (Vue 3 renderer,
