@@ -49,8 +49,7 @@ corepack enable && corepack prepare pnpm@10.18.1 --activate   # 激活指定版�
 ```
 remote-monorepo/
 ├── apps/
-│   ├── vue/                    # @remote/app-vue(private) Vite 应用
-│   └── desktop/                # @remote/desktop(private) Electron 壳,渲染层复用 apps/vue
+│   └── agent-management/       # @remote/agent-management(private) 桌面端:Electron 壳 + Vue 3 渲染层合一
 ├── packages/
 │   ├── utils/                  # @remote/utils      叶子工具包
 │   ├── components/             # @remote/components 共享 UI 组件
@@ -60,7 +59,8 @@ remote-monorepo/
 │   ├── config.json
 │   └── README.md
 ├── .husky/                     # Git 钩子(pre-commit / commit-msg)
-├── apps/vue/tsconfig.json      # Vue3 + TS 特化 tsconfig
+├── apps/agent-management/tsconfig.json          # 主进程/preload 类型检查
+├── apps/agent-management/tsconfig.renderer.json # 渲染层 Vue3 + TS 特化 tsconfig
 ├── turbo.json                  # turbo 任务图
 ├── vitest.config.ts            # 根统一 Vitest 配置
 ├── pnpm-workspace.yaml         # workspace + catalog 集中版本
@@ -88,13 +88,12 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 
 `utils` 是**叶子包**,不得依赖任何其它 workspace 包。内部依赖统一使用 `workspace:*` 协议,pnpm 软链本地源码而非从 registry 拉取。
 
-| Package              | 目录                  | 可见性  | 角色            |
-| -------------------- | --------------------- | ------- | --------------- |
-| `@remote/app-vue`    | `apps/vue`            | private | Vue 3 应用      |
-| `@remote/desktop`    | `apps/desktop`        | private | Electron 桌面壳 |
-| `@remote/components` | `packages/components` | public  | 共享 UI 组件    |
-| `@remote/cli`        | `packages/cli`        | public  | CLI 工具        |
-| `@remote/utils`      | `packages/utils`      | public  | 叶子工具函数    |
+| Package                    | 目录                    | 可见性  | 角色                               |
+| -------------------------- | ----------------------- | ------- | ---------------------------------- |
+| `@remote/agent-management` | `apps/agent-management` | private | 桌面端(Electron 壳 + Vue 3 渲染层) |
+| `@remote/components`       | `packages/components`   | public  | 共享 UI 组件                       |
+| `@remote/cli`              | `packages/cli`          | public  | CLI 工具                           |
+| `@remote/utils`            | `packages/utils`        | public  | 叶子工具函数                       |
 
 ---
 
@@ -103,7 +102,7 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 ```bash
 pnpm install                  # 装依赖并初始化 husky
 pnpm -r list --depth -1       # 查看所有 workspace 包
-pnpm --filter @remote/app-vue dev  # 启动 Web 端 dev server(5173)
+pnpm --filter @remote/agent-management dev:web  # 只起渲染层 Web dev server(5173,不带 Electron 壳)
 pnpm build                    # turbo 拓扑构建所有包
 pnpm typecheck                # turbo 类型检查(含 .vue)
 pnpm test                     # vitest 跑全仓测试
@@ -118,18 +117,19 @@ pnpm commit                   # cz-git 中文交互式提交
 pnpm --filter @remote/cli build       # 仅在某个包执行
 pnpm --filter @remote/components dev  # 注意 dev 通常需要 cd 到该包或用 turbo filter
 
-# 桌面壳(Electron):渲染层复用 apps/vue,dev server 用独立端口 5174
-pnpm --filter @remote/desktop dev     # 起 Vite dev server(5174)+ 原生窗口,改 .vue 热更新
-pnpm --filter @remote/desktop build   # out/* + electron-builder 出 release/win-unpacked(未签名)
-pnpm --filter @remote/desktop build:bundle # 只构建 out/main、out/preload、out/renderer
-pnpm --filter @remote/desktop package:dir  # 只跑 electron-builder --dir(需先 build:bundle)
-pnpm --filter @remote/desktop start   # 用已构建产物直接启动 Electron
-pnpm --filter @remote/desktop test    # 桌面壳主进程/preload 单测(node 环境)
+# 桌面端(Electron):壳与渲染层同包(apps/agent-management),dev server 用独立端口 5174
+pnpm --filter @remote/agent-management dev     # 起 Vite dev server(5174)+ 原生窗口,改 .vue 热更新
+pnpm --filter @remote/agent-management dev:web # 只起渲染层 Web dev server(5173),不开 Electron
+pnpm --filter @remote/agent-management build   # out/* + electron-builder 出 release/win-unpacked(未签名)
+pnpm --filter @remote/agent-management build:bundle # 只构建 out/main、out/preload、out/renderer
+pnpm --filter @remote/agent-management package:dir  # 只跑 electron-builder --dir(需先 build:bundle)
+pnpm --filter @remote/agent-management start   # 用已构建产物直接启动 Electron
+pnpm --filter @remote/agent-management test    # 主进程/preload 单测(node 环境)
 ```
 
 > 首次运行桌面壳需联网下载 Electron 二进制(约 158MB),Electron 45 已无 postinstall,改为首次 `require('electron')` 时懒下载;内网环境需配置 `ELECTRON_MIRROR`。
 
-> 根目录未定义 `dev` 脚本;`turbo run dev` 会把所有带 `dev` 脚本的包排进任务图(含 `@remote/desktop`),只起 Web 端请用 `pnpm --filter @remote/app-vue dev`。
+> 根目录未定义 `dev` 脚本;`turbo run dev` 会把所有带 `dev` 脚本的包排进任务图(含 `@remote/agent-management`),只起渲染层请用 `pnpm --filter @remote/agent-management dev:web`。
 
 > `dev` 类长进程任务已配置 `cache: false, persistent: true`,turbo 不会缓存也不会超时强杀。
 
@@ -141,7 +141,7 @@ pnpm --filter @remote/desktop test    # 桌面壳主进程/preload 单测(node �
 
 - `build` / `typecheck` / `test` 任务:`dependsOn: ["^build"]`,意味着**某个库包变更时,下游所有依赖它的包会重跑**
 - `build` 任务:`outputs: ["dist/**"]`,产物纳入本地缓存(`.turbo/`,已 gitignore)
-- `@remote/desktop#build` 声明 `dependsOn: ["^build"]` + `outputs: ["out/**", "release/**"]`:桌面壳的渲染层直接消费 `apps/vue` **源码**,必须先跑上游 `build` 才能把 `apps/vue` 的改动传导进缓存键,否则产物会陈旧
+- `@remote/agent-management#build` 声明 `dependsOn: ["^build"]` + `outputs: ["out/**", "release/**"]`:桌面端的渲染层就在同包 `apps/agent-management/src/renderer` 里,消费的是**源码**,必须先跑上游 `build` 才能把渲染层改动传导进缓存键,否则产物会陈旧
 - `dev` 任务:`cache: false, persistent: true`,常驻进程不缓存
 - `format` / `commit` / `lint:spelling` 等交互或不稳定输出:`cache: false`
 
@@ -195,14 +195,16 @@ tsconfig.json (根:最基础的编译选项)
    │      ├── packages/components/tsconfig.json
    │      └── packages/cli/tsconfig.json
    │
-   └── apps/vue/tsconfig.json (应用:Vue3 + TS 特化)
+   └── apps/agent-management/tsconfig.json          (桌面端主进程/preload)
+   └── apps/agent-management/tsconfig.renderer.json (渲染层:Vue3 + TS 特化)
 ```
 
-| 层级                                   | 关键选项                                                                                                                                              | 用途                                 |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| **根** `tsconfig.json`                 | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                                                                    | 全仓共享的最基本编译环境             |
-| **库包** `packages/tsconfig.base.json` | 叠加 `strict`、`noUnusedLocals/Parameters`、`noImplicitReturns`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`declaration`、`sourceMap` | 对外发布的库需更严格的类型与产物声明 |
-| **应用** `apps/vue/tsconfig.json`      | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit`                                                     | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
+| 层级                                                      | 关键选项                                                                                                                                              | 用途                                 |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **根** `tsconfig.json`                                    | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                                                                    | 全仓共享的最基本编译环境             |
+| **库包** `packages/tsconfig.base.json`                    | 叠加 `strict`、`noUnusedLocals/Parameters`、`noImplicitReturns`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`declaration`、`sourceMap` | 对外发布的库需更严格的类型与产物声明 |
+| **渲染层** `apps/agent-management/tsconfig.renderer.json` | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit`                                                     | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
+| **主进程** `apps/agent-management/tsconfig.json`          | 继承根配置,追加 `types: ["node"]`(无 DOM)、`strict` 系列开关、`noEmit`                                                                                | 主进程/preload 跑在 Node,禁 DOM 类型 |
 
 各 package 的 `tsconfig.json` 仅声明本包路径相关选项(`outDir` / `rootDir` / `include`),通过 `extends` 复用上层。
 
@@ -246,9 +248,9 @@ export default defineConfig({
 
 > ⚠️ `cli` 包额外有 `"bin": { "remote-cli": "./dist/index.js" }`,源码入口顶部带 `#!/usr/bin/env node` shebang,tsup 会保留。
 
-### 应用:Vite
+### 渲染层:Vite
 
-`apps/vue/vite.config.ts`:
+`apps/agent-management/vite.config.ts`(纯 Web 调试入口,root 指向 `src/renderer`):
 
 ```ts
 export default defineConfig({
@@ -259,13 +261,13 @@ export default defineConfig({
 })
 ```
 
-`apps/vue/build` 脚本 = `vue-tsc --noEmit && vite build`,先类型检查再打包,确保产物类型干净。
+`apps/agent-management` 的 `typecheck` 脚本 = `tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p tsconfig.renderer.json`,主进程与渲染层分开做类型检查。
 
 ---
 
 ## 九、测试
 
-根统一跑,Vitest 配 `jsdom` 环境(`apps/vue` 组件测试需要 DOM):
+根统一跑,Vitest 配 `jsdom` 环境(渲染层组件测试需要 DOM):
 
 ```ts
 // vitest.config.ts
@@ -324,7 +326,7 @@ export default defineConfig({
 - `minor`:新增向后兼容功能
 - `patch`:bug 修复
 
-`@remote/app-vue` 是 private 应用,在 `config.json` 的 `ignore` 中排除,**不会被打版本也不会发包**。`updateInternalDependencies: "patch"` 表示上游依赖变更时下游自动 patch 升级。
+`@remote/agent-management` 是 private 应用,在 `config.json` 的 `ignore` 中排除,**不会被打版本也不会发包**。`updateInternalDependencies: "patch"` 表示上游依赖变更时下游自动 patch 升级。
 
 ---
 
@@ -337,10 +339,10 @@ export default defineConfig({
 3. **库包(`packages/**`)**—— 最严格:
    - `no-explicit-any` / `explicit-module-boundary-types` / `no-non-null-assertion` / `consistent-type-imports` → `error`
    - `no-unused-vars` → `error`(`_` 前缀除外)
-4. **应用(`apps/vue/**`)**—— 适度放宽:
+4. **应用(`apps/agent-management/**`)**—— 适度放宽:
    - `vue/multi-word-component-names` / `vue/component-api-style` / `vue/define-props-declaration` / `vue/require-default-prop` → `error`
    - `no-explicit-any` → `warn`(应用层允许但警告)
-   - `apps/vue/src/App.vue` 单独豁免 `multi-word-component-names`(根组件惯例)
+   - `apps/agent-management/src/renderer/src/App.vue` 单独豁免 `multi-word-component-names`(根组件惯例)
 5. **Prettier 兜底**:`eslint-config-prettier` 放在最后,关闭与 Prettier 冲突的格式化类规则。
 
 ---
@@ -402,24 +404,24 @@ pnpm commit   # 启动 cz-git 中文 prompt
 
 ## 十五、命令速查
 
-| 命令                                  | 作用                                                     |
-| ------------------------------------- | -------------------------------------------------------- |
-| `pnpm install`                        | 装依赖并初始化 husky 钩子                                |
-| `pnpm --filter @remote/app-vue dev`   | 启动 Web 端 dev server(5173)                             |
-| `pnpm build`                          | turbo 拓扑构建所有包                                     |
-| `pnpm typecheck`                      | turbo 类型检查                                           |
-| `pnpm test` / `pnpm test:watch`       | vitest 全仓测试 / watch                                  |
-| `pnpm lint` / `pnpm lint:fix`         | ESLint 检查 / 自动修复                                   |
-| `pnpm format` / `pnpm format:check`   | Prettier 格式化 / 仅检查                                 |
-| `pnpm lint:spelling`                  | cspell 拼写检查                                          |
-| `pnpm commit`                         | cz-git 交互式提交                                        |
-| `pnpm commit:lint`                    | 对已有提交信息跑 commitlint                              |
-| `pnpm changeset`                      | 新建 changeset                                           |
-| `pnpm release:version`                | 打版本号 + 生成 CHANGELOG                                |
-| `pnpm release:publish`                | 拓扑发布到 npm                                           |
-| `pnpm --filter <pkg> <cmd>`           | 在指定包执行                                             |
-| `pnpm --filter @remote/desktop dev`   | 启动 Electron 桌面壳(渲染层复用 `apps/vue`,端口 5174)    |
-| `pnpm --filter @remote/desktop build` | 构建 out/* 并打出 `release/win-unpacked`(win x64 未签名) |
+| 命令                                             | 作用                                                     |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| `pnpm install`                                   | 装依赖并初始化 husky 钩子                                |
+| `pnpm --filter @remote/agent-management dev:web` | 只启动渲染层 Web dev server(5173,不带 Electron 壳)       |
+| `pnpm build`                                     | turbo 拓扑构建所有包                                     |
+| `pnpm typecheck`                                 | turbo 类型检查                                           |
+| `pnpm test` / `pnpm test:watch`                  | vitest 全仓测试 / watch                                  |
+| `pnpm lint` / `pnpm lint:fix`                    | ESLint 检查 / 自动修复                                   |
+| `pnpm format` / `pnpm format:check`              | Prettier 格式化 / 仅检查                                 |
+| `pnpm lint:spelling`                             | cspell 拼写检查                                          |
+| `pnpm commit`                                    | cz-git 交互式提交                                        |
+| `pnpm commit:lint`                               | 对已有提交信息跑 commitlint                              |
+| `pnpm changeset`                                 | 新建 changeset                                           |
+| `pnpm release:version`                           | 打版本号 + 生成 CHANGELOG                                |
+| `pnpm release:publish`                           | 拓扑发布到 npm                                           |
+| `pnpm --filter <pkg> <cmd>`                      | 在指定包执行                                             |
+| `pnpm --filter @remote/agent-management dev`     | 启动 Electron 桌面端(渲染层同包,端口 5174)               |
+| `pnpm --filter @remote/agent-management build`   | 构建 out/* 并打出 `release/win-unpacked`(win x64 未签名) |
 
 > ⚠️ 不提供 `pnpm version` / `pnpm publish`——这些名被 pnpm 内置子命令占据,改用 `release:version` / `release:publish`。
 

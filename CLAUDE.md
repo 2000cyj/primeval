@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Status
 
 Early-stage pnpm monorepo. The build, typecheck, test, lint, and formatting
-toolchain is wired up. `apps/vue` is still a placeholder Vue 3 + Vite app; the
-shared packages contain placeholder or source-only implementations. When adding
-a package's first real code, add the matching scripts and update this file.
+toolchain is wired up. `apps/agent-management` is a single desktop app that
+merges the Electron shell and the Vue 3 renderer into one package; its
+renderer screens are still mock-data placeholders. The shared packages contain
+placeholder or source-only implementations. When adding a package's first real
+code, add the matching scripts and update this file.
 
 ## Package Manager
 
@@ -25,36 +27,42 @@ pnpm -r <cmd>             # run a script across all packages that define it
 
 Workspace globs (`pnpm-workspace.yaml`): `apps/*` and `packages/*`.
 
-| Package              | Dir                   | Role                                                      |
-| -------------------- | --------------------- | --------------------------------------------------------- |
-| `@remote/app-vue`    | `apps/vue`            | Vue 3 + Vite frontend (private, placeholder)              |
-| `@remote/desktop`    | `apps/desktop`        | Electron shell (private) wrapping the `apps/vue` renderer |
-| `@remote/components` | `packages/components` | Shared UI components; depends on `@remote/utils`          |
-| `@remote/cli`        | `packages/cli`        | CLI tool (`bin: remote-cli`); depends on `@remote/utils`  |
-| `@remote/utils`      | `packages/utils`      | Leaf shared utilities; no internal deps                   |
+| Package                    | Dir                     | Role                                                          |
+| -------------------------- | ----------------------- | ------------------------------------------------------------- |
+| `@remote/agent-management` | `apps/agent-management` | Desktop app (private): Electron shell + Vue 3 renderer in one |
+| `@remote/components`       | `packages/components`   | Shared UI components; depends on `@remote/utils`              |
+| `@remote/cli`              | `packages/cli`          | CLI tool (`bin: remote-cli`); depends on `@remote/utils`      |
+| `@remote/utils`            | `packages/utils`        | Leaf shared utilities; no internal deps                       |
 
 Internal deps use the `workspace:*` protocol, so pnpm symlinks local packages
 instead of fetching from a registry. Dependency direction is one-way:
-`app-vue → components → utils` and `cli → utils`. Keep `utils`
+`agent-management → components → utils` and `cli → utils`. Keep `utils`
 dependency-free of other workspace packages to avoid cycles.
 
-`@remote/desktop` depends on `@remote/app-vue` at build time and reuses its
-source as the Electron renderer (electron-vite renderer root = `apps/vue`).
-The root package has no `dev` script; `turbo run dev` picks up every package
-that defines one, so the desktop shell is started explicitly:
+`@remote/agent-management` is one self-contained package: the Electron main
+process lives in `src/main`, the preload bridge in `src/preload`, the IPC
+contract in `src/shared`, and the Vue 3 renderer in `src/renderer` (its own
+`index.html` + `src/`). electron-vite renderer root = `src/renderer`, and
+`@` aliases to `src/renderer/src`. The root package has no `dev` script;
+`turbo run dev` picks up every package that defines one, so the desktop app
+is started explicitly:
 
 ```bash
-pnpm --filter @remote/app-vue dev       # web dev server on 5173
-pnpm --filter @remote/desktop dev        # desktop dev server on 5174 + Electron window (HMR)
-pnpm --filter @remote/desktop build      # out/* + release/win-unpacked (electron-builder --dir)
-pnpm --filter @remote/desktop build:bundle  # only out/main, out/preload, out/renderer
-pnpm --filter @remote/desktop start      # run the built output
-pnpm --filter @remote/desktop typecheck
-pnpm --filter @remote/desktop test       # main/preload unit tests (node environment)
+pnpm --filter @remote/agent-management dev       # desktop dev server on 5174 + Electron window (HMR)
+pnpm --filter @remote/agent-management dev:web   # renderer only, web dev server on 5173 (no Electron)
+pnpm --filter @remote/agent-management build      # out/* + release/win-unpacked (electron-builder --dir)
+pnpm --filter @remote/agent-management build:bundle  # only out/main, out/preload, out/renderer
+pnpm --filter @remote/agent-management start      # run the built output
+pnpm --filter @remote/agent-management typecheck  # tsc (main/preload) + vue-tsc (renderer)
+pnpm --filter @remote/agent-management test       # main/preload unit tests (node environment)
 ```
 
-Ports differ on purpose: `apps/vue` uses Vite's default 5173, the desktop
+Ports differ on purpose: `dev:web` uses Vite's default 5173, the desktop
 renderer dev server uses 5174, so both can run at the same time.
+
+TypeScript is split in two: `tsconfig.json` (main/preload/shared + build
+configs, Node types, no DOM) and `tsconfig.renderer.json` (Vue 3 renderer,
+DOM types, `@/*` path alias).
 
 Security baseline is fixed: `contextIsolation: true`, `sandbox: true`,
 `nodeIntegration: false`, `webSecurity: true`, production CSP with no inline
@@ -66,5 +74,6 @@ preloads cannot be ESM. "Dev mode" is decided by the presence of
 navigation allowlist is a single policy shared by both: dev trusts only the
 dev server origin, non-dev trusts only the actual renderer entry file.
 `ALLOWED_CHANNELS` in `src/shared/channels.ts` is the runtime whitelist gate
-for IPC channels. Do not add Electron/Node code to `packages/*` or
-`apps/vue`.
+for IPC channels. Do not add Electron/Node code to `packages/*` or to the
+renderer (`src/renderer`); renderer code reaches the shell only through the
+`window.desktop` bridge.
