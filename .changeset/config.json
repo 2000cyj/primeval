@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "master",
   "updateInternalDependencies": "patch",
-  "ignore": ["@remote/agent-management"]
+  "ignore": ["@remote/agent-management", "@remote/agent-data-grid"]
 }

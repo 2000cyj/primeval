@@ -23,6 +23,13 @@
     "@remote/agent-management#typecheck": {
       "dependsOn": ["^build"]
     },
+    "@remote/agent-data-grid#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["out/**", "release/**"]
+    },
+    "@remote/agent-data-grid#typecheck": {
+      "dependsOn": ["^build"]
+    },
     "lint": {},
     "lint:fix": {},
     "format": {
