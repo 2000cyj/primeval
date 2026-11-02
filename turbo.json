@@ -16,11 +16,11 @@
       "cache": false,
       "persistent": true
     },
-    "@remote/desktop#build": {
+    "@remote/agent-management#build": {
       "dependsOn": ["^build"],
       "outputs": ["out/**", "release/**"]
     },
-    "@remote/desktop#typecheck": {
+    "@remote/agent-management#typecheck": {
       "dependsOn": ["^build"]
     },
     "lint": {},
