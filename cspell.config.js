@@ -2,7 +2,7 @@
 // ponytail: 全仓检查,后续按需加 ignorePaths(生成的代码、第三方包等)
 export default {
   // 工作区里常见的占位/噪音词,加入词典避免误报
-  words: ['monorepo', 'pnpm', 'eslint', 'prettier', 'vue'],
+  words: ['monorepo', 'pnpm', 'eslint', 'prettier', 'vue', 'dlltool'],
 
   // 词典:直接列包名,cspell 会自动加载其 cspell-ext.json
   dictionaries: ['@cspell/dict-lorem-ipsum'],

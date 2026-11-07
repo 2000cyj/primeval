@@ -104,6 +104,7 @@ export default tseslint.config(
     files: [
       'apps/agent-management/**/*.{ts,tsx,vue,js}',
       'apps/agent-data-grid/**/*.{ts,tsx,vue,js}',
+      'apps/AgentCompose/**/*.{ts,tsx,vue,js}',
     ],
     languageOptions: {
       // .vue 文件中的 <script lang="ts"> 交给 ts 解析器处理
@@ -219,13 +220,14 @@ export default tseslint.config(
     },
   },
 
-  // apps 下的 Node 端 .mjs 脚本（vite.config.ts / scripts/*.mjs）需要 Node 全局
+  // Node 端 .mjs 脚本（vite.config.ts / scripts/*.mjs）需要 Node 全局
   {
     files: [
       'apps/**/vite.config.ts',
       'apps/**/electron.vite.config.ts',
       'apps/**/scripts/**/*.{js,mjs,ts}',
       'apps/**/vite/**/*.ts',
+      'scripts/**/*.{js,mjs}',
     ],
     languageOptions: {
       parserOptions: {

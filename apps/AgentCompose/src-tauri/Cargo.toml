@@ -1,0 +1,21 @@
+[package]
+name = "agent-compose"
+version = "0.1.0"
+description = "AgentCompose desktop UI"
+authors = ["Primeval"]
+edition = "2021"
+
+[lib]
+name = "agent_compose_lib"
+# 只保留 rlib：本项目目前只有 Windows 桌面端。
+# 模板里默认的 "cdylib" 在 windows-gnu 上链接会失败 ——
+# cdylib 会导出全部可达符号，GNU ld 报 "export ordinal too large: 90962"
+# （PE 导出序号的 65535 上限），与 dlltool/工具链无关。
+# 真要做移动端时，在对应 target 下再加回 "cdylib"/"staticlib"。
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

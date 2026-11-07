@@ -1,0 +1,31 @@
+{
+  "name": "@remote/agent-compose",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Skills 管理桌面端：Vue 3 + Tauri",
+  "scripts": {
+    "dev": "node scripts/tauri.mjs dev",
+    "dev:web": "vite",
+    "build": "node scripts/tauri.mjs build",
+    "build:web": "vite build",
+    "tauri": "node scripts/tauri.mjs",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "lucide-vue-next": "^0.468.0",
+    "vue": "catalog:"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-vue": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vue-tsc": "catalog:",
+    "vitest": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "jsdom": "catalog:"
+  }
+}

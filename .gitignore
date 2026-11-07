@@ -23,5 +23,12 @@ apps/agent-management/release/
 apps/agent-data-grid/target/
 apps/agent-data-grid/crates/*/target/
 apps/agent-data-grid/src-tauri/target/
+apps/AgentCompose/src-tauri/target/
 # turbo 本地缓存(内容寻址,跨机器哈希不同,不提交)
 .turbo/
+
+# Figma MCP 本地覆盖(指向本机已有的 figma-developer-mcp 安装)
+scripts/.figma-mcp.local.json
+
+# Figma 设计稿参考产物(渲染图 + 规格 JSON,仅本地还原用)
+.figma-ref/

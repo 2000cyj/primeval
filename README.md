@@ -16,6 +16,7 @@
 | 语言       | TypeScript                 | `^5.9.3`         | 两级 `tsconfig` 继承                  |
 | 库包构建   | tsup                       | `^8.5.1`         | ESM + CJS + d.ts 一站产出             |
 | 应用构建   | Vite + @vitejs/plugin-vue  | vite `^8.1.5`    | 应用 dev/build/preview                |
+| 桌面壳     | Tauri v2                   | `^2.12`          | 原生窗口 + Rust 壳                    |
 | 类型检查   | tsc + vue-tsc              | vue-tsc `^3.3.7` | 应用额外校验 `.vue` 文件              |
 | 测试       | Vitest + jsdom + @vue/test | vitest `^4.1.10` | 根统一跑,jsdom 兼容 Vue 组件          |
 | 版本与发包 | @changesets/cli            | `^2.31.1`        | changeset 驱动版本/changelog/publish  |
@@ -50,7 +51,8 @@ corepack enable && corepack prepare pnpm@10.18.1 --activate   # 激活指定版�
 remote-monorepo/
 ├── apps/
 │   ├── agent-management/       # @remote/agent-management(private) 桌面端:Electron 壳 + Vue 3 渲染层合一
-│   └── agent-data-grid/        # @remote/agent-data-grid(private) 数据表格桌面端(Tauri + Rust + React)
+│   ├── agent-data-grid/        # @remote/agent-data-grid(private) 数据表格桌面端(Tauri + Rust + React)
+│   └── AgentCompose/           # @remote/agent-compose(private) Agent Skills 桌面端(Tauri + Rust 壳 + Vue 3)
 ├── packages/
 │   ├── utils/                  # @remote/utils      叶子工具包
 │   ├── components/             # @remote/components 共享 UI 组件
@@ -93,6 +95,7 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 | -------------------------- | ----------------------- | ------- | ------------------------------------------------ |
 | `@remote/agent-management` | `apps/agent-management` | private | 桌面端(Electron 壳 + Vue 3 渲染层)               |
 | `@remote/agent-data-grid`  | `apps/agent-data-grid`  | private | 数据表格桌面端(Tauri + Rust 引擎 + React 渲染层) |
+| `@remote/agent-compose`    | `apps/AgentCompose`     | private | Agent Skills 桌面端(Tauri + Rust + Vue 3)        |
 | `@remote/components`       | `packages/components`   | public  | 共享 UI 组件                                     |
 | `@remote/cli`              | `packages/cli`          | public  | CLI 工具                                         |
 | `@remote/utils`            | `packages/utils`        | public  | 叶子工具函数                                     |
@@ -133,7 +136,18 @@ pnpm --filter @remote/agent-data-grid dev        # tauri dev(vite 5175 + 原生�
 pnpm --filter @remote/agent-data-grid dev:web    # 只起 vite dev server(5175),不起壳
 pnpm --filter @remote/agent-data-grid build      # tauri build(前端 dist + rust 可执行文件)
 pnpm --filter @remote/agent-data-grid gen:bindings  # cargo test 重新生成 src/bindings.ts
+
+# Agent Skills 桌面端(apps/AgentCompose):tauri + rust 壳 + vue 3 渲染层
+pnpm --filter @remote/agent-compose dev        # tauri dev(vite 5176 + 原生窗口)
+pnpm --filter @remote/agent-compose dev:web    # 只起 vite dev server(5176),不起壳
+pnpm --filter @remote/agent-compose build      # tauri build(前端 dist + rust 可执行文件)
 ```
+
+> `apps/AgentCompose` 的 tauri 命令走 `scripts/tauri.mjs`:它会把 `~/.cargo/bin` 与
+> GNU 工具链的 `self-contained` binutils 目录补进 PATH,并在启动前跑一次 2 秒探针编译,
+> 自动挑一组能用的 `rustc` 参数(本机 rustup 的 GNU 工具链 spawn 不了自带的
+> `dlltool.exe`,而 `raw-dylib` crate 需要 rustc 现场生成 import library)。探针会打印
+> 最终选中的策略。
 
 > 首次运行桌面壳需联网下载 Electron 二进制(约 158MB),Electron 45 已无 postinstall,改为首次 `require('electron')` 时懒下载;内网环境需配置 `ELECTRON_MIRROR`。
 
@@ -430,6 +444,8 @@ pnpm commit   # 启动 cz-git 中文 prompt
 | `pnpm --filter <pkg> <cmd>`                      | 在指定包执行                                             |
 | `pnpm --filter @remote/agent-management dev`     | 启动 Electron 桌面端(渲染层同包,端口 5174)               |
 | `pnpm --filter @remote/agent-management build`   | 构建 out/* 并打出 `release/win-unpacked`(win x64 未签名) |
+| `pnpm --filter @remote/agent-compose dev`        | 启动 AgentCompose 桌面端(Tauri 壳 + vite 5176)           |
+| `pnpm --filter @remote/agent-data-grid dev`      | 启动数据表格桌面端(Tauri 壳 + vite 5175)                 |
 
 > ⚠️ 不提供 `pnpm version` / `pnpm publish`——这些名被 pnpm 内置子命令占据,改用 `release:version` / `release:publish`。
 

@@ -2,6 +2,12 @@
   "mcpServers": {
     "chrome-devtools": {
       "command": "chrome-devtools-mcp"
+    },
+    "figma": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["scripts/figma-mcp.mjs", "--stdio", "--no-telemetry", "--image-dir", ".claude"],
+      "env": {}
     }
   }
 }
