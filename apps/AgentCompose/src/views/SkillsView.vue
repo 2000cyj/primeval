@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Bot, MoreHorizontal, Plus, Search, X } from 'lucide-vue-next'
-import { skills } from '@/data/skills'
-import { useToast } from '@/composables/useToast'
+import { NButton, NIcon, NInput, NModal, NSpace, NSwitch, useMessage } from 'naive-ui'
+import { Plus, Search, User } from 'lucide-vue-next'
+import { skills, type Skill } from '@/data/skills'
+import SkillRowMenu, { type SkillMenuAction } from '@/components/SkillRowMenu.vue'
+import SkillDetailDrawer from '@/components/SkillDetailDrawer.vue'
+import SkillCreateModal, { type CreateMethod } from '@/components/SkillCreateModal.vue'
 
+const message = useMessage()
 const query = ref('')
-const { notify } = useToast()
 
-/** 页面自有副本：避免直接改动 data/skills.ts 的共享模块状态 */
+/** 页面自有副本：切换开关不污染 data 模块的共享状态 */
 const skillList = ref(skills.map((skill) => ({ ...skill })))
 
 const visibleSkills = computed(() => {
@@ -18,35 +21,92 @@ const visibleSkills = computed(() => {
   )
 })
 
-const toggleSkill = (skill: (typeof skillList.value)[number]) => {
+const toggleSkill = (skill: Skill) => {
   skill.enabled = !skill.enabled
+}
+
+/** 当前打开详情抽屉的 skill */
+const detailSkill = ref<Skill | null>(null)
+/** 新建 skill 弹窗 */
+const showCreate = ref(false)
+/** 待删除的 skill（删除前二次确认） */
+const deleteTarget = ref<Skill | null>(null)
+
+const openDetail = (skillName: string) => {
+  detailSkill.value = skillList.value.find((skill) => skill.name === skillName) ?? null
+}
+
+const onRowAction = (action: SkillMenuAction, skillName: string) => {
+  if (action === 'detail') {
+    openDetail(skillName)
+    return
+  }
+  if (action === 'delete') {
+    deleteTarget.value = skillList.value.find((skill) => skill.name === skillName) ?? null
+    return
+  }
+  if (action === 'duplicate') {
+    message.success(`已创建副本：${skillName}`)
+    return
+  }
+  message.info(`编辑：${skillName}`)
+}
+
+const confirmDelete = () => {
+  const target = deleteTarget.value
+  if (!target) return
+  skillList.value = skillList.value.filter((skill) => skill.name !== target.name)
+  if (detailSkill.value?.name === target.name) detailSkill.value = null
+  deleteTarget.value = null
+  message.success(`已删除：${target.name}`)
+}
+
+const onCreateMethod = (method: CreateMethod) => {
+  showCreate.value = false
+  const labels: Record<CreateMethod, string> = {
+    manual: '手动创建',
+    local: '从本地导入',
+    url: '从 URL 导入',
+    runtime: '从运行时复制',
+  }
+  message.info(`${labels[method]}：即将支持`)
 }
 </script>
 
 <template>
-  <section class="panel">
-    <div class="toolbar">
-      <div class="search">
-        <Search :size="17" aria-hidden="true" />
-        <input v-model="query" aria-label="按名称搜索" placeholder="按名称搜索" />
-        <button
-          v-if="query"
-          type="button"
-          class="search-clear"
-          aria-label="清空搜索"
-          @click="query = ''"
-        >
-          <X :size="14" aria-hidden="true" />
-        </button>
+  <section class="page">
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">Skills</h1>
+        <p class="page-sub">{{ skillList.length }} 个能力包，可被 agents 引用</p>
       </div>
-      <span class="total">共 {{ visibleSkills.length }} skills</span>
-      <span class="spacer" />
-      <button type="button" class="primary-button" @click="notify('添加 Skill 面板开发中')">
-        <Plus :size="17" aria-hidden="true" />添加skills
-      </button>
-    </div>
+      <NSpace :size="8">
+        <NInput
+          v-model:value="query"
+          class="search"
+          size="small"
+          clearable
+          placeholder="搜索名称或描述"
+        >
+          <template #prefix>
+            <NIcon :size="14">
+              <Search />
+            </NIcon>
+          </template>
+        </NInput>
+        <NButton size="small" type="primary" @click="showCreate = true">
+          <template #icon>
+            <NIcon :size="14">
+              <Plus />
+            </NIcon>
+          </template>
+          添加 Skill
+        </NButton>
+      </NSpace>
+    </header>
 
-    <div class="table" role="table" aria-label="Skills 列表">
+    <div class="card">
+      <!-- 表头独立于表格体，固定不滚动 -->
       <div class="table-head table-grid" role="row">
         <span role="columnheader">名称</span>
         <span role="columnheader">使用者</span>
@@ -55,315 +115,283 @@ const toggleSkill = (skill: (typeof skillList.value)[number]) => {
         <span role="columnheader"><span class="sr-only">操作</span></span>
       </div>
 
-      <div
-        v-for="skill in visibleSkills"
-        :key="skill.name"
-        class="skill-row table-grid"
-        :class="{ muted: !skill.enabled }"
-        role="row"
-      >
-        <div class="skill-info" role="cell">
-          <span class="skill-icon" :style="{ background: skill.iconBg, color: skill.iconColor }">
-            <component :is="skill.icon" :size="20" aria-hidden="true" />
-          </span>
-          <span class="skill-copy">
-            <strong>{{ skill.name }}</strong>
-            <small>{{ skill.description }}</small>
-          </span>
-        </div>
-
-        <div class="users" role="cell">
-          <span class="avatars">
-            <i
-              v-for="(avatar, avatarIndex) in skill.avatars"
-              :key="avatar.bg + avatarIndex"
-              class="avatar"
-              :style="{ background: avatar.bg, color: avatar.fg }"
+      <!-- 只有表格体滚动 -->
+      <div class="table-scroll">
+        <div
+          v-for="skill in visibleSkills"
+          :key="skill.name"
+          class="skill-row table-grid"
+          :class="{ muted: !skill.enabled }"
+          role="row"
+        >
+          <div class="cell-name" role="cell">
+            <span
+              class="cell-icon"
+              :style="{ background: skill.iconBg, color: skill.iconColor }"
               aria-hidden="true"
             >
-              <Bot :size="13" aria-hidden="true" />
-            </i>
-            <i v-if="skill.overflow !== null" class="avatar overflow">+{{ skill.overflow }}</i>
-          </span>
-          <span class="user-count">{{ skill.users }}</span>
+              <component :is="skill.icon" :size="15" />
+            </span>
+            <span class="cell-text">
+              <span class="cell-title">{{ skill.name }}</span>
+              <span class="cell-desc">{{ skill.description }}</span>
+            </span>
+          </div>
+
+          <div class="cell-users" role="cell">
+            <span class="cell-avatars">
+              <span
+                v-for="(avatar, avatarIndex) in skill.avatars"
+                :key="avatar.bg + avatarIndex"
+                class="cell-avatar"
+                :style="{ background: avatar.bg, color: avatar.fg }"
+                aria-hidden="true"
+              >
+                <User :size="12" />
+              </span>
+              <span v-if="skill.overflow !== null" class="cell-avatar cell-avatar-more">
+                +{{ skill.overflow }}
+              </span>
+            </span>
+            <span class="cell-muted">{{ skill.users }}</span>
+          </div>
+
+          <div class="cell-muted tnum" role="cell">{{ skill.updated }}</div>
+
+          <div role="cell">
+            <NSwitch
+              :value="skill.enabled"
+              size="small"
+              :aria-label="`${skill.name} 状态`"
+              @update:value="toggleSkill(skill)"
+            />
+          </div>
+
+          <div class="cell-actions" role="cell">
+            <SkillRowMenu
+              :skill-name="skill.name"
+              @action="(action: SkillMenuAction, name: string) => onRowAction(action, name)"
+            />
+          </div>
         </div>
 
-        <div class="updated" role="cell">{{ skill.updated }}</div>
-
-        <div role="cell">
-          <button
-            class="switch"
-            :class="{ on: skill.enabled }"
-            role="switch"
-            :aria-checked="skill.enabled"
-            :aria-label="'切换 ' + skill.name + ' 状态'"
-            type="button"
-            @click="toggleSkill(skill)"
-          >
-            <span />
-          </button>
-        </div>
-
-        <button
-          class="more"
-          type="button"
-          role="cell"
-          :aria-label="skill.name + ' 更多操作'"
-          @click="notify(skill.name + ' 设置')"
-        >
-          <MoreHorizontal :size="18" aria-hidden="true" />
-        </button>
+        <p v-if="!visibleSkills.length" class="empty">没有匹配的 Skill</p>
       </div>
-
-      <div v-if="!visibleSkills.length" class="empty">没有找到匹配的 Skill</div>
     </div>
+
+    <SkillCreateModal :show="showCreate" @close="showCreate = false" @pick="onCreateMethod" />
+
+    <SkillDetailDrawer
+      :skill="detailSkill"
+      @close="detailSkill = null"
+      @toggle="
+        (name: string, enabled: boolean) => {
+          const skill = skillList.find((item) => item.name === name)
+          if (skill) skill.enabled = enabled
+        }
+      "
+      @edit="(name: string) => message.info('编辑配置：' + name)"
+      @delete="
+        (name: string) => {
+          deleteTarget = skillList.find((item) => item.name === name) ?? null
+        }
+      "
+    />
+
+    <NModal
+      :show="deleteTarget !== null"
+      preset="card"
+      class="confirm-modal"
+      style="width: 360px"
+      :bordered="false"
+      title="删除 skill"
+      @update:show="(show: boolean) => !show && (deleteTarget = null)"
+    >
+      <p class="confirm-text">
+        确定要删除 <strong>{{ deleteTarget?.name }}</strong> 吗？该操作不可撤销。
+      </p>
+      <div class="confirm-actions">
+        <NButton size="small" @click="deleteTarget = null">取消</NButton>
+        <NButton size="small" type="error" @click="confirmDelete">删除</NButton>
+      </div>
+    </NModal>
   </section>
 </template>
 
 <style scoped>
-.panel {
-  min-height: calc(100vh - 64px);
-  background: #fff;
+.page {
+  /* 整页不滚动：页面头部与表头固定，只有表格体滚动 */
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 48px);
+  padding: 20px 24px 24px;
+  overflow: hidden;
 }
 
-.toolbar {
+.page-head {
+  flex: none;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 68px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--color-border);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.page-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--c-text-3);
 }
 
 .search {
+  width: 240px;
+}
+
+.card {
   display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 340px;
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  color: var(--color-text-muted);
-}
-
-.search:focus-within {
-  border-color: #8c81f6;
-  box-shadow: 0 0 0 3px rgba(113, 97, 237, 0.07);
-}
-
-.search input {
+  flex-direction: column;
   flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--color-text);
-  font-size: 11px;
-}
-
-.search input::placeholder {
-  color: var(--color-text-muted);
-}
-
-.search-clear {
-  display: grid;
-  place-items: center;
-  padding: 2px;
-  border: 0;
-  background: none;
-  color: var(--color-text-muted);
-}
-
-.total {
-  font-size: 10px;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.primary-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 16px;
-  border: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: 8px;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 5px 14px rgba(91, 76, 240, 0.2);
 }
 
-.primary-button:hover {
-  background: var(--color-primary-hover);
-}
-
-/* 设计稿栅格：393.42 / 183.59 / 209.83 / 131.14 / 38，gap 12，左右内边距 20 */
+/* 表头与数据行共用同一套列宽定义，保证纵向对齐 */
 .table-grid {
   display: grid;
-  grid-template-columns: 393.42fr 183.59fr 209.83fr 131.14fr 38fr;
+  grid-template-columns: 38fr 19fr 15fr 9fr 6fr;
   align-items: center;
   column-gap: 12px;
   padding: 0 20px;
 }
 
 .table-head {
-  height: 41px;
-  background: #fbfbfc;
-  border-bottom: 1px solid var(--color-divider);
-  color: var(--color-text-muted);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  flex: none;
+  height: 39px;
+  background: var(--c-surface-sunken);
+  border-bottom: 1px solid var(--c-border);
+  color: var(--c-text-3);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .skill-row {
-  min-height: 76px;
+  min-height: 51px;
   padding: 12px 20px;
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--c-border);
   transition: background 0.15s;
 }
 
 .skill-row:hover {
-  background: var(--color-surface-muted);
+  background: var(--c-surface-sunken);
 }
 
 .skill-row.muted {
-  background: var(--color-surface-muted);
+  background: var(--c-surface-sunken);
 }
 
-.skill-info {
+.cell-name {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
-.skill-icon {
+.cell-icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
 }
 
-.skill-copy {
+.cell-text {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 1px;
   min-width: 0;
 }
 
-.skill-copy strong {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--color-text);
+.cell-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-text);
 }
 
-.skill-copy small {
-  font-size: 9px;
-  color: var(--color-text-muted);
-  white-space: nowrap;
+.cell-desc {
   overflow: hidden;
+  font-size: 12px;
+  color: var(--c-text-3);
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.users {
+.cell-users {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
 }
 
-.avatars {
+.cell-avatars {
   display: flex;
   align-items: center;
-  padding-left: 5px;
   flex: none;
 }
 
-.avatar {
+.cell-avatar {
   display: grid;
   place-items: center;
-  width: 25px;
-  height: 25px;
+  width: 20px;
+  height: 20px;
   margin-left: -5px;
-  border: 2px solid #fff;
+  border: 1.5px solid #fff;
   border-radius: 50%;
 }
 
-.avatar.overflow {
-  background: var(--color-divider);
-  color: #555c6d;
-  font-size: 8px;
-  font-style: normal;
+.cell-avatar:first-child {
+  margin-left: 0;
 }
 
-.user-count {
+.cell-avatar-more {
+  background: #f3f4f6;
+  color: var(--c-text-3);
   font-size: 9px;
-  color: var(--color-text-weak);
+}
+
+.cell-muted {
+  font-size: 12px;
+  color: var(--c-text-3);
   white-space: nowrap;
 }
 
-.updated {
-  font-family: 'Cousine', 'Courier New', monospace;
-  font-size: 8.7px;
-  color: #555c6d;
-  white-space: nowrap;
-}
-
-.switch {
+.cell-actions {
   display: flex;
-  align-items: center;
-  width: 32px;
-  height: 18px;
-  padding: 2px;
-  border: 0;
-  border-radius: 10px;
-  background: var(--color-text-disabled);
-  transition: background 0.18s;
+  justify-content: flex-end;
 }
 
-.switch span {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
-  transition: transform 0.18s;
-}
-
-.switch.on {
-  background: var(--color-primary);
-}
-
-.switch.on span {
-  transform: translateX(14px);
-}
-
-.more {
-  display: grid;
-  place-items: center;
-  justify-self: end;
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-muted);
-}
-
-.more:hover {
-  background: #f1f0ff;
-  color: #6555e9;
+.empty {
+  margin: 0;
+  padding: 48px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--c-text-3);
 }
 
 .sr-only {
@@ -378,27 +406,16 @@ const toggleSkill = (skill: (typeof skillList.value)[number]) => {
   border: 0;
 }
 
-.empty {
-  display: grid;
-  place-items: center;
-  height: 160px;
-  color: #a0a5b0;
-  font-size: 12px;
+.confirm-text {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c-text-2);
 }
 
-@media (max-width: 1080px) {
-  .table-grid {
-    grid-template-columns: minmax(220px, 2fr) minmax(130px, 1fr) minmax(150px, 1.1fr) 70px 30px;
-  }
-}
-
-@media (max-width: 860px) {
-  .toolbar {
-    padding: 0 12px;
-  }
-
-  .search {
-    width: min(48vw, 300px);
-  }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

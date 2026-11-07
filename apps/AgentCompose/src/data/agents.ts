@@ -1,5 +1,4 @@
-import type { Component } from 'vue'
-import { Bot, MousePointer2, Sparkle, Sun } from 'lucide-vue-next'
+import { agentIcons } from '@/data/agentIcons'
 
 export type CliStatus = 'available' | 'login-required'
 
@@ -18,11 +17,10 @@ export type CliAgent = {
   /** 是否存在其它安装位置 */
   extraInstall?: string
   status: CliStatus
-  icon: Component
+  /** 品牌图标（svg 资源 URL） */
+  icon: string
   /** 图标底色 */
   iconBg: string
-  /** 图标颜色 */
-  iconColor: string
 }
 
 /** 本地 CLI（智能体）列表 */
@@ -36,9 +34,8 @@ export const cliAgents: CliAgent[] = [
     latestVersion: '2.1.318',
     extraInstall: '另有 1 处安装',
     status: 'available',
-    icon: Sun,
+    icon: agentIcons.claude,
     iconBg: '#FFF0E8',
-    iconColor: '#DC7835',
   },
   {
     id: 'openai-codex',
@@ -47,9 +44,8 @@ export const cliAgents: CliAgent[] = [
     path: '/opt/homebrew/bin/codex',
     version: 'v0.8.0',
     status: 'available',
-    icon: Bot,
+    icon: agentIcons.openai,
     iconBg: '#E7F6F1',
-    iconColor: '#167D69',
   },
   {
     id: 'gemini-cli',
@@ -58,9 +54,8 @@ export const cliAgents: CliAgent[] = [
     path: '/usr/local/bin/gemini',
     version: 'v0.1.12',
     status: 'login-required',
-    icon: Sparkle,
+    icon: agentIcons.gemini,
     iconBg: '#EBF0FF',
-    iconColor: '#4F6FDC',
   },
   {
     id: 'cursor-agent',
@@ -69,8 +64,7 @@ export const cliAgents: CliAgent[] = [
     path: '/Users/lin/.local/bin/cursor-agent',
     version: 'v0.4.2',
     status: 'available',
-    icon: MousePointer2,
-    iconBg: '#292D35',
-    iconColor: '#F1F2F4',
+    icon: agentIcons.opencode,
+    iconBg: '#F1F5F9',
   },
 ]

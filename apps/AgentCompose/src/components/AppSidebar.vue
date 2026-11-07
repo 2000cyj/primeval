@@ -1,22 +1,26 @@
 <script setup lang="ts">
-import { Boxes, Layers, Network, Settings, Workflow } from 'lucide-vue-next'
+import { Blocks, Cpu, Network, Settings, Workflow } from 'lucide-vue-next'
+import { cliAgents } from '@/data/agents'
 
-export type ViewKey = 'skills' | 'workbench' | 'agents' | 'settings'
+export type ViewKey = 'skills' | 'workbench' | 'agents' | 'agentRuns' | 'agentCreate' | 'settings'
 
-const props = defineProps<{ active: ViewKey }>()
+defineProps<{ active: ViewKey }>()
 const emit = defineEmits<{ navigate: [key: ViewKey] }>()
 
 const navItems = [
-  { key: 'skills' as const, label: 'skills', icon: Layers },
+  { key: 'skills' as const, label: 'Skills', icon: Blocks },
   { key: 'workbench' as const, label: '智能体工作台', icon: Workflow },
-  { key: 'agents' as const, label: '智能体', icon: Network, count: 4 },
+  { key: 'agents' as const, label: 'agents', icon: Network, count: cliAgents.length },
+  { key: 'agentRuns' as const, label: '智能体', icon: Cpu },
 ]
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside class="rail">
     <div class="brand">
-      <span class="brand-mark"><Boxes :size="22" aria-hidden="true" /></span>
+      <span class="brand-mark" aria-hidden="true">
+        <Blocks :size="14" />
+      </span>
       <span class="brand-name">AgentSpace</span>
     </div>
 
@@ -24,23 +28,27 @@ const navItems = [
       <button
         v-for="item in navItems"
         :key="item.key"
+        type="button"
         class="nav-item"
-        :class="{ active: props.active === item.key }"
+        :class="{ active: active === item.key }"
+        :aria-current="active === item.key ? 'page' : undefined"
         @click="emit('navigate', item.key)"
       >
-        <component :is="item.icon" :size="19" />
+        <component :is="item.icon" :size="15" aria-hidden="true" />
         <span class="nav-label">{{ item.label }}</span>
-        <span v-if="item.count" class="nav-count">{{ item.count }}</span>
+        <span v-if="item.count" class="nav-count tnum">{{ item.count }}</span>
       </button>
     </nav>
 
-    <div class="sidebar-foot">
+    <div class="rail-foot">
       <button
+        type="button"
         class="nav-item"
-        :class="{ active: props.active === 'settings' }"
+        :class="{ active: active === 'settings' }"
+        :aria-current="active === 'settings' ? 'page' : undefined"
         @click="emit('navigate', 'settings')"
       >
-        <Settings :size="19" aria-hidden="true" />
+        <Settings :size="15" aria-hidden="true" />
         <span class="nav-label">系统设置</span>
       </button>
     </div>
@@ -48,112 +56,110 @@ const navItems = [
 </template>
 
 <style scoped>
-.sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 3;
-  width: 236px;
-  padding: 24px 14px 18px;
+.rail {
+  position: sticky;
+  top: 0;
   display: flex;
   flex-direction: column;
-  color: var(--color-sidebar-text);
-  background:
-    radial-gradient(circle at 10% 5%, rgba(103, 89, 255, 0.18) 0%, rgba(103, 89, 255, 0) 27%),
-    var(--color-sidebar-bg);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  flex: none;
+  width: 208px;
+  height: 100vh;
+  padding: 12px 8px;
+  background: var(--c-rail);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 0 10px 24px;
+  gap: 8px;
+  padding: 4px 8px 16px;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
   color: #fff;
-  background: var(--color-brand-gradient);
-  box-shadow: 0 6px 20px rgba(91, 76, 240, 0.3);
+  background: var(--c-accent);
 }
 
 .brand-name {
-  font-family: 'DM Sans', system-ui, sans-serif;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f3f4f6;
 }
 
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 10px;
+  gap: 1px;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   width: 100%;
-  height: 42px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-sidebar-text);
+  color: var(--c-rail-text);
   font-size: 13px;
   text-align: left;
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--c-rail-hover);
+  color: #d1d5db;
 }
 
 .nav-item.active {
-  background: var(--color-primary-soft);
-  box-shadow: inset 2px 0 0 0 var(--color-primary-border);
-  color: #fff;
+  background: var(--c-rail-active);
+  color: var(--c-rail-text-active);
+  font-weight: 500;
 }
 
 .nav-label {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-count {
-  margin-left: auto;
-  padding: 2px 6px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #828794;
-  font-size: 10px;
+  font-size: 11px;
+  color: #6b7280;
 }
 
-.sidebar-foot {
+.nav-item.active .nav-count {
+  color: #9ca3af;
+}
+
+.rail-foot {
   margin-top: auto;
-  padding-bottom: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
-@media (max-width: 860px) {
-  .sidebar {
-    width: 64px;
-    padding: 24px 8px 18px;
-  }
-
-  .brand {
-    padding: 0 12px 24px;
+@media (max-width: 760px) {
+  .rail {
+    width: 52px;
   }
 
   .brand-name,
   .nav-label,
   .nav-count {
     display: none;
+  }
+
+  .brand {
+    justify-content: center;
+    padding: 4px 0 16px;
   }
 
   .nav-item {

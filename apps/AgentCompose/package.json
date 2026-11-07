@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "echarts": "^6.1.0",
     "lucide-vue-next": "^0.468.0",
+    "naive-ui": "^2.45.3",
     "vue": "catalog:"
   },
   "devDependencies": {

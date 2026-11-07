@@ -49,7 +49,15 @@
  *   AGENT_COMPOSE_RUSTFLAGS=...   覆盖探针结论，强制指定 rustc 参数
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  copyFileSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -175,10 +183,7 @@ function strategies() {
   if (msysMingw) {
     list.unshift({
       name: 'msys2-mingw',
-      flags: [
-        '-C', `dlltool=${msysMingw.dlltool}`,
-        '-C', `linker=${msysMingw.gcc}`,
-      ],
+      flags: ['-C', `dlltool=${msysMingw.dlltool}`, '-C', `linker=${msysMingw.gcc}`],
     })
   }
 
@@ -203,7 +208,11 @@ function strategies() {
   }
   list.push({
     name: 'link-self-contained=no',
-    flags: ['-C', 'link-self-contained=no', ...(existsSync(toolchain.gcc) ? ['-C', `linker=${toolchain.gcc}`] : [])],
+    flags: [
+      '-C',
+      'link-self-contained=no',
+      ...(existsSync(toolchain.gcc) ? ['-C', `linker=${toolchain.gcc}`] : []),
+    ],
   })
 
   // 把 self-contained 的 binutils 复制到临时目录再从 PATH 找 —— 用来排除
@@ -258,12 +267,16 @@ function probe(strategy) {
     }
     // 注意:RUSTFLAGS 是 cargo 认的环境变量,直接调 rustc 不认,
     // 所以参数必须原样作为 rustc 的命令行参数传进去。
-    const result = spawnSync('rustc', ['--edition', '2021', ...strategy.flags, src, '-o', join(dir, 'probe.exe')], {
-      cwd: dir,
-      env,
-      encoding: 'utf8',
-      timeout: 120_000,
-    })
+    const result = spawnSync(
+      'rustc',
+      ['--edition', '2021', ...strategy.flags, src, '-o', join(dir, 'probe.exe')],
+      {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+        timeout: 120_000,
+      },
+    )
     return {
       ok: result.status === 0,
       output: `${result.stdout || ''}${result.stderr || ''}`.trim(),
@@ -292,7 +305,9 @@ function pickStrategy() {
       return candidate
     }
     const firstError = result.output.split('\n').find((line) => /error/i.test(line)) || ''
-    console.log(`[tauri.mjs] 探针失败 → 策略:${candidate.name}${firstError ? ` | ${firstError.trim()}` : ''}`)
+    console.log(
+      `[tauri.mjs] 探针失败 → 策略:${candidate.name}${firstError ? ` | ${firstError.trim()}` : ''}`,
+    )
   }
   console.warn('[tauri.mjs] 所有策略都不可用，将按默认参数启动（错误信息以 Tauri 输出为准）')
   return { name: 'default', flags: [] }
@@ -333,7 +348,11 @@ function findPortOwner(port) {
 function describePid(pid) {
   const ps = spawnSync(
     'powershell',
-    ['-NoProfile', '-Command', `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`],
+    [
+      '-NoProfile',
+      '-Command',
+      `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+    ],
     { encoding: 'utf8' },
   )
   return (ps.stdout || '').trim()
@@ -430,7 +449,12 @@ if (chosen.extraPath) {
   env.PATH = `${chosen.extraPath}${delimiter}${env.PATH || ''}`
 }
 
-const tauriBin = join(packageRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'tauri.CMD' : 'tauri')
+const tauriBin = join(
+  packageRoot,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'tauri.CMD' : 'tauri',
+)
 if (!existsSync(tauriBin)) {
   console.error(`[tauri.mjs] 找不到 Tauri CLI:${tauriBin}\n请先在仓库根执行 pnpm install。`)
   process.exit(1)

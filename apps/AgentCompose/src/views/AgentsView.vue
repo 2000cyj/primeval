@@ -1,551 +1,364 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import {
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  Download,
-  MoreHorizontal,
-  RefreshCw,
-} from 'lucide-vue-next'
+import { computed, h, ref } from 'vue'
+import { NButton, NDataTable, NIcon, NSelect, NTag, useMessage } from 'naive-ui'
+import type { DataTableColumns } from 'naive-ui'
+import { Download, RefreshCw } from 'lucide-vue-next'
 import { cliAgents, type CliAgent } from '@/data/agents'
-import { useToast } from '@/composables/useToast'
+import CliRowMenu, { type CliMenuAction } from '@/components/CliRowMenu.vue'
 
-/** 定时刷新间隔选项 */
-const REFRESH_OPTIONS = [
-  { label: '15s', hint: '15 秒内' },
-  { label: '30s', hint: '30 秒内' },
-  { label: '1min', hint: '1 分钟内' },
-  { label: '5min', hint: '5 分钟内' },
+const message = useMessage()
+
+const intervals = [
+  { label: '15 秒', value: '15s' },
+  { label: '30 秒', value: '30s' },
+  { label: '1 分钟', value: '1min' },
+  { label: '5 分钟', value: '5min' },
 ]
 
-/** 状态徽章配色（可用 / 需要登录） */
-const STATUS_META: Record<
-  CliAgent['status'],
-  { label: string; bg: string; dot: string; text: string }
-> = {
-  available: { label: '可用', bg: '#E8F8F1', dot: '#20A676', text: '#187957' },
-  'login-required': { label: '需要登录', bg: '#FFF3DC', dot: '#D39234', text: '#9A651F' },
-}
-
-const refreshInterval = ref<string>('15s')
-const { notify } = useToast()
-
-const nextScanText = computed(() => {
-  const option = REFRESH_OPTIONS.find((item) => item.label === refreshInterval.value)
-  return `下次自动扫描：${option ? option.hint : '15 秒内'}`
+const refreshInterval = ref('15s')
+const nextScan = computed(() => {
+  const option = intervals.find((item) => item.value === refreshInterval.value)
+  return option?.label ?? '15 秒'
 })
 
-const onRefreshNow = () => {
-  notify(`正在重新扫描本地 CLI 安装状态（间隔 ${refreshInterval.value}）`)
-}
-
 const onUpgrade = (agent: CliAgent) => {
-  notify(`开始升级 ${agent.name} 至 ${agent.latestVersion ?? ''}`)
+  message.info(`升级 ${agent.name} 到 ${agent.latestVersion ?? ''}`)
 }
 
-const onExtraInstall = (agent: CliAgent) => {
-  notify(`${agent.name} 存在其它安装位置`)
+const onRowAction = (action: CliMenuAction, agentName: string) => {
+  if (action === 'copy-path') {
+    const agent = cliAgents.find((item) => item.name === agentName)
+    if (agent) copyPath(agent)
+    return
+  }
+  const labels: Record<CliMenuAction, string> = {
+    detail: '查看详情',
+    'copy-path': '复制路径',
+    reinstall: '重新安装',
+  }
+  message.info(`${labels[action]}：${agentName}`)
 }
 
-const onMore = (agent: CliAgent) => {
-  notify(`${agent.name} 更多操作`)
+const copyPath = (agent: CliAgent) => {
+  void navigator.clipboard?.writeText(agent.path)
+  message.success('路径已复制')
 }
+
+const statusTag = (agent: CliAgent) =>
+  agent.status === 'available'
+    ? h(NTag, { size: 'small', type: 'success', bordered: false }, { default: () => '可用' })
+    : h(NTag, { size: 'small', type: 'warning', bordered: false }, { default: () => '需要登录' })
+
+const columns: DataTableColumns<CliAgent> = [
+  {
+    title: 'agents',
+    key: 'name',
+    width: '44%',
+    render: (agent) =>
+      h('div', { class: 'cell-agent' }, [
+        h('span', { class: 'cell-icon', style: { background: agent.iconBg } }, [
+          h('img', { class: 'cell-icon-img', src: agent.icon, alt: agent.name }),
+        ]),
+        h('div', { class: 'cell-text' }, [
+          h('span', { class: 'cell-title' }, agent.name),
+          h(
+            'button',
+            {
+              class: 'cell-path mono',
+              type: 'button',
+              title: '点击复制路径',
+              onClick: () => copyPath(agent),
+            },
+            agent.path,
+          ),
+        ]),
+      ]),
+  },
+  {
+    title: '版本',
+    key: 'version',
+    width: '28%',
+    render: (agent) =>
+      h('div', { class: 'cell-version' }, [
+        h('div', { class: 'cell-version-row' }, [
+          h('span', { class: 'cell-mono tnum' }, agent.version),
+          agent.latestVersion
+            ? h(
+                NButton,
+                { size: 'tiny', secondary: true, onClick: () => onUpgrade(agent) },
+                {
+                  icon: () => h(NIcon, { size: 13 }, { default: () => h(Download) }),
+                  default: () => '升级',
+                },
+              )
+            : null,
+        ]),
+        agent.latestVersion
+          ? h('span', { class: 'cell-new' }, [
+              h('span', '有新版本 '),
+              h('span', { class: 'cell-mono tnum' }, agent.latestVersion),
+            ])
+          : null,
+      ]),
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: '16%',
+    render: statusTag,
+  },
+  {
+    title: '',
+    key: 'actions',
+    width: '6%',
+    align: 'right',
+    render: (agent) =>
+      h(CliRowMenu, {
+        agentName: agent.name,
+        onAction: (action: CliMenuAction, name: string) => onRowAction(action, name),
+      }),
+  },
+]
 </script>
 
 <template>
   <section class="page">
-    <!-- 定时刷新设置 -->
-    <div class="refresh-card">
-      <div class="refresh-main">
-        <span class="refresh-icon"
-          ><RefreshCw :size="19" :stroke-width="1.5" aria-hidden="true"
-        /></span>
-        <span class="refresh-copy">
-          <strong>定时刷新</strong>
-          <small>按设定间隔自动重新扫描本地 CLI 安装状态</small>
-        </span>
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">agents</h1>
+        <p class="page-sub">检测本机已安装的 CLI agents 及其版本</p>
       </div>
+    </header>
 
-      <div class="refresh-actions">
-        <span class="every-label">每</span>
-        <span class="interval">
-          <select v-model="refreshInterval" aria-label="刷新间隔">
-            <option v-for="option in REFRESH_OPTIONS" :key="option.label" :value="option.label">
-              {{ option.label }}
-            </option>
-          </select>
-          <ChevronDown class="interval-chevron" :size="12" :stroke-width="1.5" aria-hidden="true" />
-        </span>
-        <button type="button" class="outline-button" @click="onRefreshNow">
-          <RefreshCw :size="15" :stroke-width="1.2" aria-hidden="true" />立即刷新
-        </button>
-      </div>
-    </div>
-
-    <!-- 本地 CLI 列表 -->
-    <div class="list-card">
-      <header class="card-head">
-        <div class="head-left">
-          <strong>本地 CLI</strong>
-          <span class="count-badge">共发现 {{ cliAgents.length }} 个</span>
+    <div class="stack">
+      <section class="card row-card">
+        <div class="row-text">
+          <span class="row-title">自动刷新</span>
+          <span class="row-sub">按固定间隔重新检测本机 CLI 安装状态</span>
         </div>
-        <div class="head-right">
-          <i class="service-dot" />
-          <span>扫描服务正常</span>
+        <div class="row-controls">
+          <NSelect
+            v-model:value="refreshInterval"
+            class="interval-select"
+            size="small"
+            :options="intervals"
+          />
+          <NButton size="small" secondary @click="message.info('正在重新检测')">
+            <template #icon>
+              <NIcon :size="13">
+                <RefreshCw />
+              </NIcon>
+            </template>
+            立即检测
+          </NButton>
         </div>
-      </header>
+      </section>
 
-      <div class="grid table-head">
-        <span>智能体</span>
-        <span>版本</span>
-        <span>状态</span>
-        <span />
-      </div>
+      <section class="card table-card">
+        <header class="table-head">
+          <span class="table-title">本地 CLI</span>
+          <span class="table-count tnum">{{ cliAgents.length }}</span>
+          <span class="table-foot">下次检测：{{ nextScan }}后</span>
+        </header>
 
-      <div v-for="agent in cliAgents" :key="agent.id" class="grid agent-row">
-        <div class="agent-info">
-          <span class="agent-icon" :style="{ background: agent.iconBg, color: agent.iconColor }">
-            <component :is="agent.icon" :size="22" :stroke-width="1.5" />
-          </span>
-          <span class="agent-copy">
-            <strong>{{ agent.name }}</strong>
-            <span class="path-line">
-              <span class="path">{{ agent.path }}</span>
-              <button
-                v-if="agent.extraInstall"
-                class="extra-install"
-                type="button"
-                @click="onExtraInstall(agent)"
-              >
-                {{ agent.extraInstall
-                }}<ChevronRight :size="13" :stroke-width="1" aria-hidden="true" />
-              </button>
-            </span>
-          </span>
-        </div>
-
-        <div class="version-cell">
-          <span class="version-stack">
-            <span class="version">{{ agent.version }}</span>
-            <span v-if="agent.latestVersion" class="version-new">
-              有新版本 {{ agent.latestVersion }}
-            </span>
-          </span>
-          <button
-            v-if="agent.latestVersion"
-            class="upgrade-button"
-            type="button"
-            @click="onUpgrade(agent)"
-          >
-            <Download :size="14" :stroke-width="1.1" aria-hidden="true" />升级
-          </button>
-        </div>
-
-        <div>
-          <span
-            class="status-badge"
-            :style="{
-              background: STATUS_META[agent.status].bg,
-              color: STATUS_META[agent.status].text,
-            }"
-          >
-            <i :style="{ background: STATUS_META[agent.status].dot }" />{{
-              STATUS_META[agent.status].label
-            }}
-          </span>
-        </div>
-
-        <button
-          type="button"
-          class="row-more"
-          :aria-label="agent.name + ' 更多操作'"
-          @click="onMore(agent)"
-        >
-          <MoreHorizontal :size="18" aria-hidden="true" />
-        </button>
-      </div>
-
-      <footer class="card-foot">
-        <Clock :size="14" :stroke-width="1.1" aria-hidden="true" />
-        <span>{{ nextScanText }}</span>
-      </footer>
+        <NDataTable
+          :columns="columns"
+          :data="cliAgents"
+          :row-key="(row: CliAgent) => row.id"
+          :bordered="false"
+          size="small"
+        />
+      </section>
     </div>
   </section>
 </template>
 
 <style scoped>
 .page {
-  min-height: calc(100vh - 64px);
-  padding: 24px 38px 60px;
-  background: var(--color-bg);
+  padding: 20px 24px 32px;
 }
 
-/* 卡片一：定时刷新 */
-.refresh-card {
+.page-head {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.page-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+}
+
+.row-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 66px;
+  gap: 16px;
   padding: 12px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 11px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(17, 19, 24, 0.08);
 }
 
-.refresh-main {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-width: 0;
-}
-
-.refresh-icon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  background: #eeecff;
-  color: var(--color-primary);
-}
-
-.refresh-copy {
+.row-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  min-width: 0;
 }
 
-.refresh-copy strong {
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 16.5px;
-  color: var(--color-text);
-}
-
-.refresh-copy small {
-  font-size: 9px;
-  line-height: 13.5px;
-  color: var(--color-text-muted);
-}
-
-.refresh-actions {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.every-label {
-  font-size: 10px;
-  line-height: 15px;
-  color: var(--color-text-weak);
-}
-
-.interval {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  width: 75px;
-  height: 32px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: #fff;
-}
-
-.interval select {
-  width: 100%;
-  height: 100%;
-  padding: 0 22px 0 14px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  appearance: none;
-  color: var(--color-text-secondary);
-  font-size: 10px;
-}
-
-.interval-chevron {
-  position: absolute;
-  right: 5px;
-  color: var(--color-text-secondary);
-  pointer-events: none;
-}
-
-.outline-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 11px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--color-text-secondary);
-  font-size: 10px;
+.row-title {
+  font-size: 13px;
   font-weight: 600;
 }
 
-.outline-button:hover {
-  border-color: var(--color-text-disabled);
-  background: var(--color-surface-muted);
+.row-sub {
+  font-size: 12px;
+  color: var(--c-text-3);
 }
 
-/* 卡片二：本地 CLI 列表 */
-.list-card {
-  margin-top: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 11px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(17, 19, 24, 0.08);
-  overflow: hidden;
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 58px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.head-left {
+.row-controls {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.head-left strong {
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 18px;
-  color: var(--color-text);
+.interval-select {
+  width: 104px;
 }
 
-.count-badge {
-  padding: 2px 6px;
-  border-radius: 9px;
-  background: var(--color-divider);
-  color: var(--color-text-weak);
-  font-size: 8px;
-  line-height: 12px;
-}
-
-.head-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--color-text-weak);
-  font-size: 9px;
-  line-height: 13.5px;
-}
-
-.service-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 3px;
-  background: #27b982;
-}
-
-/* 设计稿栅格：499 / 233 / 171 / 28 */
-.grid {
-  display: grid;
-  grid-template-columns: 499fr 233fr 171fr 28fr;
-  align-items: center;
+.table-card {
+  overflow: hidden;
 }
 
 .table-head {
-  height: 38px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--color-divider);
-  background: #fbfbfc;
-  color: var(--color-text-muted);
-  font-size: 8.5px;
-  font-weight: 600;
-  letter-spacing: 0.255px;
-}
-
-.agent-row {
-  min-height: 72px;
-  padding: 16px 18px 14px;
-  border-bottom: 1px solid var(--color-divider);
-}
-
-.agent-row:hover {
-  background: var(--color-surface-muted);
-}
-
-.agent-info {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.table-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.table-count {
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-sunken);
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
+.table-foot {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--c-text-4);
+}
+</style>
+
+<style>
+.cell-agent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
-.agent-icon {
+.cell-icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
 }
 
-.agent-copy {
+.cell-icon-img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.cell-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
 }
 
-.agent-copy strong {
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 16.5px;
-  color: var(--color-text);
+.cell-title {
+  font-size: 13px;
+  font-weight: 500;
 }
 
-.path-line {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-
-.path {
-  font-size: 8.5px;
-  line-height: 12.75px;
-  color: var(--color-text-muted);
-  white-space: nowrap;
+.cell-path {
+  max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.extra-install {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
   padding: 0;
   border: 0;
   background: none;
-  color: #bc7b16;
-  font-size: 8.5px;
-  font-weight: 600;
-  line-height: 12.75px;
+  color: var(--c-text-3);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.extra-install:hover {
+.cell-path:hover {
+  color: var(--c-accent);
   text-decoration: underline;
 }
 
-.version-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.version-stack {
+.cell-version {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
-.version {
-  font-family: 'Cousine', 'Courier New', monospace;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 15px;
-  color: var(--color-text);
-}
-
-.version-new {
-  font-size: 8px;
-  line-height: 12px;
-  color: #4f72a6;
-  white-space: nowrap;
-}
-
-.upgrade-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  flex: none;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--color-text-secondary);
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.upgrade-button:hover {
-  border-color: var(--color-text-disabled);
-  background: var(--color-surface-muted);
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 7px;
-  border-radius: 5px;
-  font-size: 8.5px;
-  line-height: 12.75px;
-  white-space: nowrap;
-}
-
-.status-badge i {
-  width: 5px;
-  height: 5px;
-  border-radius: 2.5px;
-}
-
-.row-more {
-  display: grid;
-  place-items: center;
-  justify-self: end;
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-strong);
-}
-
-.row-more:hover {
-  background: #f1f0ff;
-  color: #6555e9;
-}
-
-.card-foot {
+.cell-version-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 48px;
-  padding: 0 18px;
-  background: var(--color-surface-muted);
-  color: var(--color-text-muted);
-  font-size: 8.5px;
-  line-height: 12.75px;
+  gap: 10px;
 }
 
-@media (max-width: 1080px) {
-  .page {
-    padding: 20px 20px 40px;
-  }
+.cell-mono {
+  font-family: 'SFMono-Regular', 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+}
 
-  .grid {
-    grid-template-columns: minmax(240px, 2fr) minmax(150px, 1fr) 110px 30px;
-  }
+.cell-new {
+  font-size: 11px;
+  color: var(--c-accent);
+}
+
+.cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.cell-muted {
+  font-size: 12px;
+  color: var(--c-text-3);
 }
 </style>
