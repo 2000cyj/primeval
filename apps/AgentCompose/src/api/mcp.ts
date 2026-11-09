@@ -13,6 +13,8 @@ import {
   toolKey,
   type McpExposure,
   type McpProfile,
+  type McpRegistryEntry,
+  type McpRegistrySearchResult,
   type McpRuntimeStatus,
   type McpServerDef,
   type McpToolInfo,
@@ -166,6 +168,23 @@ function cloneServers(servers: McpServerDef[]): McpServerDef[] {
   return servers.map((server) => ({ ...server }))
 }
 
+/**
+ * 确保 MCP sidecar 在运行。
+ *
+ * sidecar 是独立进程，GUI 启动时可能还没拉起。先请求 Rust 侧拉起并等待
+ * 就绪，否则后续 admin 调用会全部失败并退化成 mock 数据（改了也存不住）。
+ */
+export async function ensureSidecar(): Promise<boolean> {
+  try {
+    const status = await invoke<{ running: boolean }>(MCP_COMMANDS.ensureSidecar)
+    mcpDegraded.value = false
+    return status.running
+  } catch (error) {
+    degrade(error, MCP_COMMANDS.ensureSidecar)
+    return false
+  }
+}
+
 /** 上游 MCP server 列表 */
 export async function listServers(): Promise<McpServerDef[]> {
   try {
@@ -178,30 +197,34 @@ export async function listServers(): Promise<McpServerDef[]> {
   }
 }
 
-/** 全量保存上游 MCP server 列表 */
+/**
+ * 全量保存上游 MCP server 列表。
+ *
+ * 写操作**不做降级**：sidecar 不可用时直接抛错，否则用户会以为存住了，
+ * 实际只改了内存里的 mock，重启即丢。
+ */
 export async function saveServers(defs: McpServerDef[]): Promise<void> {
   try {
     await invoke(MCP_COMMANDS.saveServers, { servers: defs })
     mcpDegraded.value = false
   } catch (error) {
     degrade(error, MCP_COMMANDS.saveServers)
-    mockState.servers = cloneServers(defs)
+    throw new Error(`保存失败：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
   }
 }
 
-/** 删除单个上游 MCP server */
+/** 删除单个上游 MCP server（写操作，失败直接抛错，不降级） */
 export async function removeServer(id: string): Promise<void> {
   try {
     await invoke(MCP_COMMANDS.removeServer, { id })
     mcpDegraded.value = false
   } catch (error) {
     degrade(error, MCP_COMMANDS.removeServer)
-    mockState.servers = mockState.servers.filter((server) => server.id !== id)
-    mockState.exposure = {
-      ...mockState.exposure,
-      serverIds: mockState.exposure.serverIds.filter((serverId) => serverId !== id),
-      toolKeys: mockState.exposure.toolKeys.filter((key) => !key.startsWith(`${id}::`)),
-    }
+    throw new Error(`删除失败：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
   }
 }
 
@@ -238,18 +261,16 @@ export async function getExposure(): Promise<McpExposure> {
   }
 }
 
-/** 保存对外暴露配置 */
+/** 保存对外暴露配置（写操作，失败直接抛错，不降级） */
 export async function setExposure(exposure: McpExposure): Promise<void> {
   try {
     await invoke(MCP_COMMANDS.setExposure, { exposure })
     mcpDegraded.value = false
   } catch (error) {
     degrade(error, MCP_COMMANDS.setExposure)
-    mockState.exposure = {
-      ...exposure,
-      serverIds: [...exposure.serverIds],
-      toolKeys: [...exposure.toolKeys],
-    }
+    throw new Error(`保存失败：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
   }
 }
 
@@ -265,18 +286,53 @@ export async function listProfiles(): Promise<McpProfile[]> {
   }
 }
 
-/** 保存命名组合（profile）列表 */
+/** 保存命名组合（profile）列表（写操作，失败直接抛错，不降级） */
 export async function saveProfiles(profiles: McpProfile[]): Promise<void> {
   try {
     await invoke(MCP_COMMANDS.saveProfiles, { profiles })
     mcpDegraded.value = false
   } catch (error) {
     degrade(error, MCP_COMMANDS.saveProfiles)
-    mockState.profiles = profiles.map((profile) => ({
-      ...profile,
-      serverIds: [...profile.serverIds],
-    }))
+    throw new Error(`保存失败：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
   }
+}
+
+/**
+ * 在官方 MCP 目录里搜索第三方 server。
+ *
+ * 读操作但**不降级**：目录没有 mock 数据，伪造出来的条目会让用户装上
+ * 根本不存在的 server，比直接报错更糟。
+ *
+ * @param query 关键词，空串表示浏览目录全部
+ * @param cursor 分页游标，为空表示第一页
+ */
+export async function searchRegistry(
+  query: string,
+  cursor?: string,
+): Promise<McpRegistrySearchResult> {
+  try {
+    const result = await invoke<McpRegistrySearchResult>(MCP_COMMANDS.searchRegistry, {
+      query,
+      cursor,
+    })
+    return result
+  } catch (error) {
+    throw new Error(`目录搜索失败：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
+  }
+}
+
+/**
+ * 取目录条目对应的上游定义。
+ *
+ * 条目既没有可本地启动的包、也没有远程端点时返回 null（不可一键添加）。
+ */
+export function registryServerDef(entry: McpRegistryEntry): McpServerDef | null {
+  if (entry.installable === false) return null
+  return entry.def ?? null
 }
 
 /** 读取运行时总状态（endpoint / token / session / 上游状态） */

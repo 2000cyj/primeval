@@ -11,6 +11,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  Search,
   Server,
   SlidersHorizontal,
   Trash2,
@@ -27,6 +28,7 @@ import {
   type McpUpstreamStatus,
 } from '@remote/agent-compose-mcp/types'
 import {
+  ensureSidecar,
   getExposure,
   getStatus,
   listProfiles,
@@ -38,6 +40,7 @@ import {
   testServer,
 } from '@/api/mcp'
 import McpEndpointCard from '@/components/McpEndpointCard.vue'
+import McpRegistryModal from '@/components/McpRegistryModal.vue'
 import McpServerModal from '@/components/McpServerModal.vue'
 import McpExposureDrawer from '@/components/McpExposureDrawer.vue'
 
@@ -52,6 +55,8 @@ const loading = ref(false)
 /** 新增 / 编辑弹窗 */
 const showServerModal = ref(false)
 const editingServer = ref<McpServerDef | null>(null)
+/** 官方目录搜索弹窗 */
+const showRegistryModal = ref(false)
 /** 暴露配置抽屉 */
 const showExposureDrawer = ref(false)
 /** 待删除的 server */
@@ -84,6 +89,9 @@ const serverSubtitle = (server: McpServerDef): string => {
 const load = async (): Promise<void> => {
   loading.value = true
   try {
+    // 先确保 sidecar 在跑：它没起来时 admin 调用会失败并退化成 mock，
+    // 那样在页面里加的 server 实际没存住。
+    await ensureSidecar()
     const [serverList, runtime, exposureConfig, profileList] = await Promise.all([
       listServers(),
       getStatus(),
@@ -121,20 +129,52 @@ const persistServers = async (next: McpServerDef[]): Promise<void> => {
   await load()
 }
 
+/** 统一的写操作错误提示 */
+const reportWriteError = (action: string, error: unknown): void => {
+  const detail = error instanceof Error ? error.message : String(error)
+  message.error(`${action}失败：${detail}`)
+}
+
 const onSaveServer = async (def: McpServerDef): Promise<void> => {
   const exists = servers.value.some((server) => server.id === def.id)
   const next = exists
     ? servers.value.map((server) => (server.id === def.id ? def : server))
     : [...servers.value, def]
-  await persistServers(next)
+  try {
+    await persistServers(next)
+  } catch (error) {
+    reportWriteError(exists ? '更新' : '新增', error)
+    return
+  }
   showServerModal.value = false
   editingServer.value = null
   message.success(exists ? `已更新：${def.name}` : `已新增：${def.name}`)
 }
 
+/** 从官方目录一键添加：目录条目已由 sidecar 翻译成上游定义 */
+const onAddFromRegistry = async (def: McpServerDef): Promise<void> => {
+  if (servers.value.some((server) => server.id === def.id)) {
+    message.warning('已存在同名 server')
+    return
+  }
+  const next = [...servers.value, def]
+  try {
+    await persistServers(next)
+  } catch (error) {
+    reportWriteError('新增', error)
+    return
+  }
+  message.success(`已添加：${def.name}`)
+}
+
 const onToggleServer = async (server: McpServerDef, enabled: boolean): Promise<void> => {
   const next = servers.value.map((item) => (item.id === server.id ? { ...item, enabled } : item))
-  await persistServers(next)
+  try {
+    await persistServers(next)
+  } catch (error) {
+    reportWriteError(enabled ? '启用' : '停用', error)
+    return
+  }
   message.success(enabled ? `已启用：${server.name}` : `已停用：${server.name}`)
 }
 
@@ -222,6 +262,14 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
             </NIcon>
           </template>
           新增 server
+        </NButton>
+        <NButton size="small" @click="showRegistryModal = true">
+          <template #icon>
+            <NIcon :size="14">
+              <Search />
+            </NIcon>
+          </template>
+          从目录添加
         </NButton>
       </NSpace>
     </header>
@@ -363,6 +411,12 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
       :server="editingServer"
       @close="showServerModal = false"
       @save="onSaveServer"
+    />
+
+    <McpRegistryModal
+      :show="showRegistryModal"
+      @close="showRegistryModal = false"
+      @add="onAddFromRegistry"
     />
 
     <McpExposureDrawer
