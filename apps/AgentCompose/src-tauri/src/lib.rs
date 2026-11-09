@@ -78,6 +78,16 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
         return Err(format!("找不到 sidecar 入口脚本：{}", script.display()));
     }
 
+    // sidecar 的输出落盘：启动失败时 gui 才能看到真实原因，
+    // 而不是只报「启动超时」
+    let log_path = mcp_data_dir(app).join("sidecar.log");
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| format!("打开 sidecar 日志失败：{e}"))?;
+    let log_err = log.try_clone().map_err(|e| e.to_string())?;
+
     let mut cmd = Command::new("node");
     cmd.arg("--experimental-strip-types")
         .arg(&script)
@@ -88,8 +98,8 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
                 .unwrap_or_else(|| Path::new(".")),
         )
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log_err));
 
     #[cfg(windows)]
     {
@@ -145,7 +155,15 @@ fn mcp_ensure_sidecar(app: AppHandle) -> Result<Value, String> {
         std::thread::sleep(Duration::from_millis(250));
     }
 
-    Err("MCP sidecar 启动超时（15 秒）".to_string())
+    // 超时：把 sidecar 日志尾部带出来，便于判断是启动失败还是端口问题
+    let log = std::fs::read_to_string(mcp_data_dir(&app).join("sidecar.log")).unwrap_or_default();
+    let tail: Vec<&str> = log.lines().rev().take(5).collect();
+    let detail = if tail.is_empty() {
+        String::new()
+    } else {
+        format!("，日志尾部：{}", tail.join(" / "))
+    };
+    Err(format!("MCP sidecar 启动超时（15 秒）{detail}"))
 }
 
 /// 转发一次 admin API 调用到 sidecar。
@@ -156,7 +174,11 @@ async fn admin_request(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let ep = endpoint(app)?;
-    let client = reqwest::Client::new();
+    // 加超时：sidecar 不可达时不要无界等待
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
     let url = format!("{}{}", ep.base, path);
 
     let mut req = client.request(method, &url).bearer_auth(&ep.token);
@@ -252,7 +274,11 @@ async fn mcp_get_status(app: AppHandle) -> Result<Value, String> {
 #[tauri::command]
 async fn mcp_authorize_server(app: AppHandle, id: String) -> Result<Value, String> {
     let ep = endpoint(&app)?;
-    let client = reqwest::Client::new();
+    // 加超时：sidecar 不可达时不要无界等待
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
     let url = format!("{}/admin/servers/{}/authorize", ep.base, encode_component(&id));
 
     let resp = client
@@ -279,7 +305,11 @@ async fn mcp_search_registry(
     cursor: Option<String>,
 ) -> Result<Value, String> {
     let ep = endpoint(&app)?;
-    let client = reqwest::Client::new();
+    // 加超时：sidecar 不可达时不要无界等待
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
     let mut url = format!("{}/admin/registry/search", ep.base);
     {
         // 手工拼 query，避免额外引入 url 构造依赖
