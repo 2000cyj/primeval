@@ -60,6 +60,62 @@ type UpstreamEntry = {
   stderrLines: string[]
 }
 
+/**
+ * 翻译远程上游的常见错误。
+ *
+ * 远程 mcp server 未授权时返回 401，原始信息只有一个 Unauthorized，
+ * 用户看不出该做什么 —— 需要点「授权」走 oauth 流程。
+ */
+export function explainUpstreamError(detail: string, def: McpServerDef): string {
+  if (def.transport !== 'http') return detail
+  if (/Unauthorized|401/i.test(detail)) {
+    if (def.auth === 'oauth') {
+      return '该远程 server 需要授权：请点击「授权」按钮，在浏览器里完成授权后重试。'
+    }
+    return '该远程 server 拒绝了当前请求（401）：请在「编辑」里补上有效的认证令牌（headers）。'
+  }
+  if (/Dynamic Client Registration rejected|403/i.test(detail)) {
+    return (
+      '该远程 server 拒绝了本应用的客户端注册（403）。' +
+      '部分服务只允许白名单内的客户端进行 OAuth 授权，' +
+      '这种服务请改用固定令牌认证，或改用该服务的本地版本。'
+    )
+  }
+  return detail
+}
+
+/**
+ * 检查命令是否存在于 PATH。
+ *
+ * @returns 命令缺失时的说明；存在则返回 null
+ */
+async function findMissingCommand(command: string): Promise<string | null> {
+  const isWindows = process.platform === 'win32'
+  const probe = isWindows ? 'where' : 'which'
+  try {
+    const { execFile } = await import('node:child_process')
+    const { promisify } = await import('node:util')
+    const run = promisify(execFile)
+    await run(probe, [command], { windowsHide: true })
+    return null
+  } catch {
+    return isWindows ? '（windows 下可用 where <命令> 确认）' : '（可用 which <命令> 确认）'
+  }
+}
+
+/**
+ * 从子进程 stderr 里挑出真正有用的行。
+ *
+ * npx 会打一堆 npm notice（run xxx、下载进度），这些是噪音；
+ * 真正的原因（如用法说明、缺少参数）通常在后几行。
+ */
+function pickStderr(lines: string[]): string {
+  const noisy = /^(npm notice|npm warn|added \d+ packages|sh: |$)/
+  const meaningful = lines.filter((line) => !noisy.test(line))
+  const picked = meaningful.length > 0 ? meaningful : lines
+  return picked.slice(-6).join('\n').trim()
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
@@ -266,6 +322,16 @@ export class UpstreamPool {
   private async connect(entry: UpstreamEntry): Promise<Client | undefined> {
     this.setState(entry, 'connecting')
     try {
+      // 先确认命令存在：命令不存在时子进程根本起不来，
+      // 报错只会是笼统的 Connection closed，看不出真实原因
+      if (entry.def.transport === 'stdio' && entry.def.command) {
+        const missing = await findMissingCommand(entry.def.command)
+        if (missing) {
+          throw new Error(
+            `找不到命令「${entry.def.command}」${missing}。` + 'stdio 上游需要本机已安装该命令。',
+          )
+        }
+      }
       const transport = this.createTransport(entry.def)
       this.attachStderr(entry, transport)
       const client = new Client({ name: this.clientName, version: this.clientVersion })
@@ -286,8 +352,8 @@ export class UpstreamPool {
     } catch (error) {
       const detail = errorMessage(error)
       // 子进程的 stderr 往往才是真正的原因（如「缺少必需参数」）
-      const stderr = entry.stderrLines.join('\n').trim()
-      const message = stderr ? `${detail}\n${stderr}` : detail
+      const stderr = pickStderr(entry.stderrLines)
+      const message = stderr ? `${detail}\n${stderr}` : explainUpstreamError(detail, entry.def)
       entry.client = undefined
       entry.transport = undefined
       this.setState(entry, 'error', message)

@@ -59,6 +59,9 @@ function parseServer(value: unknown): McpServerDef | undefined {
     def.env = env
   }
   if (typeof value['url'] === 'string') def.url = value['url']
+  // 认证方式：漏掉它会让 oauth 上游退化成「无认证」，报出误导性的 401
+  const auth = value['auth']
+  if (auth === 'none' || auth === 'static' || auth === 'oauth') def.auth = auth
   if (isRecord(value['headers'])) {
     const headers: Record<string, string> = {}
     for (const [key, item] of Object.entries(value['headers'])) {

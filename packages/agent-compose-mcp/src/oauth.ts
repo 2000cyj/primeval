@@ -114,6 +114,25 @@ export async function probeAuthChallenge(
   }
 }
 
+/**
+ * 把授权错误翻译成用户能看懂的话。
+ *
+ * 动态客户端注册被拒（403）是最常见的一种：部分远程 server 只放行
+ * 白名单里的客户端（比如 figma 只认 claude code），本应用无法以自己的
+ * 身份注册，这时换认证方式比看原始错误码有用得多。
+ */
+export function explainAuthError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  if (/Dynamic Client Registration rejected|403/i.test(raw)) {
+    return (
+      '该远程 server 拒绝了本应用的客户端注册（403）。' +
+      '部分服务只允许白名单内的客户端进行 OAuth 授权，' +
+      '这种服务请改用固定令牌认证，或改用该服务的本地版本。'
+    )
+  }
+  return raw
+}
+
 /** 生成 url 安全的随机串 */
 function randomString(bytes = 32): string {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('base64url')
@@ -197,7 +216,7 @@ export class OAuthManager {
       this.setStatus(serverId, { state: 'pending', authorizeUrl, scope: challenge.scope })
       return { authorizeUrl, scope: challenge.scope }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = explainAuthError(error)
       this.setStatus(serverId, { state: 'error', error: message })
       throw new Error(`发起授权失败：${message}`, { cause: error })
     }
