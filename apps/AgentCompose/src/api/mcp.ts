@@ -83,6 +83,8 @@ function buildMockServers(): McpServerDef[] {
     } else {
       server.url = `https://mcp.example.com/${service.id}`
       server.headers = { Authorization: 'Bearer ${ENV:SERVICE_TOKEN}' }
+      // mock 里让一个远程上游走 OAuth，好让授权相关界面在无 sidecar 时也能看到
+      server.auth = service.id === 'figma' ? 'oauth' : 'static'
     }
     return server
   })
@@ -333,6 +335,33 @@ export async function searchRegistry(
 export function registryServerDef(entry: McpRegistryEntry): McpServerDef | null {
   if (entry.installable === false) return null
   return entry.def ?? null
+}
+
+/**
+ * 发起远程上游的 OAuth 2.1 授权流程。
+ *
+ * 返回 sidecar 生成的授权地址，用户需要在系统浏览器里打开它完成授权；
+ * 授权是异步的，完成后由运行时状态里的 `oauth.state` 体现。
+ *
+ * 写操作**不做降级**：拿不到授权地址时直接抛错，否则用户会看到一个打不开的链接，
+ * 却以为授权已经发起。
+ */
+export async function authorizeServer(
+  id: string,
+): Promise<{ authorizeUrl: string; state: string }> {
+  try {
+    const result = await invoke<{ authorizeUrl: string; state: string }>(
+      MCP_COMMANDS.authorizeServer,
+      { id },
+    )
+    mcpDegraded.value = false
+    return result
+  } catch (error) {
+    degrade(error, MCP_COMMANDS.authorizeServer)
+    throw new Error(`发起授权失败：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
+  }
 }
 
 /** 读取运行时总状态（endpoint / token / session / 上游状态） */

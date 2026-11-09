@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref, type Component } from 'vue'
+import { onMounted, onUnmounted, ref, type Component } from 'vue'
 import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, useMessage } from 'naive-ui'
 import {
   CircleAlert,
   CircleCheck,
   CircleSlash,
   Copy,
+  ExternalLink,
+  KeyRound,
   LoaderCircle,
   Pencil,
   Plug,
@@ -21,6 +23,8 @@ import {
   buildMcpUrl,
   defaultExposure,
   type McpExposure,
+  type McpOAuthState,
+  type McpOAuthStatus,
   type McpProfile,
   type McpRuntimeStatus,
   type McpServerDef,
@@ -28,6 +32,7 @@ import {
   type McpUpstreamStatus,
 } from '@remote/agent-compose-mcp/types'
 import {
+  authorizeServer,
   ensureSidecar,
   getExposure,
   getStatus,
@@ -80,14 +85,126 @@ const stateMeta = (serverId: string) => STATE_META[upstreamOf(serverId)?.state ?
 
 const toolCount = (serverId: string): number => upstreamOf(serverId)?.tools.length ?? 0
 
+// ── OAuth 授权 ──
+
+/** 轮询间隔：授权是用户在浏览器里异步完成的 */
+const OAUTH_POLL_INTERVAL_MS = 3000
+/** 轮询上限：超过 2 分钟还没结果就认为用户没走完流程 */
+const OAUTH_POLL_TIMEOUT_MS = 120_000
+
+/** 正在发起授权的 server id */
+const authorizingId = ref<string | null>(null)
+/** 本地记录的授权地址（运行时状态尚未刷新时先给用户一个能点的链接） */
+const authorizeUrls = ref<Record<string, string>>({})
+/** 等待浏览器回调授权的 server id */
+const awaitingAuthorizeIds = ref<string[]>([])
+
+let pollTimer: number | null = null
+let pollDeadline = 0
+
+const oauthOf = (serverId: string): McpOAuthStatus | undefined => upstreamOf(serverId)?.oauth
+
+const oauthState = (serverId: string): McpOAuthState => oauthOf(serverId)?.state ?? 'idle'
+
+const authorizeUrlOf = (serverId: string): string | undefined =>
+  authorizeUrls.value[serverId] ?? oauthOf(serverId)?.authorizeUrl
+
+const OAUTH_META: Record<
+  McpOAuthState,
+  { label: string; icon: Component; tone: 'ok' | 'busy' | 'bad' | 'muted' }
+> = {
+  idle: { label: '未授权', icon: KeyRound, tone: 'muted' },
+  pending: { label: '等待授权', icon: LoaderCircle, tone: 'busy' },
+  authorized: { label: '已授权', icon: CircleCheck, tone: 'ok' },
+  error: { label: '授权失败', icon: CircleAlert, tone: 'bad' },
+}
+
+/**
+ * 是否在等待授权：状态里已是 pending，或本地刚拿到授权地址但状态尚未刷新。
+ * 两者都要把授权链接渲染出来，否则用户点了「授权」会看不到可点的地址。
+ */
+const isAwaitingAuthorize = (serverId: string): boolean => {
+  const state = oauthState(serverId)
+  if (state === 'pending') return true
+  return state === 'idle' && Boolean(authorizeUrls.value[serverId])
+}
+
+const oauthMeta = (serverId: string) => {
+  if (isAwaitingAuthorize(serverId)) return OAUTH_META.pending
+  return OAUTH_META[oauthState(serverId)]
+}
+
+/** 正在等待浏览器授权的 server id */
+const pendingOauthIds = (): string[] =>
+  servers.value
+    .filter((server) => server.auth === 'oauth' && isAwaitingAuthorize(server.id))
+    .map((server) => server.id)
+
+const stopPolling = (): void => {
+  if (pollTimer !== null) {
+    window.clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+const schedulePoll = (): void => {
+  stopPolling()
+  pollTimer = window.setTimeout(() => {
+    void pollAuthorize()
+  }, OAUTH_POLL_INTERVAL_MS)
+}
+
+/** 开始轮询授权状态（已在轮询时不重置超时时间） */
+const startPolling = (): void => {
+  if (pollTimer === null) pollDeadline = Date.now() + OAUTH_POLL_TIMEOUT_MS
+  schedulePoll()
+}
+
+const pollAuthorize = async (): Promise<void> => {
+  await load({ quiet: true })
+  // 授权结果只能在新的运行时状态里看到，逐个核对等待中的 server
+  for (const serverId of [...awaitingAuthorizeIds.value]) {
+    const server = servers.value.find((item) => item.id === serverId)
+    if (!server) continue
+    const state = oauthState(serverId)
+    if (state === 'authorized') {
+      message.success(`${server.name} 授权成功`)
+      awaitingAuthorizeIds.value = awaitingAuthorizeIds.value.filter((id) => id !== serverId)
+      delete authorizeUrls.value[serverId]
+    } else if (state === 'error') {
+      message.error(`${server.name} 授权失败：${oauthOf(serverId)?.error ?? '未知错误'}`)
+      awaitingAuthorizeIds.value = awaitingAuthorizeIds.value.filter((id) => id !== serverId)
+      delete authorizeUrls.value[serverId]
+    }
+  }
+  if (!pendingOauthIds().length) {
+    stopPolling()
+    return
+  }
+  if (Date.now() > pollDeadline) {
+    stopPolling()
+    message.warning('授权等待超时，请重新发起授权')
+    return
+  }
+  schedulePoll()
+}
+
+const formatTime = (iso: string | undefined): string => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 const serverSubtitle = (server: McpServerDef): string => {
   if (server.transport === 'http') return server.url ?? ''
   const args = server.args?.length ? ` ${server.args.join(' ')}` : ''
   return `${server.command ?? ''}${args}`
 }
 
-const load = async (): Promise<void> => {
-  loading.value = true
+const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
+  if (!options.quiet) loading.value = true
   try {
     // 先确保 sidecar 在跑：它没起来时 admin 调用会失败并退化成 mock，
     // 那样在页面里加的 server 实际没存住。
@@ -102,16 +219,27 @@ const load = async (): Promise<void> => {
     status.value = runtime
     exposure.value = exposureConfig
     profiles.value = profileList
+    // 授权是异步的：状态里已有 pending 的 server 意味着用户正在浏览器里走流程
+    for (const serverId of pendingOauthIds()) {
+      if (!awaitingAuthorizeIds.value.includes(serverId)) {
+        awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, serverId]
+      }
+    }
+    if (pendingOauthIds().length) startPolling()
   } catch (error) {
     console.warn('[mcp] 加载配置失败', error)
-    message.error('加载 MCP 配置失败')
+    if (!options.quiet) message.error('加载 MCP 配置失败')
   } finally {
-    loading.value = false
+    if (!options.quiet) loading.value = false
   }
 }
 
 onMounted(() => {
   void load()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 
 const openCreate = (): void => {
@@ -208,6 +336,34 @@ const onTestServer = async (server: McpServerDef): Promise<void> => {
   message.error(upstream.error ?? `${server.name} 连接失败`)
 }
 
+/** 打开授权页：优先用系统浏览器，webview 里被拦时靠卡片上的链接手动打开 */
+const openAuthorizePage = (url: string): void => {
+  try {
+    window.open(url, '_blank')
+  } catch (error) {
+    console.warn('[mcp] 自动打开授权页面失败，请手动点击授权链接', error)
+  }
+}
+
+/** 发起 OAuth 授权：拿到授权地址 → 打开浏览器 → 轮询等待授权结果 */
+const onAuthorize = async (server: McpServerDef): Promise<void> => {
+  authorizingId.value = server.id
+  try {
+    const result = await authorizeServer(server.id)
+    authorizeUrls.value = { ...authorizeUrls.value, [server.id]: result.authorizeUrl }
+    if (!awaitingAuthorizeIds.value.includes(server.id)) {
+      awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, server.id]
+    }
+    openAuthorizePage(result.authorizeUrl)
+    message.info(`请在浏览器中完成授权：${server.name}`)
+    startPolling()
+  } catch (error) {
+    reportWriteError('授权', error)
+  } finally {
+    authorizingId.value = null
+  }
+}
+
 const copyText = async (text: string, label: string): Promise<void> => {
   if (!navigator.clipboard) {
     message.warning('当前环境不支持剪贴板，请手动复制')
@@ -247,7 +403,7 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
         <p class="page-sub">管理上游 MCP server，并决定哪些工具对外暴露</p>
       </div>
       <NSpace :size="8">
-        <NButton size="small" :loading="loading" @click="load">
+        <NButton size="small" :loading="loading" @click="load()">
           <template #icon>
             <NIcon :size="14">
               <RefreshCw />
@@ -363,6 +519,49 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
                   <Trash2 />
                 </NIcon>
               </template>
+            </NButton>
+          </div>
+
+          <div v-if="server.auth === 'oauth'" class="oauth-row">
+            <NIcon :size="14" class="oauth-icon" :class="oauthMeta(server.id).tone">
+              <component :is="oauthMeta(server.id).icon" />
+            </NIcon>
+            <span class="oauth-label">{{ oauthMeta(server.id).label }}</span>
+            <span v-if="oauthState(server.id) === 'authorized'" class="oauth-time tnum">
+              {{ formatTime(oauthOf(server.id)?.authorizedAt) }}
+            </span>
+            <span v-if="oauthState(server.id) === 'error'" class="oauth-error">
+              {{ oauthOf(server.id)?.error }}
+            </span>
+            <NButton
+              v-if="isAwaitingAuthorize(server.id) && authorizeUrlOf(server.id)"
+              tag="a"
+              size="tiny"
+              secondary
+              :href="authorizeUrlOf(server.id)"
+              target="_blank"
+              rel="noopener"
+            >
+              <template #icon>
+                <NIcon :size="13">
+                  <ExternalLink />
+                </NIcon>
+              </template>
+              打开授权页面
+            </NButton>
+            <NButton
+              v-else-if="oauthState(server.id) !== 'authorized'"
+              size="tiny"
+              secondary
+              :loading="authorizingId === server.id"
+              @click="onAuthorize(server)"
+            >
+              <template #icon>
+                <NIcon :size="13">
+                  <KeyRound />
+                </NIcon>
+              </template>
+              授权
             </NButton>
           </div>
         </article>
@@ -646,6 +845,48 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
 .danger-button:hover {
   color: var(--c-danger);
   border-color: var(--c-danger);
+}
+
+.oauth-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border);
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.oauth-icon.ok {
+  color: var(--c-success);
+}
+
+.oauth-icon.bad {
+  color: var(--c-danger);
+}
+
+.oauth-icon.busy {
+  color: var(--c-accent);
+}
+
+.oauth-icon.busy :deep(svg) {
+  animation: spin 1s linear infinite;
+}
+
+.oauth-label {
+  flex: none;
+  color: var(--c-text-2);
+}
+
+.oauth-time {
+  flex: none;
+}
+
+.oauth-error {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty {

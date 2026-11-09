@@ -11,7 +11,7 @@ import {
   NSpace,
 } from 'naive-ui'
 import { Plus, Trash2 } from 'lucide-vue-next'
-import type { McpServerDef, McpTransportKind } from '@remote/agent-compose-mcp/types'
+import type { McpAuthKind, McpServerDef, McpTransportKind } from '@remote/agent-compose-mcp/types'
 
 const props = defineProps<{
   show: boolean
@@ -31,6 +31,7 @@ type ServerForm = {
   name: string
   id: string
   transport: McpTransportKind
+  auth: McpAuthKind
   command: string
   args: string
   env: KvRow[]
@@ -42,6 +43,7 @@ const blankForm = (): ServerForm => ({
   name: '',
   id: '',
   transport: 'stdio',
+  auth: 'none',
   command: '',
   args: '',
   env: [],
@@ -74,6 +76,7 @@ function reset(): void {
     name: server.name,
     id: server.id,
     transport: server.transport,
+    auth: server.auth ?? 'none',
     command: server.command ?? '',
     args: (server.args ?? []).join(' '),
     env: rowsOf(server.env),
@@ -91,6 +94,26 @@ watch(
 )
 
 const isEditing = computed(() => props.server !== null)
+
+// OAuth 只适用于远程（http）上游；切回 stdio 时把认证方式退回到 none
+watch(
+  () => form.value.transport,
+  (transport) => {
+    if (transport === 'stdio' && form.value.auth === 'oauth') form.value.auth = 'none'
+  },
+)
+
+const authHint = computed(() => {
+  if (form.value.auth === 'oauth') {
+    return '浏览器里完成 OAuth 2.1 授权码流程，令牌由授权流程自动获取，无需手填。'
+  }
+  if (form.value.auth === 'static') {
+    return form.value.transport === 'http'
+      ? '在请求头里配置固定令牌；令牌支持 ${ENV:NAME} 占位，真实值在运行时解析。'
+      : '本地进程通过 env 传令牌；值支持 ${ENV:NAME} 占位，真实值在运行时解析。'
+  }
+  return '不带任何认证信息。'
+})
 
 const errors = computed(() => {
   const list: Partial<Record<'name' | 'id' | 'command' | 'url', string>> = {}
@@ -128,6 +151,8 @@ const submit = (): void => {
     name: form.value.name.trim(),
     transport: form.value.transport,
     enabled: props.server?.enabled ?? true,
+    auth:
+      form.value.transport === 'stdio' && form.value.auth === 'oauth' ? 'none' : form.value.auth,
   }
   if (def.transport === 'stdio') {
     def.command = form.value.command.trim()
@@ -188,6 +213,22 @@ const submit = (): void => {
         </NRadioGroup>
       </NFormItem>
 
+      <NFormItem label="认证方式" class="form-item">
+        <div class="auth-box">
+          <NRadioGroup v-model:value="form.auth" size="small">
+            <NRadioButton value="none">不需要认证</NRadioButton>
+            <NRadioButton value="static">固定令牌</NRadioButton>
+            <NRadioButton value="oauth" :disabled="form.transport !== 'http'">
+              OAuth 授权
+            </NRadioButton>
+          </NRadioGroup>
+          <p class="field-hint">{{ authHint }}</p>
+          <p v-if="form.transport !== 'http'" class="field-hint">
+            OAuth 授权仅支持 http 传输的远程 server。
+          </p>
+        </div>
+      </NFormItem>
+
       <template v-if="form.transport === 'stdio'">
         <NFormItem
           label="command"
@@ -244,7 +285,7 @@ const submit = (): void => {
           <NInput v-model:value="form.url" size="small" placeholder="https://mcp.example.com/sse" />
         </NFormItem>
 
-        <NFormItem label="headers" class="form-item">
+        <NFormItem v-if="form.auth !== 'oauth'" label="headers" class="form-item">
           <div class="kv-rows">
             <div v-for="(row, index) in form.headers" :key="index" class="kv-row">
               <NInput v-model:value="row.key" size="small" placeholder="头名称" />
@@ -268,7 +309,14 @@ const submit = (): void => {
             <p class="field-hint">
               值支持 <code class="mono">${ENV:NAME}</code> 占位，真实值在运行时从环境变量解析。
             </p>
+            <p v-if="form.auth === 'static'" class="field-hint">
+              固定令牌就写在这里，令牌支持 <code class="mono">${ENV:NAME}</code> 占位。
+            </p>
           </div>
+        </NFormItem>
+
+        <NFormItem v-else label="headers" class="form-item">
+          <p class="field-hint">OAuth 的令牌由授权流程自动获取，这里不用填请求头。</p>
         </NFormItem>
       </template>
     </div>
@@ -297,6 +345,14 @@ const submit = (): void => {
 
 .form-item {
   margin-bottom: 14px;
+}
+
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
 }
 
 .kv-rows {
