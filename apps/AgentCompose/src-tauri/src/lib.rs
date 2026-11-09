@@ -22,7 +22,10 @@ fn mcp_data_dir(app: &AppHandle) -> PathBuf {
 /// `CARGO_MANIFEST_DIR` = `apps/AgentCompose/src-tauri`，
 /// sidecar 在 `packages/agent-compose-mcp`。
 fn sidecar_script() -> PathBuf {
+    // CARGO_MANIFEST_DIR = <仓库>/apps/AgentCompose/src-tauri
+    // 到仓库根要上三层：src-tauri -> AgentCompose -> apps -> 仓库根
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
         .join("..")
         .join("..")
         .join("packages")
@@ -75,7 +78,12 @@ fn endpoint(app: &AppHandle) -> Result<Endpoint, String> {
 fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
     let script = sidecar_script();
     if !script.exists() {
-        return Err(format!("找不到 sidecar 入口脚本：{}", script.display()));
+        return Err(format!(
+            "找不到 sidecar 入口脚本：{}\n\
+             开发形态下它应位于 <仓库>/packages/agent-compose-mcp/src/index.ts；\
+             发布形态下应改为调用打包后的 sidecar 可执行文件。",
+            script.display()
+        ));
     }
 
     // sidecar 的输出落盘：启动失败时 gui 才能看到真实原因，
