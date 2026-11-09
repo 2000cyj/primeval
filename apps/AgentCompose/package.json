@@ -14,6 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@remote/agent-compose-mcp": "workspace:*",
     "@tauri-apps/api": "^2",
     "echarts": "^6.1.0",
     "lucide-vue-next": "^0.468.0",

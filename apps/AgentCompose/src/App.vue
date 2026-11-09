@@ -9,6 +9,7 @@ import {
 import AppSidebar, { type ViewKey } from '@/components/AppSidebar.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
 import SkillsView from '@/views/SkillsView.vue'
+import McpView from '@/views/McpView.vue'
 import WorkbenchView from '@/views/WorkbenchView.vue'
 import AgentsView from '@/views/AgentsView.vue'
 import AgentRunsView from '@/views/AgentRunsView.vue'
@@ -81,7 +82,15 @@ const themeOverrides: GlobalThemeOverrides = {
   },
 }
 
-const views: ViewKey[] = ['skills', 'workbench', 'agents', 'agentRuns', 'agentCreate', 'settings']
+const views: ViewKey[] = [
+  'skills',
+  'workbench',
+  'mcp',
+  'agents',
+  'agentRuns',
+  'agentCreate',
+  'settings',
+]
 
 const readHash = (): ViewKey => {
   const key = window.location.hash.replace('#', '')
@@ -119,6 +128,7 @@ onBeforeUnmount(() => {
           <AppTopbar />
           <SkillsView v-if="activeView === 'skills'" />
           <WorkbenchView v-else-if="activeView === 'workbench'" />
+          <McpView v-else-if="activeView === 'mcp'" />
           <AgentsView v-else-if="activeView === 'agents'" />
           <AgentRunsView v-else-if="activeView === 'agentRuns'" @create="navigate('agentCreate')" />
           <AgentCreateWizard

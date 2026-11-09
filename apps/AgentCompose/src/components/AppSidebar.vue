@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Blocks, Cpu, Network, Settings, Workflow } from 'lucide-vue-next'
+import { Blocks, Cpu, Network, Server, Settings, Workflow } from 'lucide-vue-next'
 import { cliAgents } from '@/data/agents'
 
-export type ViewKey = 'skills' | 'workbench' | 'agents' | 'agentRuns' | 'agentCreate' | 'settings'
+export type ViewKey =
+  'skills' | 'workbench' | 'mcp' | 'agents' | 'agentRuns' | 'agentCreate' | 'settings'
 
 defineProps<{ active: ViewKey }>()
 const emit = defineEmits<{ navigate: [key: ViewKey] }>()
@@ -10,6 +11,7 @@ const emit = defineEmits<{ navigate: [key: ViewKey] }>()
 const navItems = [
   { key: 'skills' as const, label: 'Skills', icon: Blocks },
   { key: 'workbench' as const, label: '智能体工作台', icon: Workflow },
+  { key: 'mcp' as const, label: 'MCP', icon: Server },
   { key: 'agents' as const, label: 'agents', icon: Network, count: cliAgents.length },
   { key: 'agentRuns' as const, label: '智能体', icon: Cpu },
 ]
