@@ -71,7 +71,7 @@ async function main(): Promise<void> {
 
   const pool = new UpstreamPool(config.servers, bus, { oauth })
   const registry = new ToolRegistry(pool)
-  const session = new SessionManager(pool, registry, bus)
+  const session = new SessionManager(pool, registry, bus, oauth)
 
   // 初始工具集：按当前暴露配置聚合
   registry.buildFromPool(store.getExposure())

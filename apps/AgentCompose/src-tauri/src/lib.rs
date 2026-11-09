@@ -97,8 +97,14 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
 
     let mut cmd = Command::new("node");
-    cmd.arg("--experimental-strip-types")
-        .arg(&script)
+    cmd.arg("--experimental-strip-types");
+    // 开发时监听 sidecar 源码：它是独立进程，不重启就还用着旧代码
+    if std::env::var("AGENT_COMPOSE_MCP_WATCH").is_ok() {
+        if let Some(dir) = script.parent().and_then(Path::parent) {
+            cmd.arg("--watch-path").arg(dir);
+        }
+    }
+    cmd.arg(&script)
         .current_dir(
             script
                 .parent()
