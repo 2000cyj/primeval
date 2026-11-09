@@ -248,6 +248,27 @@ async fn mcp_get_status(app: AppHandle) -> Result<Value, String> {
     admin_request(&app, reqwest::Method::GET, "/admin/status", None).await
 }
 
+/// 为一个远程上游发起 oauth 授权，返回需要用户打开的授权地址。
+#[tauri::command]
+async fn mcp_authorize_server(app: AppHandle, id: String) -> Result<Value, String> {
+    let ep = endpoint(&app)?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/admin/servers/{}/authorize", ep.base, encode_component(&id));
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(&ep.token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("发起授权失败（{}）：{}", status.as_u16(), text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("授权响应解析失败：{e}"))
+}
+
 /// 在官方目录里搜索第三方 mcp server。
 ///
 /// 参数：query 关键词（空串表示浏览全部）、cursor 分页游标（可选）。
@@ -308,6 +329,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             mcp_ensure_sidecar,
             mcp_search_registry,
+            mcp_authorize_server,
             mcp_list_servers,
             mcp_save_servers,
             mcp_remove_server,

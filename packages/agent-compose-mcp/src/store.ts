@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import type { EventBus } from './events.ts'
 import type { McpConfigFile, McpExposure, McpProfile, McpServerDef } from './types.ts'
 import { defaultExposure } from './types.ts'
+import type { OAuthRecord } from './oauth.ts'
 
 /** 上游 server 列表文件名 */
 export const SERVERS_FILE = 'servers.json'
@@ -183,5 +184,53 @@ export class Store {
     const temp = `${target}.${process.pid}.tmp`
     await writeFile(temp, `${JSON.stringify(data, null, 2)}\n`, 'utf8')
     await rename(temp, target)
+  }
+}
+
+/** oauth 令牌文件名 */
+export const OAUTH_FILE = 'oauth.json'
+
+/**
+ * OAuth 令牌存储。
+ *
+ * 令牌按 server id 分片存放在 `oauth.json`。文件权限在 unix 上设为 0600；
+ * windows 上依赖用户目录本身的 acl。
+ *
+ * ⚠️ 取舍：令牌目前是明文落盘。生产环境应换成系统钥匙串
+ * （keyring / tauri-plugin-stronghold），这里先保证功能可用。
+ */
+export class OAuthFileStore {
+  private readonly dir: string
+  private cache: Record<string, OAuthRecord> | null = null
+
+  constructor(dir: string) {
+    this.dir = dir
+  }
+
+  private async loadAll(): Promise<Record<string, OAuthRecord>> {
+    if (this.cache) return this.cache
+    try {
+      const raw = await readFile(join(this.dir, OAUTH_FILE), 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      this.cache = isRecord(parsed) ? (parsed as Record<string, OAuthRecord>) : {}
+    } catch {
+      this.cache = {}
+    }
+    return this.cache
+  }
+
+  async read(serverId: string): Promise<OAuthRecord | undefined> {
+    const all = await this.loadAll()
+    return all[serverId]
+  }
+
+  async write(serverId: string, record: OAuthRecord): Promise<void> {
+    const all = await this.loadAll()
+    all[serverId] = record
+    await mkdir(this.dir, { recursive: true })
+    const file = join(this.dir, OAUTH_FILE)
+    const tmp = `${file}.tmp`
+    await writeFile(tmp, JSON.stringify(all, null, 2), { encoding: 'utf8', mode: 0o600 })
+    await rename(tmp, file)
   }
 }

@@ -24,6 +24,7 @@ import type { UpstreamPool } from './upstream.ts'
 import type { McpProfile, McpRuntimeStatus, McpServerDef } from './types.ts'
 import { parseSelection } from './session.ts'
 import { entryToServerDef, searchRegistry } from './registry-client.ts'
+import type { OAuthManager } from './oauth.ts'
 
 /** server 层依赖 */
 export type McpHttpDeps = {
@@ -32,6 +33,8 @@ export type McpHttpDeps = {
   session: SessionManager
   store: Store
   bus: EventBus
+  /** oauth 管理器：远程上游的授权码流程 */
+  oauth: OAuthManager
   /** 当前 Bearer 令牌 */
   getToken: () => string
   /** 触发关闭 */
@@ -142,6 +145,12 @@ export class McpHttpServer {
         return
       }
 
+      if (pathname === '/oauth/callback') {
+        // 浏览器回调：不带令牌（浏览器没有我们的 bearer token）
+        void this.handleOAuthCallback(req, res)
+        return
+      }
+
       if (pathname.startsWith('/admin/')) {
         void this.handleAdmin(req, res, pathname)
         return
@@ -187,6 +196,47 @@ export class McpHttpServer {
   /** 当前活跃 HTTP 连接数（作为「在线 session」的近似指标） */
   getActiveConnections(): number {
     return this.activeConnections
+  }
+
+  // ── oauth 回调 ───────────────────────────────────────────
+
+  /**
+   * 处理浏览器回调：用授权码换令牌。
+   *
+   * 浏览器回调不带我们的 bearer token（它是网页跳转），因此这个路由
+   * 不做令牌校验；安全性由 state 参数与本地监听地址保证。
+   */
+  private async handleOAuthCallback(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const code = url.searchParams.get('code')
+    const serverId = url.searchParams.get('serverId')
+
+    if (!code || !serverId) {
+      sendJson(res, 400, { error: '回调缺少 code 或 serverId' })
+      return
+    }
+
+    const def = this.deps.store.getServers().find((item) => item.id === serverId)
+    if (!def?.url) {
+      sendJson(res, 404, { error: `找不到上游：${serverId}` })
+      return
+    }
+
+    try {
+      await this.deps.oauth.handleCallback(serverId, def.url, code)
+      const html =
+        '<!doctype html><html lang="zh"><head><meta charset="utf-8">' +
+        '<title>授权完成</title></head>' +
+        '<body style="font-family:system-ui;padding:40px;line-height:1.7">' +
+        '<h2 style="margin:0 0 8px">授权完成</h2>' +
+        '<p style="margin:0;color:#6b7280">可以关闭此页面，回到 AgentCompose 继续。</p>' +
+        '</body></html>'
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(html)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, 400, { error: message })
+    }
   }
 
   // ── admin API ─────────────────────────────────────────────
@@ -257,6 +307,33 @@ export class McpHttpServer {
         bus.emit('config-changed', { kind: 'servers' })
         res.writeHead(204)
         res.end()
+        return
+      }
+
+      // 发起 oauth 授权
+      if (
+        pathname.endsWith('/authorize') &&
+        pathname.startsWith('/admin/servers/') &&
+        method === 'POST'
+      ) {
+        const id = decodeURIComponent(
+          pathname.slice('/admin/servers/'.length, pathname.length - '/authorize'.length),
+        )
+        const def = store.getServers().find((item) => item.id === id)
+        if (!def) {
+          sendJson(res, 404, { error: `找不到上游：${id}` })
+          return
+        }
+        if (!def.url) {
+          sendJson(res, 400, { error: '只有 http 上游支持 oauth 授权' })
+          return
+        }
+        const result = await this.deps.oauth.startAuthorization(id, def.url)
+        sendJson(res, 200, {
+          authorizeUrl: result.authorizeUrl,
+          scope: result.scope,
+          state: 'pending',
+        })
         return
       }
 

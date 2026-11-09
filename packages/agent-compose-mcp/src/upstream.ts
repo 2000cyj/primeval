@@ -11,6 +11,7 @@ import type { CallToolResult, Tool, Transport } from '@modelcontextprotocol/clie
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio'
 import { resolveEnvPlaceholders, resolveEnvRecord } from './config.ts'
 import type { EventBus } from './events.ts'
+import type { OAuthManager } from './oauth.ts'
 import type { McpServerDef, McpToolInfo, McpUpstreamState, McpUpstreamStatus } from './types.ts'
 
 /** 工具清单刷新间隔（毫秒） */
@@ -30,6 +31,8 @@ export function reconnectDelay(attempt: number): number {
 }
 
 export type UpstreamPoolOptions = {
+  /** oauth 管理器：远程上游用 oauth 授权时需要 */
+  oauth?: OAuthManager
   /** 工具清单刷新间隔，默认 60s */
   toolRefreshIntervalMs?: number
   /** 握手用的 client 名 */
@@ -86,6 +89,7 @@ function sameConnection(a: McpServerDef, b: McpServerDef): boolean {
 
 export class UpstreamPool {
   private readonly entries = new Map<string, UpstreamEntry>()
+  private readonly oauth: OAuthManager | undefined
   private readonly bus: EventBus
   private readonly toolRefreshIntervalMs: number
   private readonly clientName: string
@@ -93,6 +97,7 @@ export class UpstreamPool {
 
   constructor(servers: McpServerDef[], bus: EventBus, options?: UpstreamPoolOptions) {
     this.bus = bus
+    this.oauth = options?.oauth
     this.toolRefreshIntervalMs = options?.toolRefreshIntervalMs ?? DEFAULT_TOOL_REFRESH_INTERVAL_MS
     this.clientName = options?.clientName ?? 'agent-compose-mcp'
     this.clientVersion = options?.clientVersion ?? '0.1.0'
@@ -178,12 +183,33 @@ export class UpstreamPool {
   /** 单个 server 的当前状态 */
   getStatus(serverId: string): McpUpstreamStatus | undefined {
     const entry = this.entries.get(serverId)
-    return entry ? this.statusOf(entry) : undefined
+    if (!entry) return undefined
+    return this.statusOf(entry)
   }
 
   /** 全部 server 的当前状态 */
   getStatuses(): McpUpstreamStatus[] {
     return [...this.entries.values()].map((entry) => this.statusOf(entry))
+  }
+
+  /**
+   * 某个上游的状态。
+   *
+   * 附带 oauth 授权状态，供界面显示「未授权 / 等待授权 / 已授权 / 授权失败」。
+   */
+  statusOf(entry: UpstreamEntry): McpUpstreamStatus {
+    const status: McpUpstreamStatus = {
+      serverId: entry.def.id,
+      state: entry.state,
+      tools: entry.tools,
+      error: entry.error,
+      lastConnectedAt: entry.lastConnectedAt,
+      reconnectAttempt: entry.reconnectAttempt,
+    }
+    if (entry.def.auth === 'oauth') {
+      status.oauth = this.oauth?.getStatus(entry.def.id) ?? { state: 'idle' }
+    }
+    return status
   }
 
   /** 单个 server 当前已知的工具清单 */
@@ -304,7 +330,16 @@ export class UpstreamPool {
     }
     if (!def.url) throw new Error(`http 上游缺少 url：${def.id}`)
     const headers = resolveEnvRecord(def.headers)
-    return new StreamableHTTPClientTransport(new URL(resolveEnvPlaceholders(def.url)), {
+    const url = new URL(resolveEnvPlaceholders(def.url))
+
+    // oauth 模式：把 provider 交给 transport，它会自动带上 bearer 令牌
+    if (def.auth === 'oauth' && this.oauth) {
+      return new StreamableHTTPClientTransport(url, {
+        authProvider: this.oauth.createProvider(def.id, url.toString()),
+      })
+    }
+
+    return new StreamableHTTPClientTransport(url, {
       requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
     })
   }
@@ -407,18 +442,5 @@ export class UpstreamPool {
     entry.state = state
     entry.error = error
     this.bus.emit('upstream-status', this.statusOf(entry))
-  }
-
-  /** 状态快照 */
-  private statusOf(entry: UpstreamEntry): McpUpstreamStatus {
-    const status: McpUpstreamStatus = {
-      serverId: entry.def.id,
-      state: entry.state,
-      tools: entry.tools,
-      reconnectAttempt: entry.reconnectAttempt,
-    }
-    if (entry.error !== undefined) status.error = entry.error
-    if (entry.lastConnectedAt !== undefined) status.lastConnectedAt = entry.lastConnectedAt
-    return status
   }
 }

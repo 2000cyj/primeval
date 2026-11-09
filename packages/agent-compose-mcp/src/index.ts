@@ -18,7 +18,8 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { EventBus } from './events.ts'
-import { Store } from './store.ts'
+import { OAuthFileStore, Store } from './store.ts'
+import { OAuthManager } from './oauth.ts'
 import { ToolRegistry } from './registry.ts'
 import { UpstreamPool } from './upstream.ts'
 import { SessionManager } from './session.ts'
@@ -65,7 +66,10 @@ async function main(): Promise<void> {
   const store = new Store(dataDir, bus)
   const config = await store.load()
 
-  const pool = new UpstreamPool(config.servers, bus)
+  const oauthStore = new OAuthFileStore(dataDir)
+  const oauth = new OAuthManager(oauthStore, bus)
+
+  const pool = new UpstreamPool(config.servers, bus, { oauth })
   const registry = new ToolRegistry(pool)
   const session = new SessionManager(pool, registry, bus)
 
@@ -101,6 +105,7 @@ async function main(): Promise<void> {
     session,
     store,
     bus,
+    oauth,
     getToken: () => token,
     onShutdown: () => {
       void shutdown(0)
@@ -109,6 +114,9 @@ async function main(): Promise<void> {
 
   const actualPort = await http.start(port)
   writeFileSync(join(runtime, PORT_FILE), String(actualPort), 'utf8')
+
+  // 端口确定后补上 oauth 回调地址
+  oauth.setBaseUrl(`http://127.0.0.1:${actualPort}`)
 
   console.log(`[agent-compose-mcp] listening on http://127.0.0.1:${actualPort}/mcp`)
   console.log(`[agent-compose-mcp] admin API: http://127.0.0.1:${actualPort}/admin/*`)

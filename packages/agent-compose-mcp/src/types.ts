@@ -13,6 +13,30 @@
 
 export type McpTransportKind = 'stdio' | 'http'
 
+/**
+ * 远程上游的认证方式。
+ *
+ * - `none`：不带认证
+ * - `static`：用 headers 里配的固定令牌（如 api key、personal access token）
+ * - `oauth`：走 OAuth 2.1 授权码流程（远程 mcp server 普遍要求）
+ */
+export type McpAuthKind = 'none' | 'static' | 'oauth'
+
+/** OAuth 授权状态 */
+export type McpOAuthState = 'idle' | 'pending' | 'authorized' | 'error'
+
+/** OAuth 授权的运行时信息 */
+export type McpOAuthStatus = {
+  state: McpOAuthState
+  /** 待用户打开的授权地址（pending 时有值） */
+  authorizeUrl?: string
+  /** 请求的 scope */
+  scope?: string
+  error?: string
+  /** 最近一次成功授权时间 */
+  authorizedAt?: string
+}
+
 export type McpServerDef = {
   /** 全局唯一，作为工具命名空间前缀 */
   id: string
@@ -30,6 +54,8 @@ export type McpServerDef = {
   headers?: Record<string, string>
   /** 是否参与对外暴露 */
   enabled: boolean
+  /** 远程上游的认证方式，默认 none */
+  auth?: McpAuthKind
 }
 
 // ─────────────────────────────────────────────────────────
@@ -82,6 +108,8 @@ export type McpUpstreamStatus = {
   lastConnectedAt?: string
   /** 已重连次数，0 表示未重连过 */
   reconnectAttempt: number
+  /** OAuth 授权状态（仅 auth 为 oauth 的 http 上游有值） */
+  oauth?: McpOAuthStatus
 }
 
 export type McpCallLog = {
@@ -257,6 +285,7 @@ export type McpRegistrySearchResult = {
 export const MCP_COMMANDS = {
   ensureSidecar: 'mcp_ensure_sidecar',
   searchRegistry: 'mcp_search_registry',
+  authorizeServer: 'mcp_authorize_server',
   listServers: 'mcp_list_servers',
   saveServers: 'mcp_save_servers',
   removeServer: 'mcp_remove_server',
