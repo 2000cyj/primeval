@@ -1,0 +1,395 @@
+/**
+ * 上游连接池：sidecar 对每个用户配置的 MCP server 维护一条长连接。
+ *
+ * - 按 serverId 复用连接：多个 agent 用同一个上游时只握手一次。
+ * - 惰性连接：真正需要该 server 时才建连。
+ * - 断线重连：指数退避 1s → 2s → 4s → 8s，之后封顶 30s。
+ * - 工具清单定时刷新（默认 60s），状态变化通过事件总线推给 UI。
+ */
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import type { CallToolResult, Tool, Transport } from '@modelcontextprotocol/client'
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio'
+import { resolveEnvPlaceholders, resolveEnvRecord } from './config.ts'
+import type { EventBus } from './events.ts'
+import type { McpServerDef, McpToolInfo, McpUpstreamState, McpUpstreamStatus } from './types.ts'
+
+/** 工具清单刷新间隔（毫秒） */
+export const DEFAULT_TOOL_REFRESH_INTERVAL_MS = 60_000
+
+/** 重连退避阶梯（毫秒），超出后封顶到 RECONNECT_MAX_BACKOFF_MS */
+export const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 8000]
+
+/** 重连退避上限（毫秒） */
+export const RECONNECT_MAX_BACKOFF_MS = 30_000
+
+/** 第 attempt 次重连要等待的时长 */
+export function reconnectDelay(attempt: number): number {
+  if (attempt <= 0) return RECONNECT_BACKOFF_MS[0] ?? RECONNECT_MAX_BACKOFF_MS
+  const step = RECONNECT_BACKOFF_MS[attempt]
+  return step ?? RECONNECT_MAX_BACKOFF_MS
+}
+
+export type UpstreamPoolOptions = {
+  /** 工具清单刷新间隔，默认 60s */
+  toolRefreshIntervalMs?: number
+  /** 握手用的 client 名 */
+  clientName?: string
+  /** 握手用的 client 版本 */
+  clientVersion?: string
+}
+
+type UpstreamEntry = {
+  def: McpServerDef
+  client: Client | undefined
+  transport: Transport | undefined
+  state: McpUpstreamState
+  tools: McpToolInfo[]
+  error: string | undefined
+  lastConnectedAt: string | undefined
+  /** 已发起的重连次数，0 表示还没重连过 */
+  reconnectAttempt: number
+  connecting: Promise<Client | undefined> | undefined
+  refreshTimer: NodeJS.Timeout | undefined
+  reconnectTimer: NodeJS.Timeout | undefined
+  /** 主动关闭标记：主动关闭不触发重连 */
+  closed: boolean
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+function toToolInfo(serverId: string, tool: Tool): McpToolInfo {
+  const info: McpToolInfo = {
+    serverId,
+    name: tool.name,
+    inputSchema: tool.inputSchema,
+  }
+  if (tool.description !== undefined) info.description = tool.description
+  return info
+}
+
+/** 连接参数是否发生变化（变了就要断开重连） */
+function sameConnection(a: McpServerDef, b: McpServerDef): boolean {
+  return (
+    a.transport === b.transport &&
+    a.command === b.command &&
+    a.url === b.url &&
+    JSON.stringify(a.args ?? []) === JSON.stringify(b.args ?? []) &&
+    JSON.stringify(a.env ?? {}) === JSON.stringify(b.env ?? {}) &&
+    JSON.stringify(a.headers ?? {}) === JSON.stringify(b.headers ?? {})
+  )
+}
+
+export class UpstreamPool {
+  private readonly entries = new Map<string, UpstreamEntry>()
+  private readonly bus: EventBus
+  private readonly toolRefreshIntervalMs: number
+  private readonly clientName: string
+  private readonly clientVersion: string
+
+  constructor(servers: McpServerDef[], bus: EventBus, options?: UpstreamPoolOptions) {
+    this.bus = bus
+    this.toolRefreshIntervalMs = options?.toolRefreshIntervalMs ?? DEFAULT_TOOL_REFRESH_INTERVAL_MS
+    this.clientName = options?.clientName ?? 'agent-compose-mcp'
+    this.clientVersion = options?.clientVersion ?? '0.1.0'
+    this.setServers(servers)
+  }
+
+  /**
+   * 用新的 server 定义列表重整连接池：新增的登记，连接参数变了的重连，删掉的关掉。
+   */
+  setServers(servers: McpServerDef[]): void {
+    const next = new Map(servers.map((def) => [def.id, def]))
+
+    for (const [id, entry] of [...this.entries]) {
+      const def = next.get(id)
+      if (!def) {
+        this.entries.delete(id)
+        void this.closeEntry(entry, 'disconnected', false)
+        continue
+      }
+      if (!sameConnection(def, entry.def)) {
+        this.entries.delete(id)
+        void this.closeEntry(entry, 'disconnected', false)
+        continue
+      }
+      entry.def = def
+    }
+
+    for (const def of servers) {
+      const existing = this.entries.get(def.id)
+      if (!existing) {
+        const entry: UpstreamEntry = {
+          def,
+          client: undefined,
+          transport: undefined,
+          state: def.enabled ? 'disconnected' : 'disabled',
+          tools: [],
+          error: undefined,
+          lastConnectedAt: undefined,
+          reconnectAttempt: 0,
+          connecting: undefined,
+          refreshTimer: undefined,
+          reconnectTimer: undefined,
+          closed: false,
+        }
+        this.entries.set(def.id, entry)
+        this.bus.emit('upstream-status', this.statusOf(entry))
+        continue
+      }
+      const wasEnabled = existing.def.enabled
+      existing.def = def
+      if (!def.enabled) {
+        if (wasEnabled || existing.state !== 'disabled') {
+          void this.closeEntry(existing, 'disabled')
+        }
+        continue
+      }
+      if (!wasEnabled) {
+        // 重新启用：解除主动关闭标记，允许再次连接
+        existing.closed = false
+        existing.state = 'disconnected'
+        this.bus.emit('upstream-status', this.statusOf(existing))
+      }
+    }
+  }
+
+  /** 全部 server 定义 */
+  getServerDefs(): McpServerDef[] {
+    return [...this.entries.values()].map((entry) => entry.def)
+  }
+
+  /** 单个 server 定义 */
+  getServerDef(serverId: string): McpServerDef | undefined {
+    return this.entries.get(serverId)?.def
+  }
+
+  /** 单个 server 的展示名 */
+  getServerName(serverId: string): string {
+    const def = this.entries.get(serverId)?.def
+    return def?.name ?? serverId
+  }
+
+  /** 单个 server 的当前状态 */
+  getStatus(serverId: string): McpUpstreamStatus | undefined {
+    const entry = this.entries.get(serverId)
+    return entry ? this.statusOf(entry) : undefined
+  }
+
+  /** 全部 server 的当前状态 */
+  getStatuses(): McpUpstreamStatus[] {
+    return [...this.entries.values()].map((entry) => this.statusOf(entry))
+  }
+
+  /** 单个 server 当前已知的工具清单 */
+  getTools(serverId: string): McpToolInfo[] {
+    return this.entries.get(serverId)?.tools ?? []
+  }
+
+  /**
+   * 拿到可用的 client：没有连接就惰性建连。
+   * 未启用或未知 server 返回 undefined。
+   */
+  async ensureConnected(serverId: string): Promise<Client | undefined> {
+    const entry = this.entries.get(serverId)
+    if (!entry) return undefined
+    if (!entry.def.enabled) {
+      if (entry.state !== 'disabled') this.setState(entry, 'disabled')
+      return undefined
+    }
+    if (entry.state === 'ready' && entry.client) return entry.client
+    if (entry.connecting) return entry.connecting
+
+    const pending = this.connect(entry)
+    entry.connecting = pending
+    try {
+      return await pending
+    } finally {
+      if (entry.connecting === pending) entry.connecting = undefined
+    }
+  }
+
+  /**
+   * 调用上游工具（原始工具名，不带命名空间前缀）。
+   */
+  async callTool(
+    serverId: string,
+    toolName: string,
+    args?: Record<string, unknown>,
+  ): Promise<CallToolResult> {
+    const client = await this.ensureConnected(serverId)
+    if (!client) throw new Error(`上游 MCP server 不可用：${serverId}`)
+    return client.callTool({ name: toolName, arguments: args })
+  }
+
+  /**
+   * 关闭全部连接。
+   */
+  async closeAll(): Promise<void> {
+    for (const entry of [...this.entries.values()]) {
+      await this.closeEntry(entry)
+    }
+  }
+
+  /** 建连 + 握手 + 拉工具清单 */
+  private async connect(entry: UpstreamEntry): Promise<Client | undefined> {
+    this.setState(entry, 'connecting')
+    try {
+      const transport = this.createTransport(entry.def)
+      const client = new Client({ name: this.clientName, version: this.clientVersion })
+      await client.connect(transport)
+      entry.transport = transport
+      entry.client = client
+      entry.lastConnectedAt = new Date().toISOString()
+      client.onclose = () => {
+        void this.handleClose(entry)
+      }
+      client.onerror = (error: Error) => {
+        this.handleError(entry, error)
+      }
+      await this.refreshTools(entry)
+      this.setState(entry, 'ready')
+      this.startRefreshTimer(entry)
+      return client
+    } catch (error) {
+      const message = errorMessage(error)
+      entry.client = undefined
+      entry.transport = undefined
+      this.setState(entry, 'error', message)
+      this.scheduleReconnect(entry)
+      return undefined
+    }
+  }
+
+  /** 建 transport：stdio 拉起子进程，http 走 Streamable HTTP */
+  private createTransport(def: McpServerDef): Transport {
+    if (def.transport === 'stdio') {
+      if (!def.command) throw new Error(`stdio 上游缺少 command：${def.id}`)
+      return new StdioClientTransport({
+        command: def.command,
+        args: def.args ?? [],
+        env: { ...getDefaultEnvironment(), ...resolveEnvRecord(def.env) },
+      })
+    }
+    if (!def.url) throw new Error(`http 上游缺少 url：${def.id}`)
+    const headers = resolveEnvRecord(def.headers)
+    return new StreamableHTTPClientTransport(new URL(resolveEnvPlaceholders(def.url)), {
+      requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
+    })
+  }
+
+  /** 重新拉取工具清单 */
+  private async refreshTools(entry: UpstreamEntry): Promise<void> {
+    const client = entry.client
+    if (!client) return
+    const result = await client.listTools()
+    entry.tools = result.tools.map((tool) => toToolInfo(entry.def.id, tool))
+  }
+
+  /** 定时刷新工具清单 */
+  private startRefreshTimer(entry: UpstreamEntry): void {
+    this.clearRefreshTimer(entry)
+    entry.refreshTimer = setInterval(() => {
+      void this.refreshToolsQuietly(entry)
+    }, this.toolRefreshIntervalMs)
+    entry.refreshTimer.unref()
+  }
+
+  private clearRefreshTimer(entry: UpstreamEntry): void {
+    if (!entry.refreshTimer) return
+    clearInterval(entry.refreshTimer)
+    entry.refreshTimer = undefined
+  }
+
+  private async refreshToolsQuietly(entry: UpstreamEntry): Promise<void> {
+    try {
+      await this.refreshTools(entry)
+      this.bus.emit('upstream-status', this.statusOf(entry))
+    } catch (error) {
+      entry.error = errorMessage(error)
+      this.bus.emit('upstream-status', this.statusOf(entry))
+    }
+  }
+
+  /** 连接断开（非主动关闭）→ 安排重连 */
+  private async handleClose(entry: UpstreamEntry): Promise<void> {
+    if (entry.closed) return
+    this.clearRefreshTimer(entry)
+    entry.client = undefined
+    entry.transport = undefined
+    this.setState(entry, 'disconnected')
+    this.scheduleReconnect(entry)
+  }
+
+  /** 出错（不一定是致命错误），记录错误信息并广播状态 */
+  private handleError(entry: UpstreamEntry, error: Error): void {
+    if (entry.closed) return
+    entry.error = error.message
+    this.bus.emit('upstream-status', this.statusOf(entry))
+  }
+
+  /** 按指数退避安排一次重连 */
+  private scheduleReconnect(entry: UpstreamEntry): void {
+    if (entry.closed) return
+    if (entry.reconnectTimer) return
+    const delay = reconnectDelay(entry.reconnectAttempt)
+    entry.reconnectAttempt += 1
+    entry.reconnectTimer = setTimeout(() => {
+      entry.reconnectTimer = undefined
+      void this.ensureConnected(entry.def.id)
+    }, delay)
+    entry.reconnectTimer.unref()
+  }
+
+  /** 主动关闭一条连接 */
+  private async closeEntry(
+    entry: UpstreamEntry,
+    state: McpUpstreamState = 'disconnected',
+    notify = true,
+  ): Promise<void> {
+    entry.closed = true
+    this.clearRefreshTimer(entry)
+    if (entry.reconnectTimer) {
+      clearTimeout(entry.reconnectTimer)
+      entry.reconnectTimer = undefined
+    }
+    const client = entry.client
+    entry.client = undefined
+    entry.transport = undefined
+    if (notify) {
+      this.setState(entry, state)
+    } else {
+      entry.state = state
+      entry.error = undefined
+    }
+    if (client) {
+      try {
+        await client.close()
+      } catch {
+        // 关闭失败不影响其它连接
+      }
+    }
+  }
+
+  /** 更新状态并广播 */
+  private setState(entry: UpstreamEntry, state: McpUpstreamState, error?: string): void {
+    entry.state = state
+    entry.error = error
+    this.bus.emit('upstream-status', this.statusOf(entry))
+  }
+
+  /** 状态快照 */
+  private statusOf(entry: UpstreamEntry): McpUpstreamStatus {
+    const status: McpUpstreamStatus = {
+      serverId: entry.def.id,
+      state: entry.state,
+      tools: entry.tools,
+      reconnectAttempt: entry.reconnectAttempt,
+    }
+    if (entry.error !== undefined) status.error = entry.error
+    if (entry.lastConnectedAt !== undefined) status.lastConnectedAt = entry.lastConnectedAt
+    return status
+  }
+}

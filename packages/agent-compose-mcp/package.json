@@ -1,0 +1,25 @@
+{
+  "name": "@remote/agent-compose-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AgentCompose MCP proxy — 对上游 MCP server 是 client，对 agent 是 server",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types --watch src/index.ts",
+    "start": "node --experimental-strip-types src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "@types/node": "^22.10.0"
+  }
+}
