@@ -6,7 +6,6 @@ import {
   CircleCheck,
   CircleSlash,
   Copy,
-  ExternalLink,
   KeyRound,
   LoaderCircle,
   Pencil,
@@ -115,9 +114,6 @@ let pollDeadline = 0
 const oauthOf = (serverId: string): McpOAuthStatus | undefined => upstreamOf(serverId)?.oauth
 
 const oauthState = (serverId: string): McpOAuthState => oauthOf(serverId)?.state ?? 'idle'
-
-const authorizeUrlOf = (serverId: string): string | undefined =>
-  authorizeUrls.value[serverId] ?? oauthOf(serverId)?.authorizeUrl
 
 const OAUTH_META: Record<
   McpOAuthState,
@@ -585,23 +581,7 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
               {{ oauthOf(server.id)?.error }}
             </span>
             <NButton
-              v-if="isAwaitingAuthorize(server.id) && authorizeUrlOf(server.id)"
-              tag="a"
-              size="tiny"
-              secondary
-              :href="authorizeUrlOf(server.id)"
-              target="_blank"
-              rel="noopener"
-            >
-              <template #icon>
-                <NIcon :size="13">
-                  <ExternalLink />
-                </NIcon>
-              </template>
-              打开授权页面
-            </NButton>
-            <NButton
-              v-else-if="oauthState(server.id) !== 'authorized'"
+              v-if="oauthState(server.id) !== 'authorized'"
               size="tiny"
               secondary
               :loading="authorizingId === server.id"
@@ -614,9 +594,6 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
               </template>
               授权
             </NButton>
-            <span v-if="oauthState(server.id) === 'idle'" class="oauth-hint">
-              点「授权」会打开浏览器，在那里登录并同意
-            </span>
           </div>
         </article>
       </div>
@@ -936,12 +913,6 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
   border-top: 1px solid var(--c-border);
   font-size: 12px;
   color: var(--c-text-3);
-}
-
-/* 授权说明文案 */
-.oauth-hint {
-  font-size: 11px;
-  color: var(--c-text-4);
 }
 
 .oauth-icon.ok {

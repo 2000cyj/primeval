@@ -34,6 +34,104 @@ fn sidecar_script() -> PathBuf {
         .join("index.ts")
 }
 
+/// sidecar 落盘的运行信息文件名
+const RUNTIME_FILE: &str = "sidecar.json";
+
+/// 运行中的 sidecar 信息
+struct SidecarRuntime {
+    pid: u32,
+    source_stamp: u64,
+}
+
+/// 读取运行中的 sidecar 信息。
+fn read_sidecar_runtime(app: &AppHandle) -> Option<SidecarRuntime> {
+    let raw = std::fs::read_to_string(mcp_data_dir(app).join(RUNTIME_FILE)).ok()?;
+    let value: Value = serde_json::from_str(&raw).ok()?;
+    let pid = value.get("pid")?.as_u64()? as u32;
+    let source_stamp = value.get("sourceStamp")?.as_u64().unwrap_or(0);
+    Some(SidecarRuntime { pid, source_stamp })
+}
+
+/// 当前 sidecar 源码的最新修改时间（毫秒）。
+///
+/// 与 sidecar 落盘的指纹比较，不一致说明代码改过，运行中的实例是旧的。
+fn current_source_stamp() -> u64 {
+    let src = sidecar_script()
+        .parent()
+        .map(|p| p.to_path_buf());
+    let Some(src) = src else { return 0 };
+    let mut latest = 0u64;
+    let Ok(entries) = std::fs::read_dir(&src) else { return 0 };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("ts") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(ms) = modified.duration_since(std::time::UNIX_EPOCH) {
+                    let stamp = ms.as_millis() as u64;
+                    if stamp > latest {
+                        latest = stamp;
+                    }
+                }
+            }
+        }
+    }
+    latest
+}
+
+/// 进程是否还活着。
+fn process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("tasklist");
+        cmd.arg("/FI")
+            .arg(format!("PID eq {pid}"))
+            .arg("/NH")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let output = cmd.output();
+        match output {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                text.contains(&pid.to_string())
+            }
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Path::new(&format!("/proc/{pid}")).exists()
+    }
+}
+
+/// 结束一个进程。
+fn kill_process(pid: u32) {
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .arg("/F")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .arg("-9")
+            .arg(pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 /// 端口是否有人监听。
 fn port_alive(port: u16) -> bool {
     use std::net::{SocketAddr, TcpStream};
@@ -140,7 +238,32 @@ fn ensure_sidecar_ready(app: &AppHandle) -> Result<(), String> {
     // 已在运行：端口文件存在且端口有人监听
     if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
         if port_alive(port) {
-            return Ok(());
+            // 源码改过就重启：sidecar 是独立进程，不重启还在用旧逻辑
+            let stale = match read_sidecar_runtime(app) {
+                Some(info) => {
+                    info.source_stamp != current_source_stamp()
+                        && info.source_stamp != 0
+                        && current_source_stamp() != 0
+                }
+                None => false,
+            };
+            if !stale {
+                return Ok(());
+            }
+            if let Some(info) = read_sidecar_runtime(app) {
+                if process_alive(info.pid) {
+                    kill_process(info.pid);
+                }
+            }
+            // 等旧进程退出，端口释放
+            for _ in 0..20 {
+                if !port_alive(port) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            // 端口文件已失效，清掉避免下次误判
+            let _ = std::fs::remove_file(dir.join("port"));
         }
     }
 
@@ -173,17 +296,25 @@ fn ensure_sidecar_ready(app: &AppHandle) -> Result<(), String> {
 fn mcp_ensure_sidecar(app: AppHandle) -> Result<Value, String> {
     let dir = mcp_data_dir(&app);
 
-    // 已在运行：端口文件存在且端口有人监听
+    // 已在运行且代码没变：直接返回
     if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
         if port_alive(port) {
-            let token = read_trimmed(&dir.join("token")).unwrap_or_default();
-            return Ok(json!({
-                "endpoint": format!("http://127.0.0.1:{port}"),
-                "token": token,
-                "port": port,
-                "running": true,
-                "started": false,
-            }));
+            let fresh = match read_sidecar_runtime(&app) {
+                Some(info) => {
+                    info.source_stamp == current_source_stamp() || current_source_stamp() == 0
+                }
+                None => true,
+            };
+            if fresh {
+                let token = read_trimmed(&dir.join("token")).unwrap_or_default();
+                return Ok(json!({
+                    "endpoint": format!("http://127.0.0.1:{port}"),
+                    "token": token,
+                    "port": port,
+                    "running": true,
+                    "started": false,
+                }));
+            }
         }
     }
 

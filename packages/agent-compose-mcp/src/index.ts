@@ -15,6 +15,7 @@
  * Tauri 侧从同一位置读取，以便把 admin API 的调用转发过来。
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { sourceStamp } from './stamp.ts'
 import { join } from 'node:path'
 
 import { EventBus } from './events.ts'
@@ -36,6 +37,8 @@ import {
 const PORT_FILE = 'port'
 /** 落盘的令牌文件名 */
 const TOKEN_FILE = 'token'
+/** 落盘的运行信息文件名（pid 与源码指纹） */
+const RUNTIME_FILE = 'sidecar.json'
 
 /**
  * 读取端口文件并确认该端口仍有人监听。
@@ -114,6 +117,17 @@ async function main(): Promise<void> {
 
   const actualPort = await http.start(port)
   writeFileSync(join(runtime, PORT_FILE), String(actualPort), 'utf8')
+
+  // 记录 pid 与源码指纹：调用方据此判断运行中的实例是否还对应当前代码
+  writeFileSync(
+    join(runtime, RUNTIME_FILE),
+    JSON.stringify({
+      pid: process.pid,
+      sourceStamp: sourceStamp(join(import.meta.dirname, '..', 'src')),
+      startedAt: new Date().toISOString(),
+    }),
+    'utf8',
+  )
 
   // 端口确定后补上 oauth 回调地址
   oauth.setBaseUrl(`http://127.0.0.1:${actualPort}`)
