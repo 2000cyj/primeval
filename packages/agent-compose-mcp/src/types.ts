@@ -194,7 +194,69 @@ export function parseToolKey(key: string): { serverId: string; toolName: string 
 // Tauri command 名（前端 ↔ sidecar 桥接层）
 // ─────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────
+// 官方 MCP Registry（目录）
+// ─────────────────────────────────────────────────────────
+
+/** registry 里声明的包安装方式 */
+export type McpRegistryPackage = {
+  registryType?: string
+  identifier?: string
+  version?: string
+  /** 启动器提示，如 npx / uvx / docker */
+  runtimeHint?: string
+  transport?: { type?: string }
+  /** 追加到启动命令后的参数 */
+  runtimeArguments?: Array<{ type?: string; value?: string }>
+  /** 该 server 需要的环境变量 */
+  environmentVariables?: Array<{
+    name?: string
+    description?: string
+    isRequired?: boolean
+    format?: string
+  }>
+}
+
+/** registry 里声明的远程端点 */
+export type McpRegistryRemote = {
+  type?: string
+  url?: string
+  headers?: Array<{ name?: string; value?: string; description?: string; isRequired?: boolean }>
+}
+
+/** 目录里的一条 server */
+export type McpRegistryEntry = {
+  /** 全局唯一名，如 io.github.owner/repo */
+  name: string
+  title?: string
+  description?: string
+  version?: string
+  homepage?: string
+  repository?: { url?: string; source?: string }
+  /** 可安装的包（stdio 形态） */
+  packages?: McpRegistryPackage[]
+  /** 远程端点（http 形态） */
+  remotes?: McpRegistryRemote[]
+  /** 是否官方收录 */
+  official?: boolean
+  /** 能否直接落地为上游定义（本地可启动或存在远程端点） */
+  installable?: boolean
+  /** 目录条目自动翻译出的上游定义，installable 为 true 时存在 */
+  def?: McpServerDef
+}
+
+/** 目录搜索结果 */
+export type McpRegistrySearchResult = {
+  entries: McpRegistryEntry[]
+  /** 下一页游标，为空表示没有更多 */
+  nextCursor?: string
+  /** 搜索所用的目录名 */
+  source: string
+}
+
 export const MCP_COMMANDS = {
+  ensureSidecar: 'mcp_ensure_sidecar',
+  searchRegistry: 'mcp_search_registry',
   listServers: 'mcp_list_servers',
   saveServers: 'mcp_save_servers',
   removeServer: 'mcp_remove_server',

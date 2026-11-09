@@ -53,6 +53,8 @@ type UpstreamEntry = {
   reconnectTimer: NodeJS.Timeout | undefined
   /** 主动关闭标记：主动关闭不触发重连 */
   closed: boolean
+  /** 子进程 stderr 的最近若干行，用于连接失败时给出可读原因 */
+  stderrLines: string[]
 }
 
 function errorMessage(error: unknown): string {
@@ -134,6 +136,7 @@ export class UpstreamPool {
           refreshTimer: undefined,
           reconnectTimer: undefined,
           closed: false,
+          stderrLines: [],
         }
         this.entries.set(def.id, entry)
         this.bus.emit('upstream-status', this.statusOf(entry))
@@ -238,6 +241,7 @@ export class UpstreamPool {
     this.setState(entry, 'connecting')
     try {
       const transport = this.createTransport(entry.def)
+      this.attachStderr(entry, transport)
       const client = new Client({ name: this.clientName, version: this.clientVersion })
       await client.connect(transport)
       entry.transport = transport
@@ -254,13 +258,36 @@ export class UpstreamPool {
       this.startRefreshTimer(entry)
       return client
     } catch (error) {
-      const message = errorMessage(error)
+      const detail = errorMessage(error)
+      // 子进程的 stderr 往往才是真正的原因（如「缺少必需参数」）
+      const stderr = entry.stderrLines.join('\n').trim()
+      const message = stderr ? `${detail}\n${stderr}` : detail
       entry.client = undefined
       entry.transport = undefined
       this.setState(entry, 'error', message)
       this.scheduleReconnect(entry)
       return undefined
     }
+  }
+
+  /**
+   * 收集 stdio 子进程的 stderr（最近 20 行）。
+   *
+   * 上游进程常把「用法说明」「缺少参数」写进 stderr 后立即退出，
+   * 没有它连接失败只会显示笼统的 Connection closed。
+   */
+  private attachStderr(entry: UpstreamEntry, transport: Transport): void {
+    const stderr = (transport as { stderr?: unknown }).stderr
+    if (!stderr || typeof (stderr as NodeJS.ReadableStream).on !== 'function') return
+    ;(stderr as NodeJS.ReadableStream).on('data', (chunk: Buffer | string) => {
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+      for (const line of text.split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        entry.stderrLines.push(trimmed)
+        while (entry.stderrLines.length > 20) entry.stderrLines.shift()
+      }
+    })
   }
 
   /** 建 transport：stdio 拉起子进程，http 走 Streamable HTTP */
@@ -271,6 +298,8 @@ export class UpstreamPool {
         command: def.command,
         args: def.args ?? [],
         env: { ...getDefaultEnvironment(), ...resolveEnvRecord(def.env) },
+        // 收集 stderr：上游启动失败时才能看到「缺少参数」这类真实原因
+        stderr: 'pipe',
       })
     }
     if (!def.url) throw new Error(`http 上游缺少 url：${def.id}`)

@@ -23,6 +23,7 @@ import type { SessionManager } from './session.ts'
 import type { UpstreamPool } from './upstream.ts'
 import type { McpProfile, McpRuntimeStatus, McpServerDef } from './types.ts'
 import { parseSelection } from './session.ts'
+import { entryToServerDef, searchRegistry } from './registry-client.ts'
 
 /** server 层依赖 */
 export type McpHttpDeps = {
@@ -275,6 +276,23 @@ export class McpHttpServer {
           200,
           status ?? { serverId: id, state: 'disconnected', tools: [], reconnectAttempt: 0 },
         )
+        return
+      }
+
+      // 官方目录搜索
+      if (pathname === '/admin/registry/search' && method === 'GET') {
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+        const query = url.searchParams.get('query') ?? ''
+        const cursor = url.searchParams.get('cursor') ?? undefined
+        const result = await searchRegistry(query, cursor)
+        // 附带「能否直接落地为上游定义」的判断，前端据此决定是否可一键添加
+        sendJson(res, 200, {
+          ...result,
+          entries: result.entries.map((entry) => {
+            const def = entryToServerDef(entry)
+            return { ...entry, installable: def !== null, def: def ?? undefined }
+          }),
+        })
         return
       }
 

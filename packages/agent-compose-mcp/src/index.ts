@@ -23,12 +23,29 @@ import { ToolRegistry } from './registry.ts'
 import { UpstreamPool } from './upstream.ts'
 import { SessionManager } from './session.ts'
 import { McpHttpServer } from './server.ts'
-import { findAvailablePort, generateToken, mcpDataDir } from './config.ts'
+import { findAvailablePort, generateToken, isPortAvailable, mcpDataDir } from './config.ts'
 
 /** 落盘的端口文件名 */
 const PORT_FILE = 'port'
 /** 落盘的令牌文件名 */
 const TOKEN_FILE = 'token'
+
+/**
+ * 读取端口文件并确认该端口仍有人监听。
+ *
+ * @returns 已有实例的端口；没有可用实例时返回 null
+ */
+async function readExistingPort(dataDir: string): Promise<number | null> {
+  const { readFileSync } = await import('node:fs')
+  try {
+    const raw = readFileSync(join(dataDir, PORT_FILE), 'utf8').trim()
+    const port = Number.parseInt(raw, 10)
+    if (!Number.isInteger(port) || port <= 0) return null
+    return (await isPortAvailable(port)) ? null : port
+  } catch {
+    return null
+  }
+}
 
 async function main(): Promise<void> {
   const dataDir = mcpDataDir()
@@ -57,6 +74,14 @@ async function main(): Promise<void> {
     token = generateToken()
   }
   writeFileSync(join(dataDir, TOKEN_FILE), token, 'utf8')
+
+  // 单例：若已有实例在跑（端口文件指向的端口仍有人监听），复用它并退出。
+  // 否则两个实例会互相覆盖端口文件，gui 与 agent 可能连到不同的实例。
+  const existingPort = await readExistingPort(dataDir)
+  if (existingPort !== null) {
+    console.log(`[agent-compose-mcp] 已有实例在运行（端口 ${existingPort}），本次启动退出`)
+    return
+  }
 
   const port = await findAvailablePort()
 
