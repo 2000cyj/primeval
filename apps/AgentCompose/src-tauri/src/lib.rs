@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
@@ -13,6 +15,27 @@ fn mcp_data_dir(app: &AppHandle) -> PathBuf {
         .home_dir()
         .unwrap_or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from).unwrap_or_default());
     home.join(".agent-compose").join("mcp")
+}
+
+/// sidecar 入口脚本（仓库内相对路径）。
+///
+/// `CARGO_MANIFEST_DIR` = `apps/AgentCompose/src-tauri`，
+/// sidecar 在 `packages/agent-compose-mcp`。
+fn sidecar_script() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("packages")
+        .join("agent-compose-mcp")
+        .join("src")
+        .join("index.ts")
+}
+
+/// 端口是否有人监听。
+fn port_alive(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
 
 fn read_trimmed(path: &PathBuf) -> Option<String> {
@@ -43,6 +66,86 @@ fn endpoint(app: &AppHandle) -> Result<Endpoint, String> {
         base: format!("http://127.0.0.1:{port}"),
         token,
     })
+}
+
+/// 拉起 sidecar（若未运行）。
+///
+/// 子进程以 detached 方式启动，**不随 GUI 退出而结束** —— agent 可能还在
+/// 使用它。发布形态下这里会换成 Tauri sidecar 二进制。
+fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
+    let script = sidecar_script();
+    if !script.exists() {
+        return Err(format!("找不到 sidecar 入口脚本：{}", script.display()));
+    }
+
+    let mut cmd = Command::new("node");
+    cmd.arg("--experimental-strip-types")
+        .arg(&script)
+        .current_dir(
+            script
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or_else(|| Path::new(".")),
+        )
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+
+    cmd.spawn().map_err(|e| format!("启动 sidecar 失败：{e}"))?;
+    let _ = app;
+    Ok(())
+}
+
+/// 确保 sidecar 在运行，返回其端口与令牌。
+///
+/// 已在运行则直接返回；否则拉起并等待就绪（最多 15 秒）。
+#[tauri::command]
+fn mcp_ensure_sidecar(app: AppHandle) -> Result<Value, String> {
+    let dir = mcp_data_dir(&app);
+
+    // 已在运行：端口文件存在且端口有人监听
+    if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
+        if port_alive(port) {
+            let token = read_trimmed(&dir.join("token")).unwrap_or_default();
+            return Ok(json!({
+                "endpoint": format!("http://127.0.0.1:{port}"),
+                "token": token,
+                "port": port,
+                "running": true,
+                "started": false,
+            }));
+        }
+    }
+
+    spawn_sidecar(&app)?;
+
+    // 等待就绪
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
+            if port_alive(port) {
+                let token = read_trimmed(&dir.join("token")).unwrap_or_default();
+                return Ok(json!({
+                    "endpoint": format!("http://127.0.0.1:{port}"),
+                    "token": token,
+                    "port": port,
+                    "running": true,
+                    "started": true,
+                }));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    Err("MCP sidecar 启动超时（15 秒）".to_string())
 }
 
 /// 转发一次 admin API 调用到 sidecar。
@@ -140,10 +243,66 @@ async fn mcp_get_status(app: AppHandle) -> Result<Value, String> {
     admin_request(&app, reqwest::Method::GET, "/admin/status", None).await
 }
 
+/// 在官方目录里搜索第三方 mcp server。
+///
+/// 参数：query 关键词（空串表示浏览全部）、cursor 分页游标（可选）。
+#[tauri::command]
+async fn mcp_search_registry(
+    app: AppHandle,
+    query: String,
+    cursor: Option<String>,
+) -> Result<Value, String> {
+    let ep = endpoint(&app)?;
+    let client = reqwest::Client::new();
+    let mut url = format!("{}/admin/registry/search", ep.base);
+    {
+        // 手工拼 query，避免额外引入 url 构造依赖
+        let mut parts = vec![format!("query={}", encode_component(&query))];
+        if let Some(c) = cursor.filter(|c| !c.is_empty()) {
+            parts.push(format!("cursor={}", encode_component(&c)));
+        }
+        url.push('?');
+        url.push_str(&parts.join("&"));
+    }
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&ep.token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("目录服务返回 {}：{}", status.as_u16(), text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("目录响应解析失败：{e}"))
+}
+
+/// 极简 query 编码（仅需处理空格与少数保留字符）。
+fn encode_component(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => out.push(ch),
+            ' ' => out.push_str("%20"),
+            _ => {
+                let mut buf = [0u8; 4];
+                for byte in ch.encode_utf8(&mut buf).as_bytes() {
+                    out.push_str(&format!("%{byte:02X}"));
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            mcp_ensure_sidecar,
+            mcp_search_registry,
             mcp_list_servers,
             mcp_save_servers,
             mcp_remove_server,
