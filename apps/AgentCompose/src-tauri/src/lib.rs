@@ -169,7 +169,12 @@ async fn admin_request(
     let text = resp.text().await.map_err(|e| e.to_string())?;
 
     if !status.is_success() {
-        return Err(format!("sidecar 返回 {}：{}", status.as_u16(), text));
+        let hint = if status == reqwest::StatusCode::UNAUTHORIZED {
+            "令牌与正在运行的 sidecar 不匹配，请重启 sidecar"
+        } else {
+            "sidecar 返回错误"
+        };
+        return Err(format!("{hint}（{}）：{}", status.as_u16(), text));
     }
     if text.trim().is_empty() {
         return Ok(Value::Null);

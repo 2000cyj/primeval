@@ -32,6 +32,22 @@ export function mcpDataDir(): string {
   return join(appDataDir(), 'mcp')
 }
 
+/**
+ * 运行时信息目录：port 与 token 落在这里。
+ *
+ * **固定在默认位置，不受 `AGENT_COMPOSE_DATA_DIR` 影响。**
+ *
+ * 端口与令牌是「哪个 sidecar 在跑」的唯一真相源，gui 侧只认这一处。
+ * 若它们跟着数据目录走，多实例（或测试时另设数据目录）就会出现
+ * 端口撞上但令牌不同的情况 —— gui 带旧令牌请求，收到 401，
+ * 表现成「搜索失败 / 需要登录」，极难排查。
+ *
+ * 配置数据（servers.json 等）仍放在数据目录，两者职责分开。
+ */
+export function runtimeDir(): string {
+  return join(homedir(), '.agent-compose', 'mcp')
+}
+
 /** 生成访问 token：32 字节随机数，base64url 编码 */
 export function generateToken(): string {
   return randomBytes(TOKEN_BYTES).toString('base64url')

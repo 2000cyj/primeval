@@ -23,7 +23,13 @@ import { ToolRegistry } from './registry.ts'
 import { UpstreamPool } from './upstream.ts'
 import { SessionManager } from './session.ts'
 import { McpHttpServer } from './server.ts'
-import { findAvailablePort, generateToken, isPortAvailable, mcpDataDir } from './config.ts'
+import {
+  findAvailablePort,
+  generateToken,
+  isPortAvailable,
+  mcpDataDir,
+  runtimeDir,
+} from './config.ts'
 
 /** 落盘的端口文件名 */
 const PORT_FILE = 'port'
@@ -51,6 +57,10 @@ async function main(): Promise<void> {
   const dataDir = mcpDataDir()
   mkdirSync(dataDir, { recursive: true })
 
+  // 端口与令牌固定落在默认位置，与 gui 侧读取的路径一致
+  const runtime = runtimeDir()
+  mkdirSync(runtime, { recursive: true })
+
   const bus = new EventBus()
   const store = new Store(dataDir, bus)
   const config = await store.load()
@@ -66,18 +76,18 @@ async function main(): Promise<void> {
   let token = ''
   try {
     const { readFileSync } = await import('node:fs')
-    token = readFileSync(join(dataDir, TOKEN_FILE), 'utf8').trim()
+    token = readFileSync(join(runtime, TOKEN_FILE), 'utf8').trim()
   } catch {
     token = ''
   }
   if (!token) {
     token = generateToken()
   }
-  writeFileSync(join(dataDir, TOKEN_FILE), token, 'utf8')
+  writeFileSync(join(runtime, TOKEN_FILE), token, 'utf8')
 
   // 单例：若已有实例在跑（端口文件指向的端口仍有人监听），复用它并退出。
   // 否则两个实例会互相覆盖端口文件，gui 与 agent 可能连到不同的实例。
-  const existingPort = await readExistingPort(dataDir)
+  const existingPort = await readExistingPort(runtime)
   if (existingPort !== null) {
     console.log(`[agent-compose-mcp] 已有实例在运行（端口 ${existingPort}），本次启动退出`)
     return
@@ -98,11 +108,12 @@ async function main(): Promise<void> {
   })
 
   const actualPort = await http.start(port)
-  writeFileSync(join(dataDir, PORT_FILE), String(actualPort), 'utf8')
+  writeFileSync(join(runtime, PORT_FILE), String(actualPort), 'utf8')
 
   console.log(`[agent-compose-mcp] listening on http://127.0.0.1:${actualPort}/mcp`)
   console.log(`[agent-compose-mcp] admin API: http://127.0.0.1:${actualPort}/admin/*`)
   console.log(`[agent-compose-mcp] data dir: ${dataDir}`)
+  console.log(`[agent-compose-mcp] runtime dir: ${runtime}`)
 
   let shuttingDown = false
   const shutdown = async (code: number): Promise<void> => {
