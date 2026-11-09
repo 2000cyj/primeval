@@ -17,6 +17,7 @@ import {
   Server,
   SlidersHorizontal,
   Trash2,
+  TriangleAlert,
   Unlink,
 } from 'lucide-vue-next'
 import {
@@ -38,7 +39,6 @@ import {
   getStatus,
   listProfiles,
   listServers,
-  mcpDegraded,
   removeServer,
   saveServers,
   setExposure,
@@ -56,6 +56,8 @@ const status = ref<McpRuntimeStatus | null>(null)
 const exposure = ref<McpExposure>(defaultExposure())
 const profiles = ref<McpProfile[]>([])
 const loading = ref(false)
+/** 加载失败时的原因（sidecar 没起来等），用于页面顶部提示 */
+const loadError = ref('')
 
 /** 新增 / 编辑弹窗 */
 const showServerModal = ref(false)
@@ -206,8 +208,8 @@ const serverSubtitle = (server: McpServerDef): string => {
 const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
   if (!options.quiet) loading.value = true
   try {
-    // 先确保 sidecar 在跑：它没起来时 admin 调用会失败并退化成 mock，
-    // 那样在页面里加的 server 实际没存住。
+    // 先确保 sidecar 在跑：它没起来时 admin 调用会失败，
+    // 那样在页面里加的 server 实际存不住。
     await ensureSidecar()
     const [serverList, runtime, exposureConfig, profileList] = await Promise.all([
       listServers(),
@@ -219,6 +221,7 @@ const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
     status.value = runtime
     exposure.value = exposureConfig
     profiles.value = profileList
+    loadError.value = ''
     // 授权是异步的：状态里已有 pending 的 server 意味着用户正在浏览器里走流程
     for (const serverId of pendingOauthIds()) {
       if (!awaitingAuthorizeIds.value.includes(serverId)) {
@@ -227,8 +230,11 @@ const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
     }
     if (pendingOauthIds().length) startPolling()
   } catch (error) {
+    // 不降级成假数据：如实显示失败原因，让用户知道 sidecar 没起来
+    const detail = error instanceof Error ? error.message : String(error)
+    loadError.value = detail
     console.warn('[mcp] 加载配置失败', error)
-    if (!options.quiet) message.error('加载 MCP 配置失败')
+    if (!options.quiet) message.error(detail)
   } finally {
     if (!options.quiet) loading.value = false
   }
@@ -430,11 +436,18 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
       </NSpace>
     </header>
 
+    <div v-if="loadError" class="load-error">
+      <NIcon :size="15" color="var(--c-warning, #b45309)">
+        <TriangleAlert />
+      </NIcon>
+      <span class="load-error-text">{{ loadError }}</span>
+      <NButton size="tiny" secondary @click="() => load()">重试</NButton>
+    </div>
+
     <McpEndpointCard
       :endpoint="status?.endpoint ?? ''"
       :token="status?.token ?? ''"
       :sessions="status?.sessions ?? 0"
-      :degraded="mcpDegraded"
     />
 
     <section class="block">
@@ -648,6 +661,22 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
 </template>
 
 <style scoped>
+/* 加载失败提示条 */
+.load-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+}
+
+.load-error-text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--c-text-2);
+}
 .page {
   display: flex;
   flex-direction: column;

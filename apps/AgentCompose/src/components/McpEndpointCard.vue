@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NIcon, NRadioButton, NRadioGroup, NTag, useMessage } from 'naive-ui'
+import { NButton, NIcon, NRadioButton, NRadioGroup, useMessage } from 'naive-ui'
 import { Copy, Eye, EyeOff } from 'lucide-vue-next'
 import { buildMcpUrl } from '@remote/agent-compose-mcp/types'
 
@@ -11,8 +11,6 @@ const props = defineProps<{
   token: string
   /** 当前在线 MCP session 数 */
   sessions: number
-  /** 是否处于 mock 降级模式 */
-  degraded?: boolean
 }>()
 
 const message = useMessage()
@@ -82,9 +80,6 @@ const copy = async (text: string, label: string): Promise<void> => {
         <span class="card-title">接入信息</span>
         <span class="card-sub">agent 通过这个地址连上 AgentCompose 的 MCP 代理</span>
       </div>
-      <NTag v-if="degraded" size="small" :bordered="false" type="warning"
-        >降级模式（mock 数据）</NTag
-      >
     </header>
 
     <dl class="kv-grid">
