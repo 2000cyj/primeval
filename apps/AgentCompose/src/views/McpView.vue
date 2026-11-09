@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, type Component } from 'vue'
-import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, useMessage } from 'naive-ui'
+import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, NTooltip, useMessage } from 'naive-ui'
 import {
   CircleAlert,
   CircleCheck,
@@ -39,6 +39,7 @@ import {
   getStatus,
   listProfiles,
   listServers,
+  openUrl,
   removeServer,
   saveServers,
   setExposure,
@@ -86,6 +87,13 @@ const upstreamOf = (serverId: string): McpUpstreamStatus | undefined =>
 const stateMeta = (serverId: string) => STATE_META[upstreamOf(serverId)?.state ?? 'disconnected']
 
 const toolCount = (serverId: string): number => upstreamOf(serverId)?.tools.length ?? 0
+
+/** 状态提示里的详情文字：连接失败时给出真实原因，否则为空 */
+const stateDetail = (serverId: string): string => {
+  const upstream = upstreamOf(serverId)
+  if (upstream?.state !== 'error') return ''
+  return upstream.error ?? ''
+}
 
 // ── OAuth 授权 ──
 
@@ -331,6 +339,21 @@ const onTestServer = async (server: McpServerDef): Promise<void> => {
     const upstreams = status.value.upstreams.filter((item) => item.serverId !== upstream.serverId)
     status.value = { ...status.value, upstreams: [...upstreams, upstream] }
   }
+
+  // oauth 上游尚未授权：后端已把授权地址带回来，直接打开浏览器
+  // 让用户人工登录并同意
+  const authorizeUrl = upstream.oauth?.authorizeUrl
+  if (authorizeUrl) {
+    authorizeUrls.value = { ...authorizeUrls.value, [server.id]: authorizeUrl }
+    if (!awaitingAuthorizeIds.value.includes(server.id)) {
+      awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, server.id]
+    }
+    await openAuthorizePage(authorizeUrl)
+    message.info(`请在浏览器中完成授权：${server.name}`)
+    startPolling()
+    return
+  }
+
   if (upstream.state === 'ready') {
     message.success(`${server.name} 连接成功，${upstream.tools.length} 个工具`)
     return
@@ -342,12 +365,22 @@ const onTestServer = async (server: McpServerDef): Promise<void> => {
   message.error(upstream.error ?? `${server.name} 连接失败`)
 }
 
-/** 打开授权页：优先用系统浏览器，webview 里被拦时靠卡片上的链接手动打开 */
-const openAuthorizePage = (url: string): void => {
+/**
+ * 打开授权页。
+ *
+ * 优先用系统默认浏览器（webview 里的 window.open 常被拦）。
+ * 浏览器打不开时，卡片上的链接仍可手动点开。
+ */
+const openAuthorizePage = async (url: string): Promise<void> => {
   try {
-    window.open(url, '_blank')
+    await openUrl(url)
   } catch (error) {
-    console.warn('[mcp] 自动打开授权页面失败，请手动点击授权链接', error)
+    console.warn('[mcp] 打开系统浏览器失败，请手动点击授权链接', error)
+    try {
+      window.open(url, '_blank')
+    } catch {
+      // 留给卡片上的手动链接
+    }
   }
 }
 
@@ -360,7 +393,7 @@ const onAuthorize = async (server: McpServerDef): Promise<void> => {
     if (!awaitingAuthorizeIds.value.includes(server.id)) {
       awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, server.id]
     }
-    openAuthorizePage(result.authorizeUrl)
+    await openAuthorizePage(result.authorizeUrl)
     message.info(`请在浏览器中完成授权：${server.name}`)
     startPolling()
   } catch (error) {
@@ -484,13 +517,18 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
           </div>
 
           <div class="server-state" :class="stateMeta(server.id).tone">
-            <NIcon :size="14">
+            <NTooltip v-if="stateDetail(server.id)" placement="top" :delay="200" :max-width="420">
+              <template #trigger>
+                <NIcon :size="14" class="state-icon">
+                  <component :is="stateMeta(server.id).icon" />
+                </NIcon>
+              </template>
+              <div class="state-tip-detail">{{ stateDetail(server.id) }}</div>
+            </NTooltip>
+            <NIcon v-else :size="14">
               <component :is="stateMeta(server.id).icon" />
             </NIcon>
             <span class="state-label">{{ stateMeta(server.id).label }}</span>
-            <span v-if="upstreamOf(server.id)?.state === 'error'" class="state-error">
-              {{ upstreamOf(server.id)?.error }}
-            </span>
           </div>
 
           <div class="server-tools tnum">{{ toolCount(server.id) }} 个工具</div>
@@ -576,6 +614,9 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
               </template>
               授权
             </NButton>
+            <span v-if="oauthState(server.id) === 'idle'" class="oauth-hint">
+              点「授权」会打开浏览器，在那里登录并同意
+            </span>
           </div>
         </article>
       </div>
@@ -843,15 +884,24 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
   }
 }
 
+/* 状态图标：可悬停查看失败详情 */
+.state-icon {
+  cursor: help;
+}
+
+/* 状态文字标签 */
 .state-label {
   flex: none;
 }
 
-.state-error {
-  overflow: hidden;
+/* 悬停提示里的错误详情 */
+.state-tip-detail {
+  font-size: 11px;
+  line-height: 1.6;
   color: var(--c-text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* 错误详情常带换行（如上游的用法说明），保留原始排版 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .server-tools {
@@ -880,11 +930,18 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
   display: flex;
   grid-column: 1 / -1;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--c-border);
   font-size: 12px;
   color: var(--c-text-3);
+}
+
+/* 授权说明文案 */
+.oauth-hint {
+  font-size: 11px;
+  color: var(--c-text-4);
 }
 
 .oauth-icon.ok {

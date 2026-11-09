@@ -344,6 +344,48 @@ async fn mcp_authorize_server(app: AppHandle, id: String) -> Result<Value, Strin
     serde_json::from_str(&text).map_err(|e| format!("授权响应解析失败：{e}"))
 }
 
+/// 用系统默认浏览器打开一个网址。
+///
+/// 授权流程需要用户在浏览器里人工登录与同意；桌面端不能直接弹浏览器，
+/// 交给系统默认浏览器最可靠。
+#[tauri::command]
+fn mcp_open_url(url: String) -> Result<(), String> {
+    // 只允许 http/https，避免被用来打开本地文件或执行任意程序
+    let parsed = url::Url::parse(&url).map_err(|e| format!("网址不合法：{e}"))?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err("只允许打开 http/https 网址".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/c")
+            .arg("start")
+            .arg("")
+            .arg(&url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(DETACHED_PROCESS);
+        cmd.spawn().map_err(|e| format!("打开浏览器失败：{e}"))?;
+    }
+
+    #[cfg(not(windows))]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("打开浏览器失败：{e}"))?;
+    }
+
+    Ok(())
+}
+
 /// 在官方目录里搜索第三方 mcp server。
 ///
 /// 参数：query 关键词（空串表示浏览全部）、cursor 分页游标（可选）。
@@ -409,6 +451,7 @@ pub fn run() {
             mcp_ensure_sidecar,
             mcp_search_registry,
             mcp_authorize_server,
+            mcp_open_url,
             mcp_list_servers,
             mcp_save_servers,
             mcp_remove_server,

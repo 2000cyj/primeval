@@ -11,6 +11,7 @@
 import { Server, type JSONValue } from '@modelcontextprotocol/server'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import type { EventBus } from './events.ts'
+import type { OAuthManager } from './oauth.ts'
 import type { ToolRegistry, ExposedTool } from './registry.ts'
 import type { UpstreamPool } from './upstream.ts'
 import type { McpProfile, McpSelection } from './types.ts'
@@ -137,11 +138,13 @@ export class SessionManager {
   private readonly pool: UpstreamPool
   private readonly registry: ToolRegistry
   private readonly bus: EventBus
+  private readonly oauth: OAuthManager | undefined
 
-  constructor(pool: UpstreamPool, registry: ToolRegistry, bus: EventBus) {
+  constructor(pool: UpstreamPool, registry: ToolRegistry, bus: EventBus, oauth?: OAuthManager) {
     this.pool = pool
     this.registry = registry
     this.bus = bus
+    this.oauth = oauth
   }
 
   /**
@@ -255,9 +258,33 @@ export class SessionManager {
     return server
   }
 
-  /** 触发一次上游连接（供「测试连接」用） */
-  async probe(serverId: string): Promise<{ ok: boolean; toolCount: number; error?: string }> {
+  /**
+   * 触发一次上游连接（供「测试连接」用）。
+   *
+   * oauth 上游若尚未拿到令牌，这里不建连，而是准备一个授权地址返回，
+   * 由界面打开浏览器让用户人工授权 —— 授权必须由人完成，不能自动绕过。
+   */
+  async probe(serverId: string): Promise<{
+    ok: boolean
+    toolCount: number
+    error?: string
+    authorizeUrl?: string
+  }> {
+    const def = this.pool.getServerDef(serverId)
     try {
+      if (def?.auth === 'oauth' && this.oauth) {
+        const hasToken = await this.oauth.hasTokens(serverId)
+        if (!hasToken) {
+          const prepared = await this.oauth.prepareAuthorization(serverId, def.url ?? '')
+          return {
+            ok: false,
+            toolCount: 0,
+            error: '该远程 server 需要授权：请在浏览器中完成授权后重试。',
+            authorizeUrl: prepared.authorizeUrl,
+          }
+        }
+      }
+
       await this.pool.ensureConnected(serverId)
       const tools = this.pool.getTools(serverId)
       return { ok: true, toolCount: tools.length }

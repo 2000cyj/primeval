@@ -159,6 +159,20 @@ export async function authorizeServer(
 }
 
 /**
+ * 用系统默认浏览器打开网址。
+ *
+ * 授权流程需要用户在浏览器里人工登录与同意，桌面端不能自己弹浏览器，
+ * 交给系统默认浏览器最可靠。
+ */
+export async function openUrl(url: string): Promise<void> {
+  try {
+    await invoke(MCP_COMMANDS.openUrl, { url })
+  } catch (error) {
+    throw fail('打开浏览器', error)
+  }
+}
+
+/**
  * 取目录条目对应的上游定义。
  *
  * 条目既没有可本地启动的包、也没有远程端点时返回 null（不可一键添加）。

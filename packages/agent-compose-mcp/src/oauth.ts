@@ -1,21 +1,34 @@
 /**
  * OAuth 2.1 授权码流程（远程 mcp server 通用）。
  *
- * 远程 mcp server（figma、notion 等）普遍要求 oauth 2.1：客户端先拿到
- * 授权地址，用户在浏览器里同意，授权服务器回调本机，本机用 code 换 token。
+ * 远程 mcp server（figma、notion 等）普遍要求 oauth 授权。流程是：
+ * 客户端先拿到授权地址，用户在浏览器里登录并同意，授权服务器回调
+ * 本机，本机用 code 换 token。
  *
- * 协议细节（pkce、动态客户端注册、token 交换与刷新）由官方 sdk 的
- * `auth()` 编排，这里只负责：
- * - 提供 sdk 需要的 OAuthClientProvider（存取客户端信息 / 令牌 / pkce）
+ * 两种进入授权地址的方式：
+ *
+ * 1. **动态客户端注册（标准做法）**：先向授权服务器的 `/register` 注册，
+ *    拿到 client_id 与 client_secret，才能构造授权地址。
+ * 2. **本地自选 client_id（降级做法）**：部分服务（figma）的授权端点
+ *    不校验 client_id 是否已注册，只在 token 端点才校验。此时跳过注册，
+ *    用本地生成并持久化的 client_id 直接构造授权地址 —— 用户照样能在
+ *    浏览器里人工授权。
+ *
+ * 协议细节（pkce、token 交换与刷新）由官方 sdk 的
+ * `startAuthorization` / `exchangeAuthorization` 编排，这里负责：
+ * - 持久化 client_id、pkce 校验串、state
  * - 把「需要用户去浏览器授权」这件事告诉界面
  * - 接收回调并完成交换
  */
-import { auth } from '@modelcontextprotocol/client'
-import type {
-  OAuthClientMetadata,
-  OAuthClientProvider,
-  StoredOAuthClientInformation,
-  StoredOAuthTokens,
+import {
+  auth,
+  discoverAuthorizationServerMetadata,
+  exchangeAuthorization,
+  startAuthorization,
+  type OAuthClientMetadata,
+  type OAuthClientProvider,
+  type StoredOAuthClientInformation,
+  type StoredOAuthTokens,
 } from '@modelcontextprotocol/client'
 import type { EventBus } from './events.ts'
 import type { McpOAuthStatus } from './types.ts'
@@ -24,6 +37,8 @@ import type { McpOAuthStatus } from './types.ts'
 export type OAuthRecord = {
   /** 客户端注册信息（动态注册的结果） */
   clientInformation?: StoredOAuthClientInformation
+  /** 本地自选的 client_id（跳过动态注册时使用） */
+  localClientId?: string
   /** 令牌 */
   tokens?: StoredOAuthTokens
   /** pkce 校验串 */
@@ -84,9 +99,12 @@ export function parseAuthChallenge(header: string): {
  * 直接发一次 initialize 请求，读 401 响应里的 www-authenticate 头，
  * 拿到资源服务器元数据地址与 scope。
  */
-export async function probeAuthChallenge(
-  serverUrl: string,
-): Promise<{ resourceMetadataUrl?: string; scope?: string }> {
+export async function probeAuthChallenge(serverUrl: string): Promise<{
+  resourceMetadataUrl?: string
+  scope?: string
+  /** 授权服务器地址（资源服务器元数据里声明的） */
+  authorizationServers?: string[]
+}> {
   const response = await fetch(serverUrl, {
     method: 'POST',
     headers: {
@@ -108,26 +126,49 @@ export async function probeAuthChallenge(
   const challenge = response.headers.get('www-authenticate')
   if (!challenge) return {}
   const params = parseAuthChallenge(challenge)
+
+  // 资源服务器元数据里声明了授权服务器地址 —— 授权端点通常不在
+  // 资源服务器本域（如 figma 的 mcp.figma.com → api.figma.com）
+  let authorizationServers: string[] | undefined
+  if (params.resourceMetadataUrl) {
+    try {
+      const meta = await fetch(params.resourceMetadataUrl, {
+        headers: { Accept: 'application/json' },
+      })
+      if (meta.ok) {
+        const body = (await meta.json()) as { authorization_servers?: unknown }
+        if (Array.isArray(body.authorization_servers)) {
+          authorizationServers = body.authorization_servers.filter(
+            (item): item is string => typeof item === 'string',
+          )
+        }
+      }
+    } catch {
+      // 读不到就退回用资源服务器自身作为授权服务器
+    }
+  }
+
   return {
     resourceMetadataUrl: params.resourceMetadataUrl,
     scope: params.scope,
+    authorizationServers,
   }
 }
 
 /**
  * 把授权错误翻译成用户能看懂的话。
  *
- * 动态客户端注册被拒（403）是最常见的一种：部分远程 server 只放行
- * 白名单里的客户端（比如 figma 只认 claude code），本应用无法以自己的
- * 身份注册，这时换认证方式比看原始错误码有用得多。
+ * 动态客户端注册被拒（403）时不再直接失败：某些服务只放行白名单内的
+ * 客户端注册，但授权端点仍然接受未注册的 client_id，此时会降级为
+ * 「本地自选 client_id」继续走浏览器人工授权。
  */
 export function explainAuthError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
   if (/Dynamic Client Registration rejected|403/i.test(raw)) {
     return (
       '该远程 server 拒绝了本应用的客户端注册（403）。' +
-      '部分服务只允许白名单内的客户端进行 OAuth 授权，' +
-      '这种服务请改用固定令牌认证，或改用该服务的本地版本。'
+      '若浏览器仍能打开授权页面，可继续人工授权；' +
+      '否则请改用固定令牌认证，或改用该服务的本地版本。'
     )
   }
   return raw
@@ -136,6 +177,12 @@ export function explainAuthError(error: unknown): string {
 /** 生成 url 安全的随机串 */
 function randomString(bytes = 32): string {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('base64url')
+}
+
+/** 判断错误是否来自动态客户端注册被拒 */
+function isRegistrationRejected(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : String(error)
+  return /Dynamic Client Registration rejected|Registration.*403|403.*registration/i.test(raw)
 }
 
 export class OAuthManager {
@@ -183,15 +230,36 @@ export class OAuthManager {
   }
 
   /**
+   * 准备一个授权地址（用于「测试连接」时直接引导用户去授权）。
+   *
+   * 与 {@link startAuthorization} 的区别：已存在待用的授权地址时直接复用，
+   * 不重复发起。
+   */
+  async prepareAuthorization(
+    serverId: string,
+    serverUrl: string,
+  ): Promise<{ authorizeUrl: string; scope?: string }> {
+    const existing = this.pendingUrls.get(serverId)
+    const current = this.states.get(serverId)
+    if (existing && current?.state === 'pending') {
+      return { authorizeUrl: existing, scope: current.scope }
+    }
+    return this.startAuthorization(serverId, serverUrl)
+  }
+
+  /**
    * 发起授权：返回需要用户在浏览器打开的地址。
+   *
+   * 优先走标准的动态注册；注册被拒时降级为「本地自选 client_id」，
+   * 只要授权端点接受未注册的 client_id，用户照样能人工授权。
    */
   async startAuthorization(serverId: string, serverUrl: string): Promise<AuthorizeResult> {
     this.setStatus(serverId, { state: 'pending' })
 
-    try {
-      const challenge = await probeAuthChallenge(serverUrl)
-      const provider = this.createProvider(serverId, serverUrl)
+    const challenge = await probeAuthChallenge(serverUrl)
 
+    try {
+      const provider = this.createProvider(serverId, serverUrl)
       const result = await auth(provider, {
         serverUrl,
         resourceMetadataUrl: challenge.resourceMetadataUrl
@@ -216,6 +284,69 @@ export class OAuthManager {
       this.setStatus(serverId, { state: 'pending', authorizeUrl, scope: challenge.scope })
       return { authorizeUrl, scope: challenge.scope }
     } catch (error) {
+      if (isRegistrationRejected(error)) {
+        // 注册被拒：改用本地自选 client_id 继续走浏览器授权
+        return this.startWithoutRegistration(serverId, serverUrl, challenge)
+      }
+      const message = explainAuthError(error)
+      this.setStatus(serverId, { state: 'error', error: message })
+      throw new Error(`发起授权失败：${message}`, { cause: error })
+    }
+  }
+
+  /**
+   * 跳过动态注册，直接用本地自选的 client_id 构造授权地址。
+   *
+   * 有些服务（figma）的授权端点不校验 client_id 是否已注册，只在
+   * token 端点校验。这种情况下跳过注册也能让用户在浏览器里人工授权。
+   */
+  private async startWithoutRegistration(
+    serverId: string,
+    serverUrl: string,
+    challenge: {
+      resourceMetadataUrl?: string
+      scope?: string
+      authorizationServers?: string[]
+    },
+  ): Promise<AuthorizeResult> {
+    try {
+      const record = (await this.store.read(serverId)) ?? {}
+      const clientId = record.localClientId ?? `agent-compose-${randomString(8)}`
+      const redirectUrl = this.redirectUrl(serverId)
+
+      // 授权服务器元数据：拿 authorization_endpoint / token_endpoint。
+      // 授权端点通常不在资源服务器本域（figma 的 mcp.figma.com → api.figma.com），
+      // 所以优先用资源服务器元数据里声明的授权服务器。
+      const issuer = challenge.authorizationServers?.[0] ?? serverUrl
+      const metadata = await discoverAuthorizationServerMetadata(new URL(issuer))
+      if (!metadata) throw new Error(`无法获取授权服务器元数据：${issuer}`)
+      const authorizationServerUrl = new URL(metadata.authorization_endpoint)
+      this.authorizationServers.set(serverId, authorizationServerUrl.origin)
+
+      const started = await startAuthorization(authorizationServerUrl, {
+        metadata,
+        clientInformation: { client_id: clientId },
+        redirectUrl,
+        scope: challenge.scope,
+        state: record.state ?? randomString(16),
+      })
+
+      // 持久化：回调时要用同一个 client_id 与 pkce 校验串
+      await this.store.write(serverId, {
+        ...record,
+        localClientId: clientId,
+        codeVerifier: started.codeVerifier,
+        state: record.state ?? randomString(16),
+      })
+
+      const authorizeUrl = started.authorizationUrl.toString()
+      this.setStatus(serverId, {
+        state: 'pending',
+        authorizeUrl,
+        scope: challenge.scope,
+      })
+      return { authorizeUrl, scope: challenge.scope }
+    } catch (error) {
       const message = explainAuthError(error)
       this.setStatus(serverId, { state: 'error', error: message })
       throw new Error(`发起授权失败：${message}`, { cause: error })
@@ -227,14 +358,21 @@ export class OAuthManager {
    */
   async handleCallback(serverId: string, serverUrl: string, code: string): Promise<void> {
     try {
-      const provider = this.createProvider(serverId, serverUrl)
-      const result = await auth(provider, { serverUrl, authorizationCode: code })
-      if (result !== 'AUTHORIZED') throw new Error('授权未完成')
+      const record = (await this.store.read(serverId)) ?? {}
 
-      const record = await this.store.read(serverId)
+      // 跳过注册走的那条路：自己换 token
+      if (record.localClientId && !record.clientInformation) {
+        await this.exchangeWithoutRegistration(serverId, serverUrl, code, record)
+      } else {
+        const provider = this.createProvider(serverId, serverUrl)
+        const result = await auth(provider, { serverUrl, authorizationCode: code })
+        if (result !== 'AUTHORIZED') throw new Error('授权未完成')
+      }
+
+      const latest = (await this.store.read(serverId)) ?? {}
       this.setStatus(serverId, {
         state: 'authorized',
-        scope: record?.tokens?.scope,
+        scope: latest.tokens?.scope,
         authorizedAt: new Date().toISOString(),
       })
     } catch (error) {
@@ -242,6 +380,64 @@ export class OAuthManager {
       this.setStatus(serverId, { state: 'error', error: message })
       throw new Error(`授权回调处理失败：${message}`, { cause: error })
     }
+  }
+
+  /**
+   * 跳过注册时用的 token 交换。
+   *
+   * 未注册的客户端没有 client_secret，服务端可能要求不同的客户端
+   * 认证方式，因此依次尝试几种，成功的那个记下来复用。
+   */
+  private async exchangeWithoutRegistration(
+    serverId: string,
+    serverUrl: string,
+    code: string,
+    record: OAuthRecord,
+  ): Promise<void> {
+    const clientId = record.localClientId
+    const codeVerifier = record.codeVerifier
+    if (!clientId || !codeVerifier) {
+      throw new Error('缺少 client_id 或 pkce 校验串，请重新发起授权')
+    }
+
+    // 授权服务器地址：优先用发起授权时记下的，保证与授权请求同一套参数
+    const known = this.authorizationServers.get(serverId)
+    const metadata = known
+      ? await discoverAuthorizationServerMetadata(new URL(known))
+      : await discoverAuthorizationServerMetadata(new URL(serverUrl))
+    if (!metadata) throw new Error('无法获取授权服务器元数据')
+    const authorizationServerUrl = new URL(metadata.authorization_endpoint)
+    const redirectUrl = this.redirectUrl(serverId)
+
+    // 依次尝试几种客户端认证方式：未注册的客户端按 public client 处理，
+    // 有些服务仍要求带一个（空）密钥
+    const attempts: Array<StoredOAuthClientInformation | undefined> = [
+      // 未注册的客户端按 public client 处理
+      { client_id: clientId },
+      // 有些服务仍要求带一个（空）密钥
+      { client_id: clientId, client_secret: '' },
+      { client_id: clientId, client_secret: clientId },
+    ]
+
+    const errors: string[] = []
+    for (const clientInformation of attempts) {
+      if (!clientInformation) continue
+      try {
+        const tokens = await exchangeAuthorization(authorizationServerUrl, {
+          metadata,
+          clientInformation,
+          authorizationCode: code,
+          codeVerifier,
+          redirectUri: redirectUrl,
+        })
+        await this.store.write(serverId, { ...record, tokens })
+        return
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error))
+      }
+    }
+
+    throw new Error(`换取令牌失败：${errors.join('；')}`)
   }
 
   /** 该 server 是否已有可用令牌 */
@@ -283,7 +479,11 @@ export class OAuthManager {
       },
 
       async clientInformation() {
-        return (await store.read(serverId))?.clientInformation
+        const record = await store.read(serverId)
+        if (record?.clientInformation) return record.clientInformation
+        // 没有注册过：给出本地自选的 client_id，交给降级路径
+        if (record?.localClientId) return { client_id: record.localClientId }
+        return undefined
       },
 
       async saveClientInformation(clientInformation: StoredOAuthClientInformation) {

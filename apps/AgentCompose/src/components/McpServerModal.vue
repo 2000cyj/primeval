@@ -171,154 +171,160 @@ const submit = (): void => {
     :show="show"
     preset="card"
     class="server-modal"
-    style="width: 540px"
+    style="width: 460px"
     :bordered="false"
     :title="isEditing ? '编辑 MCP server' : '新增 MCP server'"
     @update:show="(value: boolean) => !value && emit('close')"
   >
-    <div class="form">
-      <div class="form-row">
-        <NFormItem
-          label="名称"
-          :validation-status="errors.name ? 'error' : undefined"
-          :feedback="errors.name"
-          class="form-item"
-        >
-          <NInput
-            v-model:value="form.name"
-            size="small"
-            placeholder="展示给用户的名称，如 GitHub"
-          />
-        </NFormItem>
+    <div class="form-scroll">
+      <div class="form">
+        <div class="form-row">
+          <NFormItem
+            label="名称"
+            :validation-status="errors.name ? 'error' : undefined"
+            :feedback="errors.name"
+            class="form-item"
+          >
+            <NInput
+              v-model:value="form.name"
+              size="small"
+              placeholder="展示给用户的名称，如 GitHub"
+            />
+          </NFormItem>
 
-        <NFormItem
-          label="id"
-          :validation-status="errors.id ? 'error' : undefined"
-          :feedback="errors.id"
-          class="form-item"
-        >
-          <NInput
-            v-model:value="form.id"
-            size="small"
-            :disabled="isEditing"
-            placeholder="唯一标识，用作工具名前缀"
-          />
-        </NFormItem>
-      </div>
-
-      <NFormItem label="传输方式" class="form-item">
-        <NRadioGroup v-model:value="form.transport" size="small">
-          <NRadioButton value="stdio">stdio</NRadioButton>
-          <NRadioButton value="http">http</NRadioButton>
-        </NRadioGroup>
-      </NFormItem>
-
-      <NFormItem label="认证方式" class="form-item">
-        <div class="auth-box">
-          <NRadioGroup v-model:value="form.auth" size="small">
-            <NRadioButton value="none">不需要认证</NRadioButton>
-            <NRadioButton value="static">固定令牌</NRadioButton>
-            <NRadioButton value="oauth" :disabled="form.transport !== 'http'">
-              OAuth 授权
-            </NRadioButton>
-          </NRadioGroup>
-          <p class="field-hint">{{ authHint }}</p>
-          <p v-if="form.transport !== 'http'" class="field-hint">
-            OAuth 授权仅支持 http 传输的远程 server。
-          </p>
+          <NFormItem
+            label="id"
+            :validation-status="errors.id ? 'error' : undefined"
+            :feedback="errors.id"
+            class="form-item"
+          >
+            <NInput
+              v-model:value="form.id"
+              size="small"
+              :disabled="isEditing"
+              placeholder="唯一标识，用作工具名前缀"
+            />
+          </NFormItem>
         </div>
-      </NFormItem>
 
-      <template v-if="form.transport === 'stdio'">
-        <NFormItem
-          label="command"
-          :validation-status="errors.command ? 'error' : undefined"
-          :feedback="errors.command"
-          class="form-item"
-        >
-          <NInput v-model:value="form.command" size="small" placeholder="npx" />
+        <NFormItem label="传输方式" class="form-item">
+          <NRadioGroup v-model:value="form.transport" size="small">
+            <NRadioButton value="stdio">stdio</NRadioButton>
+            <NRadioButton value="http">http</NRadioButton>
+          </NRadioGroup>
         </NFormItem>
 
-        <NFormItem label="args" class="form-item">
-          <NInput
-            v-model:value="form.args"
-            size="small"
-            placeholder="多个参数用空格分隔，如 -y @modelcontextprotocol/server-github"
-          />
-        </NFormItem>
-
-        <NFormItem label="env" class="form-item">
-          <div class="kv-rows">
-            <div v-for="(row, index) in form.env" :key="index" class="kv-row">
-              <NInput v-model:value="row.key" size="small" placeholder="变量名" />
-              <NInput v-model:value="row.value" size="small" placeholder="变量值" />
-              <NButton size="tiny" quaternary @click="removeRow('env', index)">
-                <template #icon>
-                  <NIcon :size="13">
-                    <Trash2 />
-                  </NIcon>
-                </template>
-              </NButton>
-            </div>
-            <NButton size="tiny" dashed @click="addRow('env')">
-              <template #icon>
-                <NIcon :size="13">
-                  <Plus />
-                </NIcon>
-              </template>
-              添加变量
-            </NButton>
-            <p class="field-hint">
-              值支持 <code class="mono">${ENV:NAME}</code> 占位，真实值在运行时从环境变量解析。
-            </p>
-          </div>
-        </NFormItem>
-      </template>
-
-      <template v-else>
-        <NFormItem
-          label="url"
-          :validation-status="errors.url ? 'error' : undefined"
-          :feedback="errors.url"
-          class="form-item"
-        >
-          <NInput v-model:value="form.url" size="small" placeholder="https://mcp.example.com/sse" />
-        </NFormItem>
-
-        <NFormItem v-if="form.auth !== 'oauth'" label="headers" class="form-item">
-          <div class="kv-rows">
-            <div v-for="(row, index) in form.headers" :key="index" class="kv-row">
-              <NInput v-model:value="row.key" size="small" placeholder="头名称" />
-              <NInput v-model:value="row.value" size="small" placeholder="头值" />
-              <NButton size="tiny" quaternary @click="removeRow('headers', index)">
-                <template #icon>
-                  <NIcon :size="13">
-                    <Trash2 />
-                  </NIcon>
-                </template>
-              </NButton>
-            </div>
-            <NButton size="tiny" dashed @click="addRow('headers')">
-              <template #icon>
-                <NIcon :size="13">
-                  <Plus />
-                </NIcon>
-              </template>
-              添加请求头
-            </NButton>
-            <p class="field-hint">
-              值支持 <code class="mono">${ENV:NAME}</code> 占位，真实值在运行时从环境变量解析。
-            </p>
-            <p v-if="form.auth === 'static'" class="field-hint">
-              固定令牌就写在这里，令牌支持 <code class="mono">${ENV:NAME}</code> 占位。
+        <NFormItem label="认证方式" class="form-item">
+          <div class="auth-box">
+            <NRadioGroup v-model:value="form.auth" size="small">
+              <NRadioButton value="none">不需要认证</NRadioButton>
+              <NRadioButton value="static">固定令牌</NRadioButton>
+              <NRadioButton value="oauth" :disabled="form.transport !== 'http'">
+                OAuth 授权
+              </NRadioButton>
+            </NRadioGroup>
+            <p class="field-hint">{{ authHint }}</p>
+            <p v-if="form.transport !== 'http'" class="field-hint">
+              OAuth 授权仅支持 http 传输的远程 server。
             </p>
           </div>
         </NFormItem>
 
-        <NFormItem v-else label="headers" class="form-item">
-          <p class="field-hint">OAuth 的令牌由授权流程自动获取，这里不用填请求头。</p>
-        </NFormItem>
-      </template>
+        <template v-if="form.transport === 'stdio'">
+          <NFormItem
+            label="command"
+            :validation-status="errors.command ? 'error' : undefined"
+            :feedback="errors.command"
+            class="form-item"
+          >
+            <NInput v-model:value="form.command" size="small" placeholder="npx" />
+          </NFormItem>
+
+          <NFormItem label="args" class="form-item">
+            <NInput
+              v-model:value="form.args"
+              size="small"
+              placeholder="多个参数用空格分隔，如 -y @modelcontextprotocol/server-github"
+            />
+          </NFormItem>
+
+          <NFormItem label="env" class="form-item">
+            <div class="kv-rows">
+              <div v-for="(row, index) in form.env" :key="index" class="kv-row">
+                <NInput v-model:value="row.key" size="small" placeholder="变量名" />
+                <NInput v-model:value="row.value" size="small" placeholder="变量值" />
+                <NButton size="tiny" quaternary @click="removeRow('env', index)">
+                  <template #icon>
+                    <NIcon :size="13">
+                      <Trash2 />
+                    </NIcon>
+                  </template>
+                </NButton>
+              </div>
+              <NButton size="tiny" dashed @click="addRow('env')">
+                <template #icon>
+                  <NIcon :size="13">
+                    <Plus />
+                  </NIcon>
+                </template>
+                添加变量
+              </NButton>
+              <p class="field-hint">
+                值支持 <code class="mono">${ENV:NAME}</code> 占位，真实值在运行时从环境变量解析。
+              </p>
+            </div>
+          </NFormItem>
+        </template>
+
+        <template v-else>
+          <NFormItem
+            label="url"
+            :validation-status="errors.url ? 'error' : undefined"
+            :feedback="errors.url"
+            class="form-item"
+          >
+            <NInput
+              v-model:value="form.url"
+              size="small"
+              placeholder="https://mcp.example.com/sse"
+            />
+          </NFormItem>
+
+          <NFormItem v-if="form.auth !== 'oauth'" label="headers" class="form-item">
+            <div class="kv-rows">
+              <div v-for="(row, index) in form.headers" :key="index" class="kv-row">
+                <NInput v-model:value="row.key" size="small" placeholder="头名称" />
+                <NInput v-model:value="row.value" size="small" placeholder="头值" />
+                <NButton size="tiny" quaternary @click="removeRow('headers', index)">
+                  <template #icon>
+                    <NIcon :size="13">
+                      <Trash2 />
+                    </NIcon>
+                  </template>
+                </NButton>
+              </div>
+              <NButton size="tiny" dashed @click="addRow('headers')">
+                <template #icon>
+                  <NIcon :size="13">
+                    <Plus />
+                  </NIcon>
+                </template>
+                添加请求头
+              </NButton>
+              <p class="field-hint">
+                值支持 <code class="mono">${ENV:NAME}</code> 占位，真实值在运行时从环境变量解析。
+              </p>
+              <p v-if="form.auth === 'static'" class="field-hint">
+                固定令牌就写在这里，令牌支持 <code class="mono">${ENV:NAME}</code> 占位。
+              </p>
+            </div>
+          </NFormItem>
+
+          <NFormItem v-else label="headers" class="form-item">
+            <p class="field-hint">OAuth 的令牌由授权流程自动获取，这里不用填请求头。</p>
+          </NFormItem>
+        </template>
+      </div>
     </div>
 
     <template #footer>
@@ -331,6 +337,17 @@ const submit = (): void => {
 </template>
 
 <style scoped>
+/*
+ * 内容区限高滚动。
+ *
+ * 窗口最小高度是 700px，表单字段较多（名称/传输/认证/命令/参数/环境变量
+ * 或地址/请求头），不限制高度会顶出可视区。
+ */
+.form-scroll {
+  max-height: calc(100vh - 210px);
+  overflow-y: auto;
+}
+
 .form {
   display: flex;
   flex-direction: column;

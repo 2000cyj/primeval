@@ -67,6 +67,9 @@ type UpstreamEntry = {
  * 用户看不出该做什么 —— 需要点「授权」走 oauth 流程。
  */
 export function explainUpstreamError(detail: string, def: McpServerDef): string {
+  if (detail === 'NEEDS_AUTHORIZATION') {
+    return '该远程 server 尚未授权：请在浏览器中完成授权后重试。'
+  }
   if (def.transport !== 'http') return detail
   if (/Unauthorized|401/i.test(detail)) {
     if (def.auth === 'oauth') {
@@ -322,6 +325,16 @@ export class UpstreamPool {
   private async connect(entry: UpstreamEntry): Promise<Client | undefined> {
     this.setState(entry, 'connecting')
     try {
+      // oauth 上游在拿到令牌前不建连：建连会让 sdk 自动走一遍授权流程，
+      // 那会跳浏览器 —— 授权必须由用户主动触发（点「测试连接」或
+      // 「授权」），不能被后台的自动重连带着走。
+      if (entry.def.auth === 'oauth' && this.oauth) {
+        const hasToken = await this.oauth.hasTokens(entry.def.id)
+        if (!hasToken) {
+          throw new Error('NEEDS_AUTHORIZATION')
+        }
+      }
+
       // 先确认命令存在：命令不存在时子进程根本起不来，
       // 报错只会是笼统的 Connection closed，看不出真实原因
       if (entry.def.transport === 'stdio' && entry.def.command) {

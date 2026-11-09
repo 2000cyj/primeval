@@ -286,6 +286,7 @@ export const MCP_COMMANDS = {
   ensureSidecar: 'mcp_ensure_sidecar',
   searchRegistry: 'mcp_search_registry',
   authorizeServer: 'mcp_authorize_server',
+  openUrl: 'mcp_open_url',
   listServers: 'mcp_list_servers',
   saveServers: 'mcp_save_servers',
   removeServer: 'mcp_remove_server',

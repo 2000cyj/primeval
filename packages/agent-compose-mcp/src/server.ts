@@ -346,13 +346,24 @@ export class McpHttpServer {
         const id = decodeURIComponent(
           pathname.slice('/admin/servers/'.length, pathname.length - '/test'.length),
         )
-        await session.probe(id)
+        const probe = await session.probe(id)
         const status = pool.getStatus(id)
-        sendJson(
-          res,
-          200,
-          status ?? { serverId: id, state: 'disconnected', tools: [], reconnectAttempt: 0 },
-        )
+        const payload = status ?? {
+          serverId: id,
+          state: 'disconnected',
+          tools: [],
+          reconnectAttempt: 0,
+        }
+
+        // oauth 上游尚未授权：把授权地址一并返回，界面据此打开浏览器
+        // 让用户人工授权（授权必须由人完成，不能自动绕过）
+        if (probe.authorizeUrl) {
+          payload.oauth = {
+            state: 'pending',
+            authorizeUrl: probe.authorizeUrl,
+          }
+        }
+        sendJson(res, 200, payload)
         return
       }
 
