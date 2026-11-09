@@ -114,9 +114,47 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 确保 sidecar 在运行，返回其端口与令牌。
+/// 确保 sidecar 在运行并等待就绪。
 ///
 /// 已在运行则直接返回；否则拉起并等待就绪（最多 15 秒）。
+///
+/// 转发请求失败时会调用它做兜底 —— 只在页面加载时确保一次不够，
+/// 用户可能几分钟后才点「搜索」，那时 sidecar 早就退出了。
+fn ensure_sidecar_ready(app: &AppHandle) -> Result<(), String> {
+    let dir = mcp_data_dir(app);
+
+    // 已在运行：端口文件存在且端口有人监听
+    if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
+        if port_alive(port) {
+            return Ok(());
+        }
+    }
+
+    spawn_sidecar(app)?;
+
+    // 等待就绪
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
+            if port_alive(port) {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    // 超时：把 sidecar 日志尾部带出来，便于判断是启动失败还是端口问题
+    let log = std::fs::read_to_string(dir.join("sidecar.log")).unwrap_or_default();
+    let tail: Vec<&str> = log.lines().rev().take(5).collect();
+    let detail = if tail.is_empty() {
+        String::new()
+    } else {
+        format!("，日志尾部：{}", tail.join(" / "))
+    };
+    Err(format!("MCP sidecar 启动超时（15 秒）{detail}"))
+}
+
+/// 确保 sidecar 在运行，返回其端口与令牌。
 #[tauri::command]
 fn mcp_ensure_sidecar(app: AppHandle) -> Result<Value, String> {
     let dir = mcp_data_dir(&app);
@@ -135,45 +173,33 @@ fn mcp_ensure_sidecar(app: AppHandle) -> Result<Value, String> {
         }
     }
 
-    spawn_sidecar(&app)?;
+    ensure_sidecar_ready(&app)?;
 
-    // 等待就绪
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        if let Some(port) = read_trimmed(&dir.join("port")).and_then(|s| s.parse::<u16>().ok()) {
-            if port_alive(port) {
-                let token = read_trimmed(&dir.join("token")).unwrap_or_default();
-                return Ok(json!({
-                    "endpoint": format!("http://127.0.0.1:{port}"),
-                    "token": token,
-                    "port": port,
-                    "running": true,
-                    "started": true,
-                }));
-            }
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-
-    // 超时：把 sidecar 日志尾部带出来，便于判断是启动失败还是端口问题
-    let log = std::fs::read_to_string(mcp_data_dir(&app).join("sidecar.log")).unwrap_or_default();
-    let tail: Vec<&str> = log.lines().rev().take(5).collect();
-    let detail = if tail.is_empty() {
-        String::new()
-    } else {
-        format!("，日志尾部：{}", tail.join(" / "))
-    };
-    Err(format!("MCP sidecar 启动超时（15 秒）{detail}"))
+    let port = read_trimmed(&dir.join("port"))
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or("MCP sidecar 端口文件内容非法")?;
+    let token = read_trimmed(&dir.join("token")).unwrap_or_default();
+    Ok(json!({
+        "endpoint": format!("http://127.0.0.1:{port}"),
+        "token": token,
+        "port": port,
+        "running": true,
+        "started": true,
+    }))
 }
 
 /// 转发一次 admin API 调用到 sidecar。
+///
+/// sidecar 不可用时（没启动或中途退出）会先尝试拉起再重试一次：
+/// 只在页面加载时确保一次是不够的 —— 用户可能在几分钟后才点「搜索」，
+/// 那时 sidecar 早就退出了。
 async fn admin_request(
     app: &AppHandle,
     method: reqwest::Method,
     path: &str,
     body: Option<Value>,
 ) -> Result<Value, String> {
-    let ep = endpoint(app)?;
+    let ep = endpoint(&app)?;
     // 加超时：sidecar 不可达时不要无界等待
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -181,12 +207,27 @@ async fn admin_request(
         .map_err(|e| e.to_string())?;
     let url = format!("{}{}", ep.base, path);
 
-    let mut req = client.request(method, &url).bearer_auth(&ep.token);
-    if let Some(payload) = body {
+    let mut req = client.request(method.clone(), &url).bearer_auth(&ep.token);
+    if let Some(payload) = body.clone() {
         req = req.json(&payload);
     }
 
-    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let resp = match req.send().await {
+        Ok(resp) => resp,
+        Err(first) => {
+            // 连不上：拉起 sidecar 后重试一次
+            ensure_sidecar_ready(app)?;
+            let ep = endpoint(&app)?;
+            let url = format!("{}{}", ep.base, path);
+            let mut retry = client.request(method, &url).bearer_auth(&ep.token);
+            if let Some(payload) = body {
+                retry = retry.json(&payload);
+            }
+            retry.send().await.map_err(|e| {
+                format!("连接 MCP sidecar 失败：{e}（已尝试重新拉起 sidecar）")
+            })?
+        }
+    };
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
 
