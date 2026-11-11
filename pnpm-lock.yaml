@@ -282,6 +282,8 @@ importers:
         specifier: 'catalog:'
         version: 3.3.7(typescript@5.9.3)
 
+  apps/agentspace-cli: {}
+
   packages/agent-compose-mcp:
     dependencies:
       '@modelcontextprotocol/client':

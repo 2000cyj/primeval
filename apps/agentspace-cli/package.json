@@ -1,0 +1,11 @@
+{
+  "name": "@remote/agentspace-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "agentspace —— 按智能体定义准备目录并拉起 Pi 的命令行工具",
+  "scripts": {
+    "build": "node ../../apps/AgentCompose/scripts/build-cli.mjs",
+    "build:debug": "node ../../apps/AgentCompose/scripts/build-cli.mjs --debug",
+    "test": "cargo test"
+  }
+}
