@@ -11,10 +11,12 @@
 import { Server, type JSONValue } from '@modelcontextprotocol/server'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import type { EventBus } from './events.ts'
+import { resolveSecret, secretEnvName } from './secret.ts'
 import type { OAuthManager } from './oauth.ts'
 import type { ToolRegistry, ExposedTool } from './registry.ts'
 import type { UpstreamPool } from './upstream.ts'
-import type { McpProfile, McpSelection } from './types.ts'
+import { hasStaticToken } from './upstream.ts'
+import type { McpProfile, McpSelection, McpServerDef } from './types.ts'
 import { MCP_NS_SEPARATOR } from './types.ts'
 
 /** 一个视图里对外可见的工具 */
@@ -264,30 +266,116 @@ export class SessionManager {
    * oauth 上游若尚未拿到令牌，这里不建连，而是准备一个授权地址返回，
    * 由界面打开浏览器让用户人工授权 —— 授权必须由人完成，不能自动绕过。
    */
+  /**
+   * 测一个**还没保存**的上游定义。
+   *
+   * 「新增/编辑」弹窗里的「测试」按钮用它 —— 用户填完就想知道能不能连上，
+   * 那时定义还没存进 servers.json。
+   */
+  async probeDef(def: McpServerDef): Promise<{
+    ok: boolean
+    toolCount: number
+    error?: string
+    authorizeUrl?: string
+    tokenSource?: 'manual' | 'oauth' | 'env' | 'none'
+  }> {
+    try {
+      const manual = def.token ? resolveSecret(def.token) : undefined
+      if (manual?.error) {
+        return { ok: false, toolCount: 0, error: `令牌里的${manual.error}` }
+      }
+      const hasManual = Boolean(manual?.value)
+
+      if (def.auth === 'oauth' && this.oauth && !hasManual) {
+        const hasToken = await this.oauth.hasTokens(def.id)
+        if (!hasToken) {
+          const prepared = await this.oauth.prepareAuthorization(def.id, def.url ?? '')
+          return {
+            ok: false,
+            toolCount: 0,
+            error: '该远程 server 需要授权：请在浏览器中完成授权后重试。',
+            authorizeUrl: prepared.authorizeUrl,
+            tokenSource: 'none',
+          }
+        }
+      }
+
+      const result = await this.pool.probeDef(def)
+      let tokenSource: 'manual' | 'oauth' | 'env' | 'none' = 'none'
+      if (hasManual) {
+        tokenSource = manual?.source === 'env' ? 'env' : 'manual'
+      } else if (def.auth === 'oauth') {
+        tokenSource = (await this.oauth?.tokenSource(def.id)) ?? 'none'
+      } else if (hasStaticToken(def)) {
+        const raw =
+          Object.values(def.headers ?? {}).find((value) =>
+            /authorization|token|api[-_]?key|secret/i.test(value),
+          ) ?? Object.values(def.env ?? {}).find((value) => Boolean(value))
+        tokenSource = raw && secretEnvName(raw) ? 'env' : 'manual'
+      }
+      return { ok: result.ok, toolCount: result.toolCount, error: result.error, tokenSource }
+    } catch (error) {
+      return {
+        ok: false,
+        toolCount: 0,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
   async probe(serverId: string): Promise<{
     ok: boolean
     toolCount: number
     error?: string
     authorizeUrl?: string
+    /** 令牌来源：手动配置 / 浏览器授权 / 环境变量 / 无 */
+    tokenSource?: 'manual' | 'oauth' | 'env' | 'none'
   }> {
     const def = this.pool.getServerDef(serverId)
     try {
-      if (def?.auth === 'oauth' && this.oauth) {
+      // 令牌来源：
+      // - `def.token`：用户手动配的（字面量或 ${ENV:NAME}）
+      // - oauth 流程换来的：存在 oauth.json 里
+      const manual = def?.token ? resolveSecret(def.token) : undefined
+      if (manual?.error) {
+        // 环境变量没配：直接说清楚，别拿着空令牌去连
+        return { ok: false, toolCount: 0, error: `令牌里的${manual.error}` }
+      }
+      const hasManual = Boolean(manual?.value)
+
+      if (def?.auth === 'oauth' && this.oauth && !hasManual) {
         const hasToken = await this.oauth.hasTokens(serverId)
         if (!hasToken) {
+          // 没令牌：只能请用户去浏览器授权（授权必须由人完成）
           const prepared = await this.oauth.prepareAuthorization(serverId, def.url ?? '')
           return {
             ok: false,
             toolCount: 0,
             error: '该远程 server 需要授权：请在浏览器中完成授权后重试。',
             authorizeUrl: prepared.authorizeUrl,
+            tokenSource: 'none',
           }
         }
       }
 
+      // 真连：握手 + 拉工具清单。令牌不对、env 没配、服务不可达，
+      // 都在这里暴露出来 —— 不是只看个状态字段。
       await this.pool.ensureConnected(serverId)
       const tools = this.pool.getTools(serverId)
-      return { ok: true, toolCount: tools.length }
+      let tokenSource: 'manual' | 'oauth' | 'env' | 'none' = 'none'
+      if (hasManual) {
+        tokenSource = manual?.source === 'env' ? 'env' : 'manual'
+      } else if (def?.auth === 'oauth') {
+        tokenSource = (await this.oauth?.tokenSource(serverId)) ?? 'none'
+      } else if (def && hasStaticToken(def)) {
+        // static 认证：令牌在 headers / env 里
+        const raw =
+          Object.values(def.headers ?? {}).find((value) =>
+            /authorization|token|api[-_]?key|secret/i.test(value),
+          ) ?? Object.values(def.env ?? {}).find((value) => Boolean(value))
+        tokenSource = raw && secretEnvName(raw) ? 'env' : 'manual'
+      }
+      return { ok: true, toolCount: tools.length, tokenSource }
     } catch (error) {
       return {
         ok: false,

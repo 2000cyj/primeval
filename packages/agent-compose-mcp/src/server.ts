@@ -24,6 +24,7 @@ import type { UpstreamPool } from './upstream.ts'
 import type { McpProfile, McpRuntimeStatus, McpServerDef } from './types.ts'
 import { parseSelection } from './session.ts'
 import { entryToServerDef, searchRegistry } from './registry-client.ts'
+import { FIXED_TOKEN } from './config.ts'
 import type { OAuthManager } from './oauth.ts'
 
 /** server 层依赖 */
@@ -37,6 +38,8 @@ export type McpHttpDeps = {
   oauth: OAuthManager
   /** 当前 Bearer 令牌 */
   getToken: () => string
+  /** 换掉 Bearer 令牌（刷新 token 时用） */
+  setToken?: (token: string) => void
   /** 触发关闭 */
   onShutdown?: () => void
 }
@@ -270,6 +273,16 @@ export class McpHttpServer {
         return
       }
 
+      // 刷新令牌：让运行中的实例立刻用上当前的 token（sidecar 重启过、
+      // 或 token 文件被手工改过时用得上）。
+      if (pathname === '/admin/token' && method === 'POST') {
+        const body = JSON.parse((await readBody(req)) || '{}') as { token?: string }
+        const token = body.token?.trim() || FIXED_TOKEN
+        this.deps.setToken?.(token)
+        sendJson(res, 200, { token: this.deps.getToken() })
+        return
+      }
+
       // 上游 server 列表
       if (pathname === '/admin/servers' && method === 'GET') {
         sendJson(res, 200, {
@@ -286,6 +299,9 @@ export class McpHttpServer {
         pool.setServers(servers)
         registry.buildFromPool(store.getExposure())
         bus.emit('config-changed', { kind: 'servers' })
+        // 刚保存的上游：重新连一遍，把最新的工具清单落盘。
+        // 不 await —— 连上游可能要几秒，不能把保存请求卡住。
+        pool.connectAll()
         res.writeHead(204)
         res.end()
         return
@@ -337,6 +353,37 @@ export class McpHttpServer {
         return
       }
 
+      // 把所有启用的上游都连一遍
+      //
+      // 上游默认惰性连接：页面打开时全是「未连接」。
+      // 界面调它来主动建连（结果通过状态轮询看到）。
+      if (pathname === '/admin/servers/connect' && method === 'POST') {
+        pool.connectAll()
+        sendJson(res, 202, { ok: true })
+        return
+      }
+
+      // 测一个还没保存的上游定义（新增/编辑弹窗里的「测试」按钮）
+      if (pathname === '/admin/servers/probe' && method === 'POST') {
+        const body = JSON.parse((await readBody(req)) || '{}') as { server?: unknown }
+        const def = body.server as McpServerDef | undefined
+        if (!def || typeof def.id !== 'string' || !def.id) {
+          sendJson(res, 400, { error: '缺少 server 定义' })
+          return
+        }
+        const probe = await session.probeDef(def)
+        sendJson(res, 200, {
+          serverId: def.id,
+          ok: probe.ok,
+          state: probe.ok ? 'ready' : 'error',
+          tools: probe.toolCount,
+          error: probe.error,
+          authorizeUrl: probe.authorizeUrl,
+          tokenSource: probe.tokenSource,
+        })
+        return
+      }
+
       // 测试连接
       if (
         pathname.endsWith('/test') &&
@@ -355,6 +402,14 @@ export class McpHttpServer {
           reconnectAttempt: 0,
         }
 
+        // probe 自己发现的错误（env 没配、令牌无效……）要带到结果里。
+        // 不带的话：pool 那边根本没建连，状态停在「未连接」且没有错误，
+        // 用户只看到「未连接」，完全不知道是哪里配错了。
+        if (probe.error && !payload.error) {
+          payload.error = probe.error
+          payload.state = 'error'
+        }
+
         // oauth 上游尚未授权：把授权地址一并返回，界面据此打开浏览器
         // 让用户人工授权（授权必须由人完成，不能自动绕过）
         if (probe.authorizeUrl) {
@@ -362,6 +417,14 @@ export class McpHttpServer {
             state: 'pending',
             authorizeUrl: probe.authorizeUrl,
           }
+          // 需要授权不是错误：状态保持「未连接」，由界面引导去授权
+          payload.state = 'disconnected'
+          delete payload.error
+        }
+        // 令牌来源：手动配置 / 环境变量 / 浏览器授权 / 无
+        // 界面据此显示「令牌来自环境变量 XXX」还是「手动配置的」
+        if (probe.tokenSource) {
+          payload.tokenSource = probe.tokenSource
         }
         sendJson(res, 200, payload)
         return

@@ -48,6 +48,14 @@ export function runtimeDir(): string {
   return join(homedir(), '.agent-compose', 'mcp')
 }
 
+/**
+ * 固定的访问 token。
+ *
+ * 用产品名而不是随机串：agent 接入地址要粘到各个工具的配置里，
+ * 固定值好记、好核对，也不用每次换配置。
+ */
+export const FIXED_TOKEN = 'AgentSpace'
+
 /** 生成访问 token：32 字节随机数，base64url 编码 */
 export function generateToken(): string {
   return randomBytes(TOKEN_BYTES).toString('base64url')
@@ -83,31 +91,9 @@ export async function findAvailablePort(
   throw new Error(`端口 ${start}-${end} 均被占用，无法为 MCP proxy 分配端口`)
 }
 
-/** ENV 占位符：`${ENV:NAME}` */
-const ENV_PLACEHOLDER = /\$\{ENV:([A-Za-z_][A-Za-z0-9_]*)\}/g
-
 /**
- * 解析字符串里的 `${ENV:NAME}` 占位符：取到环境变量就替换成真实值，
- * 取不到时保留原始占位符字符串（便于 UI 提示“未配置”）。
+ * 注：ENV 占位符（`${ENV:NAME}`）的解析在 `secret.ts` 里。
+ *
+ * 那一版跟这里的区别很重要：解析不出来时**报错**，而不是把占位符原样留着 ——
+ * 原样发出去只会让服务端回 401，用户完全猜不到是环境变量没配。
  */
-export function resolveEnvPlaceholders(
-  value: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  return value.replace(ENV_PLACEHOLDER, (match, name: string) => {
-    const resolved = env[name]
-    return resolved === undefined ? match : resolved
-  })
-}
-
-/** 解析一整张表（env / headers）里的 ENV 占位符 */
-export function resolveEnvRecord(
-  record: Record<string, string> | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-  const resolved: Record<string, string> = {}
-  for (const [key, value] of Object.entries(record ?? {})) {
-    resolved[key] = resolveEnvPlaceholders(value, env)
-  }
-  return resolved
-}

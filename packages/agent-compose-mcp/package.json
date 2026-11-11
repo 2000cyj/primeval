@@ -6,12 +6,14 @@
   "description": "AgentCompose MCP proxy — 对上游 MCP server 是 client，对 agent 是 server",
   "exports": {
     ".": "./src/index.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./secret": "./src/secret.ts"
   },
   "scripts": {
     "dev": "node --experimental-strip-types --watch-path=src src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:bin": "bun build --compile --outfile ../../apps/AgentCompose/src-tauri/bin/agent-compose-mcp.exe src/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.4.0",

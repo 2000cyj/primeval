@@ -9,9 +9,10 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import type { CallToolResult, Tool, Transport } from '@modelcontextprotocol/client'
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio'
-import { resolveEnvPlaceholders, resolveEnvRecord } from './config.ts'
+import { resolveSecret, resolveSecretRecord } from './secret.ts'
 import type { EventBus } from './events.ts'
 import type { OAuthManager } from './oauth.ts'
+import type { ToolCacheStore } from './store.ts'
 import type { McpServerDef, McpToolInfo, McpUpstreamState, McpUpstreamStatus } from './types.ts'
 
 /** 工具清单刷新间隔（毫秒） */
@@ -30,9 +31,27 @@ export function reconnectDelay(attempt: number): number {
   return step ?? RECONNECT_MAX_BACKOFF_MS
 }
 
+/**
+ * 这个上游是不是配了固定令牌。
+ *
+ * `static` 认证的令牌放在 headers（http）或 env（stdio）里，
+ * 值可以是字面量，也可以是 `${ENV:NAME}` 占位。
+ */
+export function hasStaticToken(def: McpServerDef): boolean {
+  const inHeaders = Object.entries(def.headers ?? {}).some(
+    ([key, value]) => /authorization|token|api[-_]?key|secret/i.test(key) || Boolean(value),
+  )
+  if (inHeaders) return true
+  return Object.keys(def.env ?? {}).some((key) =>
+    /authorization|token|api[-_]?key|secret/i.test(key),
+  )
+}
+
 export type UpstreamPoolOptions = {
   /** oauth 管理器：远程上游用 oauth 授权时需要 */
   oauth?: OAuthManager
+  /** 工具清单缓存：连上后把工具落盘，下次不用重连也能看到 */
+  toolCache?: ToolCacheStore
   /** 工具清单刷新间隔，默认 60s */
   toolRefreshIntervalMs?: number
   /** 握手用的 client 名 */
@@ -73,9 +92,20 @@ export function explainUpstreamError(detail: string, def: McpServerDef): string 
   if (def.transport !== 'http') return detail
   if (/Unauthorized|401/i.test(detail)) {
     if (def.auth === 'oauth') {
-      return '该远程 server 需要授权：请点击「授权」按钮，在浏览器里完成授权后重试。'
+      return (
+        '该远程 server 需要授权：点「测试」在浏览器里完成授权后重试；' +
+        '若你手里有长期令牌（PAT），可在「编辑」的「令牌」里直接贴。'
+      )
     }
-    return '该远程 server 拒绝了当前请求（401）：请在「编辑」里补上有效的认证令牌（headers）。'
+    if (def.auth === 'static') {
+      return '该远程 server 拒绝了当前请求（401）：请在「编辑」的「请求头」里补上有效的认证令牌。'
+    }
+    // auth 是 none —— 最常见的情况：用户压根没意识到这个 server 要认证
+    return (
+      '该远程 server 拒绝了当前请求（401）：它需要认证信息。' +
+      '请到「编辑」把「认证方式」改成「固定令牌」（在请求头里填令牌）' +
+      '或「OAuth 授权」（点测试在浏览器里授权）。'
+    )
   }
   if (/Dynamic Client Registration rejected|403/i.test(detail)) {
     return (
@@ -149,6 +179,8 @@ function sameConnection(a: McpServerDef, b: McpServerDef): boolean {
 export class UpstreamPool {
   private readonly entries = new Map<string, UpstreamEntry>()
   private readonly oauth: OAuthManager | undefined
+  /** 工具清单缓存（落盘） */
+  private readonly toolCache: ToolCacheStore | undefined
   private readonly bus: EventBus
   private readonly toolRefreshIntervalMs: number
   private readonly clientName: string
@@ -157,6 +189,7 @@ export class UpstreamPool {
   constructor(servers: McpServerDef[], bus: EventBus, options?: UpstreamPoolOptions) {
     this.bus = bus
     this.oauth = options?.oauth
+    this.toolCache = options?.toolCache
     this.toolRefreshIntervalMs = options?.toolRefreshIntervalMs ?? DEFAULT_TOOL_REFRESH_INTERVAL_MS
     this.clientName = options?.clientName ?? 'agent-compose-mcp'
     this.clientVersion = options?.clientVersion ?? '0.1.0'
@@ -257,13 +290,31 @@ export class UpstreamPool {
    * 附带 oauth 授权状态，供界面显示「未授权 / 等待授权 / 已授权 / 授权失败」。
    */
   statusOf(entry: UpstreamEntry): McpUpstreamStatus {
+    // 没连上时，工具清单读缓存 —— 页面刚打开不该是一片空白
+    const live = entry.tools
+    const cached = this.cachedTools.get(entry.def.id) ?? []
+    const fromCache = live.length === 0 && cached.length > 0
     const status: McpUpstreamStatus = {
       serverId: entry.def.id,
       state: entry.state,
-      tools: entry.tools,
+      tools: live.length ? live : cached,
       error: entry.error,
       lastConnectedAt: entry.lastConnectedAt,
       reconnectAttempt: entry.reconnectAttempt,
+    }
+    if (fromCache) {
+      status.toolsFromCache = true
+      status.toolsCachedAt = this.cachedAt.get(entry.def.id)
+    }
+    // 令牌来源：手动配的（字面量 / env 占位）优先于浏览器授权的
+    const manual = entry.def.token ? resolveSecret(entry.def.token) : undefined
+    if (manual?.value) {
+      status.tokenSource = manual.source === 'env' ? 'env' : 'manual'
+    } else if (entry.def.auth === 'oauth') {
+      status.tokenSource = this.oauth?.getStatus(entry.def.id)?.tokenSource ?? 'none'
+    } else {
+      // static 认证：令牌在 headers / env 里，也算“手动配的”
+      status.tokenSource = hasStaticToken(entry.def) ? 'manual' : 'none'
     }
     if (entry.def.auth === 'oauth') {
       status.oauth = this.oauth?.getStatus(entry.def.id) ?? { state: 'idle' }
@@ -271,9 +322,105 @@ export class UpstreamPool {
     return status
   }
 
-  /** 单个 server 当前已知的工具清单 */
+  /**
+   * 单个 server 的工具清单。
+   *
+   * 连上了就返回实时的；没连上（页面刚打开、上游是惰性连接的）返回**上次缓存的** ——
+   * 这样用户不用等重连就能看到上次拿到过什么工具。
+   */
   getTools(serverId: string): McpToolInfo[] {
-    return this.entries.get(serverId)?.tools ?? []
+    const live = this.entries.get(serverId)?.tools ?? []
+    if (live.length) return live
+    return this.cachedTools.get(serverId) ?? []
+  }
+
+  /** 缓存里的工具清单（同步读，取不到就空） */
+  private cachedTools = new Map<string, McpToolInfo[]>()
+  /** 缓存时间 */
+  private cachedAt = new Map<string, number>()
+
+  /**
+   * 从缓存里恢复所有上游的工具清单。
+   *
+   * sidecar 启动时调一次：这样页面一打开就能显示上次的工具与状态，
+   * 不必等每个上游重新连一遍。
+   */
+  async loadToolCache(cache: ToolCacheStore): Promise<void> {
+    const all = await cache.all()
+    for (const [serverId, entry] of Object.entries(all)) {
+      if (!Array.isArray(entry?.tools)) continue
+      this.cachedTools.set(serverId, entry.tools)
+      this.cachedAt.set(serverId, entry.cachedAt)
+    }
+  }
+
+  /** 把工具清单写进缓存 */
+  private async cacheTools(serverId: string, tools: McpToolInfo[]): Promise<void> {
+    this.cachedTools.set(serverId, tools)
+    this.cachedAt.set(serverId, Date.now())
+    if (!this.toolCache) return
+    try {
+      await this.toolCache.write(serverId, tools)
+    } catch {
+      // 缓存写失败不影响连接
+    }
+  }
+
+  /**
+   * 测一个**还没保存**的上游定义能不能连上。
+   *
+   * 用户在「新增/编辑」弹窗里填完就想知道能不能用 —— 那时它还没进池子。
+   * 这里临时建一条连接、测完就关掉，不动池子里的任何状态。
+   *
+   * 跟 `ensureConnected` 的区别：后者连的是池子里已保存的那个。
+   */
+  async probeDef(def: McpServerDef): Promise<{
+    ok: boolean
+    toolCount: number
+    error?: string
+  }> {
+    const entry: UpstreamEntry = {
+      def,
+      client: undefined,
+      transport: undefined,
+      state: 'disconnected',
+      tools: [],
+      error: undefined,
+      lastConnectedAt: undefined,
+      reconnectAttempt: 0,
+      connecting: undefined,
+      refreshTimer: undefined,
+      reconnectTimer: undefined,
+      closed: false,
+      stderrLines: [],
+    }
+    try {
+      const client = await this.connect(entry, { persistent: false })
+      if (!client) {
+        return { ok: false, toolCount: 0, error: entry.error ?? '连接失败' }
+      }
+      return { ok: true, toolCount: entry.tools.length }
+    } finally {
+      // 测完就关：不留连接，也不留重连定时器
+      await this.closeEntry(entry, 'disconnected', false)
+    }
+  }
+
+  /**
+   * 把所有启用的上游都连一遍。
+   *
+   * 上游默认是惰性连接的 —— 不主动连就没状态、没工具清单，
+   * 页面打开时一片「未连接」。这里给界面一个主动触发的机会：
+   * 连上的结果会通过事件总线推给界面。
+   *
+   * 不 await：连一个上游可能要好几秒（stdio 还要起子进程），
+   * 不能把请求卡住。界面轮询状态就能看到进展。
+   */
+  connectAll(): void {
+    for (const entry of this.entries.values()) {
+      if (!entry.def.enabled) continue
+      void this.ensureConnected(entry.def.id)
+    }
   }
 
   /**
@@ -322,13 +469,20 @@ export class UpstreamPool {
   }
 
   /** 建连 + 握手 + 拉工具清单 */
-  private async connect(entry: UpstreamEntry): Promise<Client | undefined> {
+  private async connect(
+    entry: UpstreamEntry,
+    options?: { persistent?: boolean },
+  ): Promise<Client | undefined> {
+    // persistent = false：只测一下，不长期维持连接，也不安排重连
+    const persistent = options?.persistent ?? true
     this.setState(entry, 'connecting')
     try {
       // oauth 上游在拿到令牌前不建连：建连会让 sdk 自动走一遍授权流程，
       // 那会跳浏览器 —— 授权必须由用户主动触发（点「测试连接」或
       // 「授权」），不能被后台的自动重连带着走。
-      if (entry.def.auth === 'oauth' && this.oauth) {
+      //
+      // 用户手动配了令牌（`def.token`）的除外：它不需要浏览器授权。
+      if (entry.def.auth === 'oauth' && this.oauth && !entry.def.token) {
         const hasToken = await this.oauth.hasTokens(entry.def.id)
         if (!hasToken) {
           throw new Error('NEEDS_AUTHORIZATION')
@@ -360,7 +514,9 @@ export class UpstreamPool {
       }
       await this.refreshTools(entry)
       this.setState(entry, 'ready')
-      this.startRefreshTimer(entry)
+      if (persistent) this.startRefreshTimer(entry)
+      // 落盘：下次不用重连也能看到工具清单
+      if (persistent) await this.cacheTools(entry.def.id, entry.tools)
       return client
     } catch (error) {
       const detail = errorMessage(error)
@@ -370,7 +526,7 @@ export class UpstreamPool {
       entry.client = undefined
       entry.transport = undefined
       this.setState(entry, 'error', message)
-      this.scheduleReconnect(entry)
+      if (persistent) this.scheduleReconnect(entry)
       return undefined
     }
   }
@@ -399,27 +555,54 @@ export class UpstreamPool {
   private createTransport(def: McpServerDef): Transport {
     if (def.transport === 'stdio') {
       if (!def.command) throw new Error(`stdio 上游缺少 command：${def.id}`)
+      const env = resolveSecretRecord(def.env)
+      if (env.errors.length) {
+        throw new Error(`环境变量没配好：${env.errors.join('；')}`)
+      }
       return new StdioClientTransport({
         command: def.command,
         args: def.args ?? [],
-        env: { ...getDefaultEnvironment(), ...resolveEnvRecord(def.env) },
+        env: { ...getDefaultEnvironment(), ...env.values },
         // 收集 stderr：上游启动失败时才能看到「缺少参数」这类真实原因
         stderr: 'pipe',
       })
     }
     if (!def.url) throw new Error(`http 上游缺少 url：${def.id}`)
-    const headers = resolveEnvRecord(def.headers)
-    const url = new URL(resolveEnvPlaceholders(def.url))
+
+    // url / headers 里可能带 ${ENV:NAME} 占位符。
+    // 解析不出来就在这里停下：把 `${ENV:NAME}` 原样发出去只会让服务端回 401，
+    // 用户完全猜不到是环境变量没配。
+    const urlSecret = resolveSecret(def.url)
+    if (urlSecret.error) {
+      throw new Error(`url 里的${urlSecret.error}（配置里写的是 ${def.url}）`)
+    }
+    const headers = resolveSecretRecord(def.headers)
+    if (headers.errors.length) {
+      throw new Error(`请求头里的${headers.errors.join('；')}`)
+    }
+
+    // 手动配置的令牌（`token` 字段）：字面量或 ${ENV:NAME} 都支持。
+    // 它优先于 oauth 流程 —— 用户既然贴了令牌，就不用再去浏览器授权一遍。
+    const manualToken = def.token ? resolveSecret(def.token) : undefined
+    if (manualToken?.error) {
+      throw new Error(`令牌里的${manualToken.error}（配置里写的是 ${def.token}）`)
+    }
 
     // oauth 模式：把 provider 交给 transport，它会自动带上 bearer 令牌
-    if (def.auth === 'oauth' && this.oauth) {
-      return new StreamableHTTPClientTransport(url, {
-        authProvider: this.oauth.createProvider(def.id, url.toString()),
+    if (def.auth === 'oauth' && this.oauth && !manualToken) {
+      return new StreamableHTTPClientTransport(new URL(urlSecret.value), {
+        authProvider: this.oauth.createProvider(def.id, urlSecret.value),
       })
     }
 
-    return new StreamableHTTPClientTransport(url, {
-      requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
+    // 手动令牌：当普通的 Bearer 头发出去
+    const finalHeaders = { ...headers.values }
+    if (manualToken) {
+      finalHeaders['Authorization'] = `Bearer ${manualToken.value}`
+    }
+
+    return new StreamableHTTPClientTransport(new URL(urlSecret.value), {
+      requestInit: Object.keys(finalHeaders).length > 0 ? { headers: finalHeaders } : undefined,
     })
   }
 
@@ -449,6 +632,8 @@ export class UpstreamPool {
   private async refreshToolsQuietly(entry: UpstreamEntry): Promise<void> {
     try {
       await this.refreshTools(entry)
+      // 清单变了就同步更新缓存
+      await this.cacheTools(entry.def.id, entry.tools)
       this.bus.emit('upstream-status', this.statusOf(entry))
     } catch (error) {
       entry.error = errorMessage(error)

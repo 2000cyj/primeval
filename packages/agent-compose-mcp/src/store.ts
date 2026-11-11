@@ -8,7 +8,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { EventBus } from './events.ts'
-import type { McpConfigFile, McpExposure, McpProfile, McpServerDef } from './types.ts'
+import type { McpConfigFile, McpExposure, McpProfile, McpServerDef, McpToolInfo } from './types.ts'
 import { defaultExposure } from './types.ts'
 import type { OAuthRecord } from './oauth.ts'
 
@@ -68,6 +68,10 @@ function parseServer(value: unknown): McpServerDef | undefined {
       if (typeof item === 'string') headers[key] = item
     }
     def.headers = headers
+  }
+  // 手动配置的令牌：字面量或 ${ENV:NAME} 占位，两者都支持
+  if (typeof value['token'] === 'string' && value['token'] !== '') {
+    def.token = value['token']
   }
   return def
 }
@@ -192,6 +196,82 @@ export class Store {
 
 /** oauth 令牌文件名 */
 export const OAUTH_FILE = 'oauth.json'
+
+/** 工具清单缓存文件名 */
+export const TOOLS_FILE = 'tools.json'
+
+/**
+ * 一个上游的工具清单缓存。
+ *
+ * 为什么要缓存：上游是**惰性连接**的 —— 不主动连就没有工具清单。
+ * 后果是：每次打开 MCP 页，所有上游都显示「未连接 / 0 个工具」，
+ * 用户没法在不重新连一遍的情况下看到上次拿到过什么；
+ * 「配置暴露」里勾选工具也得先连上才行。
+ *
+ * 所以连上之后把工具清单落盘，下次直接读缓存。
+ */
+export type CachedTools = {
+  /** 工具清单 */
+  tools: McpToolInfo[]
+  /** 缓存时间（epoch 毫秒） */
+  cachedAt: number
+}
+
+/**
+ * 工具清单缓存（按 server id 分片存放在 `tools.json`）。
+ */
+export class ToolCacheStore {
+  private readonly dir: string
+  private cache: Record<string, CachedTools> | null = null
+
+  constructor(dir: string) {
+    this.dir = dir
+  }
+
+  private async loadAll(): Promise<Record<string, CachedTools>> {
+    if (this.cache) return this.cache
+    try {
+      const raw = await readFile(join(this.dir, TOOLS_FILE), 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      this.cache = isRecord(parsed) ? (parsed as Record<string, CachedTools>) : {}
+    } catch {
+      this.cache = {}
+    }
+    return this.cache
+  }
+
+  async read(serverId: string): Promise<CachedTools | undefined> {
+    const all = await this.loadAll()
+    return all[serverId]
+  }
+
+  async write(serverId: string, tools: McpToolInfo[]): Promise<void> {
+    const all = await this.loadAll()
+    all[serverId] = { tools, cachedAt: Date.now() }
+    await this.save(all)
+  }
+
+  async remove(serverId: string): Promise<void> {
+    const all = await this.loadAll()
+    if (!(serverId in all)) return
+    delete all[serverId]
+    await this.save(all)
+  }
+
+  /** 全部缓存 */
+  async all(): Promise<Record<string, CachedTools>> {
+    return this.loadAll()
+  }
+
+  private async save(all: Record<string, CachedTools>): Promise<void> {
+    this.cache = all
+    await mkdir(this.dir, { recursive: true })
+    const file = join(this.dir, TOOLS_FILE)
+    const tmp = `${file}.tmp`
+    await writeFile(tmp, `${JSON.stringify(all, null, 2)}\n`, 'utf8')
+    await rename(tmp, file)
+  }
+}
 
 /**
  * OAuth 令牌存储。

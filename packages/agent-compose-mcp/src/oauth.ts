@@ -31,6 +31,7 @@ import {
   type StoredOAuthTokens,
 } from '@modelcontextprotocol/client'
 import type { EventBus } from './events.ts'
+import { resolveSecret } from './secret.ts'
 import type { McpOAuthStatus } from './types.ts'
 
 /** 每个上游的 oauth 持久化数据 */
@@ -39,7 +40,13 @@ export type OAuthRecord = {
   clientInformation?: StoredOAuthClientInformation
   /** 本地自选的 client_id（跳过动态注册时使用） */
   localClientId?: string
-  /** 令牌 */
+  /**
+   * 令牌。
+   *
+   * 值可以是字面量（浏览器授权流程自动换来的），也可以是
+   * `${ENV:NAME}` 占位符（令牌本体在环境变量里）。
+   * 解析在运行时做，配置文件里永远存原样。
+   */
   tokens?: StoredOAuthTokens
   /** pkce 校验串 */
   codeVerifier?: string
@@ -104,6 +111,14 @@ export async function probeAuthChallenge(serverUrl: string): Promise<{
   scope?: string
   /** 授权服务器地址（资源服务器元数据里声明的） */
   authorizationServers?: string[]
+  /**
+   * 授权服务器有没有动态注册端点。
+   *
+   * 有 → 它期望客户端走标准动态注册；注册被拒就说明它要求预先注册应用，
+   *      不能降级成自造 client_id。
+   * 没有 → 它不校验 client_id，自选一个就能人工授权。
+   */
+  hasRegistrationEndpoint?: boolean
 }> {
   const response = await fetch(serverUrl, {
     method: 'POST',
@@ -148,10 +163,25 @@ export async function probeAuthChallenge(serverUrl: string): Promise<{
     }
   }
 
+  // 授权服务器元数据里的 registration_endpoint：决定能不能降级
+  //
+  // 这里**自己 fetch** 标准的 well-known 路径，不走 sdk 的 discovery helper ——
+  // 那个 helper 在不同运行时（node / bun）行为不一致，会让同一份配置
+  // 在开发环境和发布版里表现不同。
+  let hasRegistrationEndpoint = false
+  const issuer = authorizationServers?.[0] ?? serverUrl
+  try {
+    const metadata = await fetchAuthorizationServerMetadata(issuer)
+    hasRegistrationEndpoint = Boolean(metadata?.registration_endpoint)
+  } catch {
+    // 读不到就当没有（宁可降级，也别把路堵死）
+  }
+
   return {
     resourceMetadataUrl: params.resourceMetadataUrl,
     scope: params.scope,
     authorizationServers,
+    hasRegistrationEndpoint,
   }
 }
 
@@ -174,6 +204,49 @@ export function explainAuthError(error: unknown): string {
   return raw
 }
 
+/**
+ * 取授权服务器的元数据（自己 fetch，不依赖 sdk）。
+ *
+ * 依次试标准的两个 well-known 路径。
+ * 读不到就返回 undefined —— 调用方据此认为「没有注册端点」。
+ */
+async function fetchAuthorizationServerMetadata(
+  issuer: string,
+): Promise<{ registration_endpoint?: string } | undefined> {
+  const base = issuer.replace(/\/+$/, '')
+  const paths = ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']
+  for (const path of paths) {
+    try {
+      const response = await fetch(`${base}${path}`, {
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) continue
+      const body = (await response.json()) as { registration_endpoint?: string }
+      return body
+    } catch {
+      // 试下一个
+    }
+  }
+  return undefined
+}
+
+/**
+ * 存下来的 clientInformation 是不是真的动态注册结果。
+ *
+ * 早期版本有个降级路径：注册被拒时自造一个 client_id。那条路会把自造的
+ * client_id 当成「已注册」存进 clientInformation —— 之后 sdk 就再也不会
+ * 去试动态注册了，于是这个假 client_id 一直生效。
+ *
+ * 判断方法：clientInformation.client_id 跟 localClientId 一样 ⇒ 是自造的。
+ */
+export function hasRealRegistration(record: OAuthRecord | undefined): boolean {
+  if (!record?.clientInformation) return false
+  if (record.localClientId && record.clientInformation.client_id === record.localClientId) {
+    return false
+  }
+  return true
+}
+
 /** 生成 url 安全的随机串 */
 function randomString(bytes = 32): string {
   return Buffer.from(crypto.getRandomValues(new Uint8Array(bytes))).toString('base64url')
@@ -192,6 +265,17 @@ export class OAuthManager {
   private readonly pendingUrls = new Map<string, string>()
   /** 授权服务器地址（按 server id） */
   private readonly authorizationServers = new Map<string, string>()
+  /**
+   * 允许「本地自选 client_id」的 server。
+   *
+   * 只有**授权服务器没有 registration_endpoint** 时才允许 ——
+   * 那种服务根本不校验 client_id，自选一个就能用。
+   *
+   * 有 registration_endpoint 却拒绝注册的（比如 figma），授权端点会校验
+   * client_id 是不是真的注册过：「OAuth app with client id xxx doesn't exist」。
+   * 这种服务不能降级，只能明确告诉用户改用固定令牌。
+   */
+  private readonly allowLocalClientId = new Set<string>()
   /** 本机回调地址前缀 */
   private baseUrl = 'http://127.0.0.1:7801'
 
@@ -230,6 +314,19 @@ export class OAuthManager {
   }
 
   /**
+   * 令牌来源（给界面显示用）。
+   *
+   * - `manual`：用户手动配置的令牌
+   * - `oauth`：浏览器授权换来的令牌
+   * - `none`：还没有令牌
+   */
+  async tokenSource(serverId: string): Promise<'oauth' | 'none'> {
+    const record = await this.store.read(serverId)
+    if (record?.tokens?.access_token) return 'oauth'
+    return 'none'
+  }
+
+  /**
    * 准备一个授权地址（用于「测试连接」时直接引导用户去授权）。
    *
    * 与 {@link startAuthorization} 的区别：已存在待用的授权地址时直接复用，
@@ -258,6 +355,14 @@ export class OAuthManager {
 
     const challenge = await probeAuthChallenge(serverUrl)
 
+    // 授权服务器**根本没有**注册端点 → 它不校验 client_id，自选一个就能人工授权。
+    // 直接走降级路径，别去调 sdk 的动态注册（sdk 会直接抛
+    // 「does not support dynamic client registration」）。
+    if (!challenge.hasRegistrationEndpoint) {
+      this.allowLocalClientId.add(serverId)
+      return this.startWithoutRegistration(serverId, serverUrl, challenge)
+    }
+
     try {
       const provider = this.createProvider(serverId, serverUrl)
       const result = await auth(provider, {
@@ -285,7 +390,26 @@ export class OAuthManager {
       return { authorizeUrl, scope: challenge.scope }
     } catch (error) {
       if (isRegistrationRejected(error)) {
-        // 注册被拒：改用本地自选 client_id 继续走浏览器授权
+        // 注册被拒：能不能降级，取决于授权服务器认不认「未注册的 client_id」。
+        //
+        // - 有 registration_endpoint 却拒绝注册（figma 就是这样）：
+        //   说明它要求预先注册 OAuth 应用，授权端点会校验 client_id 存不存在
+        //   （「OAuth app with client id xxx doesn't exist」）。
+        //   这种情况**不能降级** —— 降级只会换来一个更让人困惑的报错。
+        //   只能明确告诉用户：改用固定令牌（PAT）。
+        // - 连 registration_endpoint 都没有：
+        //   说明它压根不校验 client_id，自选一个就能走人工授权。
+        if (challenge.hasRegistrationEndpoint) {
+          const message =
+            '该服务的动态客户端注册被拒绝，且它要求预先注册 OAuth 应用' +
+            '（授权端点会校验 client_id），无法自动完成浏览器授权。' +
+            '请改用「固定令牌」：在「编辑」里把认证方式改成固定令牌，' +
+            '填入该服务签发的访问令牌（PAT）。'
+          this.setStatus(serverId, { state: 'error', error: message })
+          throw new Error(message, { cause: error })
+        }
+        // 注册被拒但没有注册端点：降级为本地自选 client_id
+        this.allowLocalClientId.add(serverId)
         return this.startWithoutRegistration(serverId, serverUrl, challenge)
       }
       const message = explainAuthError(error)
@@ -297,8 +421,8 @@ export class OAuthManager {
   /**
    * 跳过动态注册，直接用本地自选的 client_id 构造授权地址。
    *
-   * 有些服务（figma）的授权端点不校验 client_id 是否已注册，只在
-   * token 端点校验。这种情况下跳过注册也能让用户在浏览器里人工授权。
+   * 只在**授权服务器没有 registration_endpoint** 时用 ——
+   * 那种服务不校验 client_id，自选一个就能让用户在浏览器里人工授权。
    */
   private async startWithoutRegistration(
     serverId: string,
@@ -361,7 +485,7 @@ export class OAuthManager {
       const record = (await this.store.read(serverId)) ?? {}
 
       // 跳过注册走的那条路：自己换 token
-      if (record.localClientId && !record.clientInformation) {
+      if (record.localClientId && !hasRealRegistration(record)) {
         await this.exchangeWithoutRegistration(serverId, serverUrl, code, record)
       } else {
         const provider = this.createProvider(serverId, serverUrl)
@@ -374,6 +498,7 @@ export class OAuthManager {
         state: 'authorized',
         scope: latest.tokens?.scope,
         authorizedAt: new Date().toISOString(),
+        tokenSource: 'oauth',
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -440,10 +565,19 @@ export class OAuthManager {
     throw new Error(`换取令牌失败：${errors.join('；')}`)
   }
 
-  /** 该 server 是否已有可用令牌 */
+  /**
+   * 该 server 是否已有可用令牌（浏览器授权换来的那种）。
+   *
+   * 占位符解析不出来时不算“有令牌”—— 否则会拿着空令牌去连，
+   * 服务端回 401，用户看不到真正原因。
+   *
+   * 注：用户手动配置的令牌（`servers.json` 里的 `token`）不走这里，
+   * 它在建立连接时直接当请求头用，不需要 oauth 流程。
+   */
   async hasTokens(serverId: string): Promise<boolean> {
     const record = await this.store.read(serverId)
-    return Boolean(record?.tokens?.access_token)
+    if (!record?.tokens?.access_token) return false
+    return !resolveSecret(record.tokens.access_token).error
   }
 
   /**
@@ -459,6 +593,7 @@ export class OAuthManager {
     // 这里只捕获局部引用，不引用 manager 本身，避免 this 别名。
     const pendingUrls = this.pendingUrls
     const authorizationServers = this.authorizationServers
+    const allowLocalClientId = this.allowLocalClientId
 
     return {
       get redirectUrl(): string {
@@ -480,9 +615,13 @@ export class OAuthManager {
 
       async clientInformation() {
         const record = await store.read(serverId)
-        if (record?.clientInformation) return record.clientInformation
-        // 没有注册过：给出本地自选的 client_id，交给降级路径
-        if (record?.localClientId) return { client_id: record.localClientId }
+        // 自造的 client_id 不算注册结果 —— 当作没有，让 sdk 重新走动态注册
+        if (hasRealRegistration(record)) return record?.clientInformation
+        // 授权服务器不校验 client_id 时：给出本地自选的，交给降级路径
+        if (allowLocalClientId.has(serverId) && record?.localClientId) {
+          return { client_id: record.localClientId }
+        }
+        // 其余情况返回 undefined —— sdk 会去做动态客户端注册
         return undefined
       },
 
@@ -492,7 +631,12 @@ export class OAuthManager {
       },
 
       async tokens() {
-        return (await store.read(serverId))?.tokens
+        const record = await store.read(serverId)
+        // 浏览器授权换来的令牌：值也可能是 ${ENV:NAME} 占位
+        if (!record?.tokens?.access_token) return undefined
+        const resolved = resolveSecret(record.tokens.access_token)
+        if (resolved.error) return undefined
+        return { ...record.tokens, access_token: resolved.value }
       },
 
       async saveTokens(tokens: StoredOAuthTokens) {

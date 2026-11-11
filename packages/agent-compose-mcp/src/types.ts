@@ -35,6 +35,14 @@ export type McpOAuthStatus = {
   error?: string
   /** 最近一次成功授权时间 */
   authorizedAt?: string
+  /**
+   * 令牌来源。
+   *
+   * - `manual`：用户手动配置的令牌
+   * - `oauth`：浏览器授权换来的令牌
+   * - `none`：还没有令牌
+   */
+  tokenSource?: 'manual' | 'oauth' | 'none'
 }
 
 export type McpServerDef = {
@@ -56,6 +64,16 @@ export type McpServerDef = {
   enabled: boolean
   /** 远程上游的认证方式，默认 none */
   auth?: McpAuthKind
+  /**
+   * 手动配置的令牌（`auth: 'oauth'` 时用）。
+   *
+   * 两种写法都支持：
+   * - 字面量：用户自己贴的 PAT / 长效 token
+   * - `${ENV:NAME}` 占位：令牌本体在环境变量里
+   *
+   * 留空 / 不填 = 走浏览器 OAuth 授权流程。
+   */
+  token?: string
 }
 
 // ─────────────────────────────────────────────────────────
@@ -110,6 +128,24 @@ export type McpUpstreamStatus = {
   reconnectAttempt: number
   /** OAuth 授权状态（仅 auth 为 oauth 的 http 上游有值） */
   oauth?: McpOAuthStatus
+  /**
+   * 令牌来源。
+   *
+   * - `manual`：用户手动配置的固定令牌
+   * - `env`：手动配置的令牌写的是 `${ENV:NAME}`，真实值在环境变量里
+   * - `oauth`：浏览器授权流程换来的令牌
+   * - `none`：没有令牌
+   */
+  tokenSource?: 'manual' | 'env' | 'oauth' | 'none'
+  /**
+   * 工具清单是不是来自缓存（当前没连上）。
+   *
+   * 上游是惰性连接的：页面刚打开时没连，工具清单读的是上次落盘的缓存。
+   * 界面据此显示「上次连接成功」而不是「未连接」。
+   */
+  toolsFromCache?: boolean
+  /** 缓存时间（epoch 毫秒） */
+  toolsCachedAt?: number
 }
 
 export type McpCallLog = {
@@ -291,11 +327,14 @@ export const MCP_COMMANDS = {
   saveServers: 'mcp_save_servers',
   removeServer: 'mcp_remove_server',
   testServer: 'mcp_test_server',
+  probeServerDef: 'mcp_probe_server_def',
+  connectServers: 'mcp_connect_servers',
   getExposure: 'mcp_get_exposure',
   setExposure: 'mcp_set_exposure',
   listProfiles: 'mcp_list_profiles',
   saveProfiles: 'mcp_save_profiles',
   getStatus: 'mcp_get_status',
+  refreshToken: 'mcp_refresh_token',
 } as const
 
 export type McpCommandName = (typeof MCP_COMMANDS)[keyof typeof MCP_COMMANDS]

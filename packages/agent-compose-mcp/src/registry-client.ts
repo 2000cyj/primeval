@@ -96,6 +96,8 @@ export function entryToServerDef(entry: McpRegistryEntry): McpServerDef | null {
       args,
       env: Object.keys(env).length ? env : undefined,
       enabled: true,
+      // 本地包用固定令牌（环境变量传），不是 oauth
+      auth: Object.keys(env).length ? 'static' : 'none',
     }
   }
 
@@ -114,10 +116,32 @@ export function entryToServerDef(entry: McpRegistryEntry): McpServerDef | null {
       url: remote.url,
       headers: Object.keys(headers).length ? headers : undefined,
       enabled: true,
+      // 远程 server 要 OAuth 还是固定令牌？分不出来时别瞎猜 —— 见 detectRemoteAuth
+      auth: detectRemoteAuth(remote),
     }
   }
 
   return null
+}
+
+/**
+ * 判断远程 server 要 OAuth 还是固定令牌。
+ *
+ * registry 的 remote 结构里：
+ * - 有 `oauth` 段（或 `authorizationUrl`）→ 要走 OAuth 授权流程
+ * - 否则看有没有认证类请求头 → 固定令牌
+ * - 都没有 → 不需要认证
+ *
+ * 拿不准时**不能瞎猜**：猜成「不需要认证」的话，用户点了测试只会看到
+ * 一个 401，完全不知道该去配 OAuth 还是令牌。
+ */
+function detectRemoteAuth(remote: McpRegistryRemote): 'none' | 'static' | 'oauth' {
+  const raw = remote as unknown as Record<string, unknown>
+  if (raw['oauth'] || raw['authorizationUrl'] || raw['authorization_url']) return 'oauth'
+  const hasAuthHeader = (remote.headers ?? []).some((item) =>
+    /authorization|token|api[-_]?key|secret/i.test(item.name ?? ''),
+  )
+  return hasAuthHeader ? 'static' : 'none'
 }
 
 /**
