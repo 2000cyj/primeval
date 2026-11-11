@@ -1,0 +1,20 @@
+[package]
+name = "agentspace-core"
+version = "1.0.0"
+description = "AgentSpace 的共享核心：智能体 / skill / 工具箱的落盘与业务逻辑"
+edition = "2021"
+
+[lib]
+name = "agentspace_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# URL 导入 / 刷新 skill 要发请求；zip 技能包要解压。
+reqwest = { version = "0.13", features = ["json", "socks"] }
+flate2 = "1.1.11"
+url = "2"
+
+[profile.release]
+strip = true

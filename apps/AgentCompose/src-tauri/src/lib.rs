@@ -5,16 +5,26 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager};
 
+pub(crate) mod agents;
+mod agent_store;
+mod history;
+mod paths;
+mod proxy;
+mod skills;
+
 /// MCP sidecar 的数据目录。
 ///
 /// 必须与 Node 侧 `config.ts` 的路径规则一致：
 /// `~/.agent-compose/mcp`（可用 `AGENT_COMPOSE_DATA_DIR` 覆盖）
 fn mcp_data_dir(app: &AppHandle) -> PathBuf {
-    let home = app
-        .path()
+    home_dir(app).join(".agent-compose").join("mcp")
+}
+
+/// 用户主目录。
+fn home_dir(app: &AppHandle) -> PathBuf {
+    app.path()
         .home_dir()
-        .unwrap_or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from).unwrap_or_default());
-    home.join(".agent-compose").join("mcp")
+        .unwrap_or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from).unwrap_or_default())
 }
 
 /// sidecar 入口脚本（仓库内相对路径）。
@@ -36,6 +46,9 @@ fn sidecar_script() -> PathBuf {
 
 /// sidecar 落盘的运行信息文件名
 const RUNTIME_FILE: &str = "sidecar.json";
+
+/// 固定的访问令牌（与 sidecar 侧的 `FIXED_TOKEN` 保持一致）。
+const FIXED_TOKEN: &str = "AgentSpace";
 
 /// 运行中的 sidecar 信息
 struct SidecarRuntime {
@@ -132,6 +145,39 @@ fn kill_process(pid: u32) {
     }
 }
 
+/// 打包好的 sidecar 可执行文件。
+///
+/// 发布形态下随 gui 一起分发；开发形态下可能还没构建。
+/// 打包好的 sidecar 可执行文件。
+///
+/// 发布形态下它在资源目录里；开发形态下在仓库的 `src-tauri/bin/`。
+/// 两个都找 —— 发布形态的路径在编译期是猜不出来的（编译机上才有）。
+fn sidecar_binary(app: &AppHandle) -> Option<PathBuf> {
+    let exe_name = if cfg!(windows) {
+        "agent-compose-mcp.exe"
+    } else {
+        "agent-compose-mcp"
+    };
+    if let Ok(dir) = app.path().resource_dir() {
+        let candidate = dir.join("bin").join(exe_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let dev = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("bin")
+        .join(exe_name);
+    if dev.is_file() {
+        return Some(dev);
+    }
+    // 桌面端装出来的（CLI 也找这里）
+    let installed = home_dir(app).join(".agent-compose").join("bin").join(exe_name);
+    if installed.is_file() {
+        return Some(installed);
+    }
+    None
+}
+
 /// 端口是否有人监听。
 fn port_alive(port: u16) -> bool {
     use std::net::{SocketAddr, TcpStream};
@@ -174,12 +220,13 @@ fn endpoint(app: &AppHandle) -> Result<Endpoint, String> {
 /// 子进程以 detached 方式启动，**不随 GUI 退出而结束** —— agent 可能还在
 /// 使用它。发布形态下这里会换成 Tauri sidecar 二进制。
 fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
+    // 优先用打包好的 sidecar 可执行文件（发布形态），
+    // 没有则回落到 node + ts 源码（开发形态）
+    let binary = sidecar_binary(app);
     let script = sidecar_script();
-    if !script.exists() {
+    if binary.is_none() && !script.exists() {
         return Err(format!(
-            "找不到 sidecar 入口脚本：{}\n\
-             开发形态下它应位于 <仓库>/packages/agent-compose-mcp/src/index.ts；\
-             发布形态下应改为调用打包后的 sidecar 可执行文件。",
+            "找不到 sidecar：既没有可执行文件，也没有入口脚本 {}",
             script.display()
         ));
     }
@@ -194,24 +241,52 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("打开 sidecar 日志失败：{e}"))?;
     let log_err = log.try_clone().map_err(|e| e.to_string())?;
 
-    let mut cmd = Command::new("node");
-    cmd.arg("--experimental-strip-types");
-    // 开发时监听 sidecar 源码：它是独立进程，不重启就还用着旧代码
-    if std::env::var("AGENT_COMPOSE_MCP_WATCH").is_ok() {
-        if let Some(dir) = script.parent().and_then(Path::parent) {
-            cmd.arg("--watch-path").arg(dir);
+    let mut cmd = if script.exists() {
+        // 开发形态：跑仓库里的源码。
+        // 源码优先于打包好的二进制 —— 二进制是构建时的快照，改了源码它不会变，
+        // 跑起来还是旧逻辑（token、接口都可能对不上）。
+        let mut cmd = Command::new("node");
+        cmd.arg("--experimental-strip-types");
+        // 开发时监听 sidecar 源码：它是独立进程，不重启就还用着旧代码
+        if std::env::var("AGENT_COMPOSE_MCP_WATCH").is_ok() {
+            if let Some(dir) = script.parent().and_then(Path::parent) {
+                cmd.arg("--watch-path").arg(dir);
+            }
         }
-    }
-    cmd.arg(&script)
-        .current_dir(
-            script
-                .parent()
-                .and_then(Path::parent)
-                .unwrap_or_else(|| Path::new(".")),
-        )
-        .stdin(Stdio::null())
+        cmd.arg(&script)
+            .current_dir(
+                script
+                    .parent()
+                    .and_then(Path::parent)
+                    .unwrap_or_else(|| Path::new(".")),
+            );
+        cmd
+    } else {
+        // 发布形态：只有打包好的可执行文件
+        let binary = binary.expect("上面已经确认过它存在");
+        let mut cmd = Command::new(&binary);
+        cmd.current_dir(binary.parent().unwrap_or_else(|| Path::new(".")));
+        cmd
+    };
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
+
+    // 让 sidecar 的出站请求（目录搜索、OAuth）也走全局代理。
+    // Node 24 起 fetch 默认不读环境代理，NODE_USE_ENV_PROXY=1 让它读；
+    // Bun 本身就读 HTTP_PROXY / HTTPS_PROXY。
+    cmd.env("NODE_USE_ENV_PROXY", "1");
+    if let Some(proxy) = agentspace_core::proxy::resolve(&paths::of(&app)).url {
+        cmd.env("HTTP_PROXY", &proxy);
+        cmd.env("HTTPS_PROXY", &proxy);
+        cmd.env("ALL_PROXY", &proxy);
+        cmd.env("http_proxy", &proxy);
+        cmd.env("https_proxy", &proxy);
+        cmd.env("all_proxy", &proxy);
+        // 本机上跑的 MCP server 不能走代理。
+        cmd.env("NO_PROXY", "localhost,127.0.0.1,::1");
+        cmd.env("no_proxy", "localhost,127.0.0.1,::1");
+    }
 
     #[cfg(windows)]
     {
@@ -222,7 +297,6 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
     }
 
     cmd.spawn().map_err(|e| format!("启动 sidecar 失败：{e}"))?;
-    let _ = app;
     Ok(())
 }
 
@@ -291,6 +365,21 @@ fn ensure_sidecar_ready(app: &AppHandle) -> Result<(), String> {
     Err(format!("MCP sidecar 启动超时（15 秒）{detail}"))
 }
 
+/// 停掉正在运行的 sidecar。
+///
+/// 改了全局代理后要重启它 —— 代理是以环境变量的形式传进去的，
+/// 只在进程启动时生效。下次要 sidecar 时 `ensure_sidecar_ready` 会重新拉起。
+pub(crate) fn stop_sidecar(app: &AppHandle) {
+    if let Some(info) = read_sidecar_runtime(app) {
+        if process_alive(info.pid) {
+            kill_process(info.pid);
+        }
+    }
+    let dir = mcp_data_dir(app);
+    let _ = std::fs::remove_file(dir.join("port"));
+    let _ = std::fs::remove_file(dir.join("token"));
+}
+
 /// 确保 sidecar 在运行，返回其端口与令牌。
 #[tauri::command]
 fn mcp_ensure_sidecar(app: AppHandle) -> Result<Value, String> {
@@ -346,8 +435,10 @@ async fn admin_request(
 ) -> Result<Value, String> {
     let ep = endpoint(&app)?;
     // 加超时：sidecar 不可达时不要无界等待
+    // sidecar 在本机：明确直连，别被系统 / 全局代理拦一道。
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!("{}{}", ep.base, path);
@@ -359,13 +450,13 @@ async fn admin_request(
 
     let resp = match req.send().await {
         Ok(resp) => resp,
-        Err(first) => {
+        Err(_first) => {
             // 连不上：拉起 sidecar 后重试一次
             ensure_sidecar_ready(app)?;
             let ep = endpoint(&app)?;
             let url = format!("{}{}", ep.base, path);
-            let mut retry = client.request(method, &url).bearer_auth(&ep.token);
-            if let Some(payload) = body {
+            let mut retry = client.request(method.clone(), &url).bearer_auth(&ep.token);
+            if let Some(payload) = body.clone() {
                 retry = retry.json(&payload);
             }
             retry.send().await.map_err(|e| {
@@ -377,6 +468,36 @@ async fn admin_request(
     let text = resp.text().await.map_err(|e| e.to_string())?;
 
     if !status.is_success() {
+        // 401：令牌与正在跑的 sidecar 对不上（换过令牌、sidecar 重启过、
+        // 或者令牌文件被别的手工改过）。
+        // 自愈：重启 sidecar —— 新实例会写一份与它自己一致的令牌文件，然后重试。
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            stop_sidecar(app);
+            ensure_sidecar_ready(app)?;
+            let ep = endpoint(app)?;
+            let url = format!("{}{}", ep.base, path);
+            let mut retry = client.request(method, &url).bearer_auth(&ep.token);
+            if let Some(payload) = body.clone() {
+                retry = retry.json(&payload);
+            }
+            let resp = retry.send().await.map_err(|e| {
+                format!("连接 MCP sidecar 失败：{e}（已尝试重新拉起 sidecar）")
+            })?;
+            let status = resp.status();
+            let text = resp.text().await.map_err(|e| e.to_string())?;
+            if status.is_success() {
+                return if text.trim().is_empty() {
+                    Ok(Value::Null)
+                } else {
+                    serde_json::from_str(&text).map_err(|e| format!("sidecar 响应解析失败：{e}"))
+                };
+            }
+            return Err(format!(
+                "sidecar 返回错误（{}）：{}（已重启 sidecar，仍失败）",
+                status.as_u16(),
+                text
+            ));
+        }
         let hint = if status == reqwest::StatusCode::UNAUTHORIZED {
             "令牌与正在运行的 sidecar 不匹配，请重启 sidecar"
         } else {
@@ -403,9 +524,42 @@ async fn mcp_list_servers(app: AppHandle) -> Result<Value, String> {
 /// 全量保存上游 MCP server 列表
 #[tauri::command]
 async fn mcp_save_servers(app: AppHandle, servers: Value) -> Result<(), String> {
+    // 先拿旧列表：被删掉的 server 也要算进「绑了它的智能体版本 +1」，
+    // 否则智能体还绑着一个已经不存在的 server，版本却没动。
+    let previous: Vec<String> = mcp_list_servers(app.clone())
+        .await
+        .ok()
+        .and_then(|value| {
+            value
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|item| item.get("id").and_then(|id| id.as_str()))
+                        .map(|id| id.to_string())
+                        .collect()
+                })
+        })
+        .unwrap_or_default();
+
     admin_request(&app, reqwest::Method::PUT, "/admin/servers", Some(json!({ "servers": servers })))
         .await
-        .map(|_| ())
+        .map(|_| ())?;
+    // server 定义变了 → 绑了它们的智能体版本 +1（启动脚本据此提示覆盖）
+    let mut ids: Vec<String> = servers
+        .get("servers")
+        .and_then(|value| value.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|item| item.get("id").and_then(|id| id.as_str()))
+                .map(|id| id.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    // 补上「这次被删掉的」—— 少了它们，绑着它们的智能体看不出自己过期了
+    let removed: Vec<String> = previous.into_iter().filter(|id| !ids.contains(id)).collect();
+    ids.extend(removed);
+    agent_store::bump_versions(&app, &[], &ids);
+    Ok(())
 }
 
 /// 删除单个上游 MCP server
@@ -413,13 +567,42 @@ async fn mcp_save_servers(app: AppHandle, servers: Value) -> Result<(), String> 
 async fn mcp_remove_server(app: AppHandle, id: String) -> Result<(), String> {
     admin_request(&app, reqwest::Method::DELETE, &format!("/admin/servers/{id}"), None)
         .await
-        .map(|_| ())
+        .map(|_| ())?;
+    // 少了一个 server → 绑了它的智能体版本 +1
+    agent_store::bump_versions(&app, &[], &[id]);
+    Ok(())
 }
 
 /// 测试单个 server 的连接，返回其最新状态
 #[tauri::command]
 async fn mcp_test_server(app: AppHandle, id: String) -> Result<Value, String> {
     admin_request(&app, reqwest::Method::POST, &format!("/admin/servers/{id}/test"), None).await
+}
+
+/// 让代理把所有启用的上游都连一遍。
+///
+/// 上游默认惰性连接：页面刚打开时全是「未连接」。
+/// 界面调它来主动建连 —— 连上的工具清单会落盘，下次不用重连。
+#[tauri::command]
+async fn mcp_connect_servers(app: AppHandle) -> Result<(), String> {
+    admin_request(&app, reqwest::Method::POST, "/admin/servers/connect", None)
+        .await
+        .map(|_| ())
+}
+
+/// 测一个**还没保存**的上游定义。
+///
+/// 「新增/编辑 MCP server」弹窗里的「测试」按钮用它 —— 用户填完就想知道
+/// 能不能连上，那时定义还没存进 servers.json。
+#[tauri::command]
+async fn mcp_probe_server_def(app: AppHandle, server: Value) -> Result<Value, String> {
+    admin_request(
+        &app,
+        reqwest::Method::POST,
+        "/admin/servers/probe",
+        Some(json!({ "server": server })),
+    )
+    .await
 }
 
 /// 读取对外暴露配置
@@ -456,13 +639,31 @@ async fn mcp_get_status(app: AppHandle) -> Result<Value, String> {
     admin_request(&app, reqwest::Method::GET, "/admin/status", None).await
 }
 
+/// 刷新访问令牌：让运行中的 sidecar 立刻用上当前的 token。
+///
+/// token 固定用产品名（AgentSpace）—— 接入地址要粘到各个 agent 的配置里，
+/// 固定值好记、好核对。这个接口的作用是「sidecar 重启过 / token 文件被改过」
+/// 时把它拉回一致。
+#[tauri::command]
+async fn mcp_refresh_token(app: AppHandle) -> Result<Value, String> {
+    admin_request(
+        &app,
+        reqwest::Method::POST,
+        "/admin/token",
+        Some(json!({ "token": FIXED_TOKEN })),
+    )
+    .await
+}
+
 /// 为一个远程上游发起 oauth 授权，返回需要用户打开的授权地址。
 #[tauri::command]
 async fn mcp_authorize_server(app: AppHandle, id: String) -> Result<Value, String> {
     let ep = endpoint(&app)?;
     // 加超时：sidecar 不可达时不要无界等待
+    // sidecar 在本机：明确直连，别被系统 / 全局代理拦一道。
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!("{}/admin/servers/{}/authorize", ep.base, encode_component(&id));
@@ -497,10 +698,18 @@ fn mcp_open_url(url: String) -> Result<(), String> {
     {
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/c")
-            .arg("start")
-            .arg("")
+        // 用 rundll32 而不是 `cmd /c start`。
+        //
+        // 授权地址带一长串查询参数（?response_type=code&client_id=...&code_challenge=...），
+        // 而 cmd 把 `&` 当命令分隔符：`cmd /c start "" <url>` 会把 URL 从第一个
+        // `&` 处截断，后半截被当成另一条命令去执行 —— 浏览器只拿到
+        // `?response_type=code`，少了 client_id，授权服务器直接报
+        // 「Parameter client_id is required」。
+        //
+        // rundll32 直接 spawn（不经 cmd），Rust 会按 MSVC 规则给参数加引号，
+        // 整个 URL 原样交给系统。
+        let mut cmd = Command::new("rundll32");
+        cmd.arg("url.dll,FileProtocolHandler")
             .arg(&url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -534,8 +743,10 @@ async fn mcp_search_registry(
 ) -> Result<Value, String> {
     let ep = endpoint(&app)?;
     // 加超时：sidecar 不可达时不要无界等待
+    // sidecar 在本机：明确直连，别被系统 / 全局代理拦一道。
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .no_proxy()
         .build()
         .map_err(|e| e.to_string())?;
     let mut url = format!("{}/admin/registry/search", ep.base);
@@ -581,10 +792,278 @@ fn encode_component(value: &str) -> String {
     out
 }
 
+/// 把 `agentspace` 命令装到终端能直接敲的地方。
+///
+/// `agentspace` 命令行的安装状态。
+///
+/// 桌面端启动时会把命令装到一个 PATH 上的目录里。
+/// 这里告诉界面：装没装、装在哪 —— 用户在终端敲不到命令时要能查。
+#[tauri::command]
+fn cli_status(app: AppHandle) -> Value {
+    let home = app.path().home_dir().ok();
+    let exe_name = if cfg!(windows) { "agentspace.exe" } else { "agentspace" };
+    // 跟 install_cli 用同一套候选目录，别一个装这儿一个查那儿
+    let mut candidates: Vec<PathBuf> = vec![home.clone().unwrap_or_default().join(".local").join("bin")];
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            candidates.push(PathBuf::from(appdata).join("npm"));
+        }
+    }
+    if let Some(home) = home {
+        candidates.push(home.join(".agent-compose").join("bin"));
+    }
+    let found = candidates
+        .iter()
+        .map(|dir| dir.join(exe_name))
+        .find(|path| path.is_file());
+    json!({
+        "installed": found.is_some(),
+        "path": found.map(|path| path.to_string_lossy().to_string()),
+        "command": "agentspace",
+    })
+}
+
+/// 把 `agentspace` 命令装到终端能直接敲的地方。
+///
+/// 做法：把可执行文件装到一个**已经在 PATH 上**的目录（优先 `~/.local/bin`）——
+/// 这样用户当前开着的终端立刻就能敲，不用重开、不用改注册表。
+/// 实在找不到 PATH 上的目录，才装到 `~/.agent-compose/bin/` 并写用户级 PATH。
+///
+/// 幂等：已装的比新构建新就不动它。
+fn install_cli(app: &AppHandle) -> Option<PathBuf> {
+    let source = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|dir| dir.join("bin").join(if cfg!(windows) { "agentspace.exe" } else { "agentspace" }))?;
+    if !source.is_file() {
+        return None;
+    }
+
+    let home = app.path().home_dir().ok()?;
+    let exe_name = if cfg!(windows) { "agentspace.exe" } else { "agentspace" };
+
+    // 装到哪个目录？优先挑一个**已经在 PATH 上**的 ——
+    // 那样用户当前开着的终端立刻就能敲，不用重开。
+    //
+    // 候选按顺序试：
+    // 1. `~/.local/bin` —— 用户级 bin 的标准位置，多数开发机都在 PATH 上
+    // 2. `%APPDATA%\npm` —— node 的全局 bin（装过 npm 全局包才有）
+    // 3. `~/.agent-compose/bin` —— 我们自己的目录，不在 PATH 上就写注册表
+    let mut candidates: Vec<PathBuf> = vec![home.join(".local").join("bin")];
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            candidates.push(PathBuf::from(appdata).join("npm"));
+        }
+    }
+    candidates.push(home.join(".agent-compose").join("bin"));
+
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let on_path = |dir: &Path| {
+        current_path
+            .split(if cfg!(windows) { ';' } else { ':' })
+            .any(|item| path_mentions(item, &dir.to_string_lossy()))
+    };
+
+    // 已经在 PATH 上的候选优先；实在没有才用自己的目录
+    let install_dir = candidates
+        .iter()
+        .find(|dir| dir.is_dir() && on_path(dir))
+        .cloned()
+        .unwrap_or_else(|| candidates.last().expect("候选列表不为空").clone());
+
+    std::fs::create_dir_all(&install_dir).ok()?;
+    let target = install_dir.join(exe_name);
+
+    // 已装的那份比新构建旧 → 覆盖
+    let needs_copy = match (
+        std::fs::metadata(&source).and_then(|meta| meta.modified()),
+        std::fs::metadata(&target).and_then(|meta| meta.modified()),
+    ) {
+        (Ok(newer), Ok(installed)) => newer > installed,
+        _ => true,
+    };
+    if needs_copy && std::fs::copy(&source, &target).is_err() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+    }
+
+    // 装的目录不在 PATH 上 → 写进用户级 PATH（只对以后开的终端生效）
+    if !on_path(&install_dir) {
+        add_to_user_path(&install_dir);
+    }
+    Some(target)
+}
+
+/// PATH 的文本里是不是已经有这个目录了。
+///
+/// 注册表导出一行形如 `    Path    REG_EXPAND_SZ    <目录;目录;...>`，
+/// 目录用分号隔开。
+fn path_mentions(text: &str, dir: &str) -> bool {
+    let normalize = |raw: &str| {
+        raw.trim()
+            .trim_start_matches('%')
+            .replace('/', std::path::MAIN_SEPARATOR_STR)
+            .trim_end_matches(std::path::MAIN_SEPARATOR_STR)
+            .to_lowercase()
+    };
+    let needle = normalize(dir);
+    // Windows 的 PATH 用 `;` 分隔，Unix 用 `:` ——
+    // 不能一刀切切 `:`：Windows 路径本身就带冒号（`C:\...`）。
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    text.split(separator).any(|item| normalize(item) == needle)
+}
+
+/// 从 `reg query` 的输出里取出 Path 的值。
+fn read_path_value(reg_output: &str) -> String {
+    for line in reg_output.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("Path") {
+            continue;
+        }
+        // `Path` 和类型名各占一段，剩下的才是值
+        let mut parts = trimmed.splitn(3, char::is_whitespace);
+        parts.next(); // Path
+        parts.next(); // REG_EXPAND_SZ
+        return parts.next().unwrap_or("").trim().to_string();
+    }
+    String::new()
+}
+
+/// 把目录加进用户级 PATH（Windows 走注册表，其它走 shell 配置文件）。
+///
+/// 已经在 PATH 里就不动 —— 每次启动都改一遍注册表没意义。
+fn add_to_user_path(dir: &Path) {
+    let dir_text = dir.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    {
+        // 读 HKCU\Environment 的 Path 整条值。
+        // 不用 `reg query ... /v Path`：带斜杠的参数在某些 shell 里会被当成路径改写。
+        let output = Command::new("reg").args(["query", r"HKCU\Environment"]).output();
+        let existing = output
+            .ok()
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+            .map(|text| read_path_value(&text))
+            .unwrap_or_default();
+
+        if path_mentions(&existing, &dir_text) {
+            return;
+        }
+
+        // 保留原来的全部内容，只在尾部追加
+        let updated = if existing.trim().is_empty() {
+            dir_text.clone()
+        } else {
+            format!("{};{}", existing.trim_end_matches(';'), dir_text)
+        };
+        let _ = Command::new("reg")
+            .args([
+                "add",
+                r"HKCU\Environment",
+                "/v",
+                "Path",
+                "/t",
+                "REG_EXPAND_SZ",
+                "/f",
+                "/d",
+                &updated,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    #[cfg(not(windows))]
+    {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return;
+        };
+        let profile = home.join(".profile");
+        let marker = format!("# agentspace ({dir_text})");
+        if let Ok(text) = std::fs::read_to_string(&profile) {
+            if text.contains(&marker) {
+                return;
+            }
+        }
+        let line = format!("\n{marker}\nexport PATH=\"{dir_text}:$PATH\"\n");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&profile)
+        {
+            use std::io::Write;
+            let _ = file.write_all(line.as_bytes());
+        }
+    }
+}
+
+/// 把 sidecar 也装一份到 `~/.agent-compose/bin/`。
+///
+/// 为什么：CLI（`agentspace`）装在 PATH 上的目录，而 sidecar 跟着应用走。
+/// CLI 找 sidecar 时会看这个目录 —— 没有它的话，
+/// 终端里跑 `agentspace run` 就拉不起 MCP 代理。
+fn install_sidecar(app: &AppHandle) {
+    let Some(source) = sidecar_binary(app) else {
+        return;
+    };
+    let target_dir = home_dir(app).join(".agent-compose").join("bin");
+    if std::fs::create_dir_all(&target_dir).is_err() {
+        return;
+    }
+    let target = target_dir.join(source.file_name().unwrap_or_default());
+    let needs_copy = match (
+        std::fs::metadata(&source).and_then(|meta| meta.modified()),
+        std::fs::metadata(&target).and_then(|meta| meta.modified()),
+    ) {
+        (Ok(newer), Ok(installed)) => newer > installed,
+        _ => true,
+    };
+    if needs_copy {
+        let _ = std::fs::copy(&source, &target);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            // 命令行：装一次，终端里就能直接敲 agentspace
+            install_cli(app.handle());
+            // sidecar 也装一份：CLI 靠它拉起 MCP 代理
+            install_sidecar(app.handle());
+            Ok(())
+        })
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            cli_status,
+            agents::agents_scan,
+            agents::agents_installations,
+            agents::agents_check_updates,
+            agents::agents_package_plan,
+            agents::agents_package_versions,
+            agents::agents_upgrade,
+            agents::agents_install,
+            agents::agents_uninstall,
+            skills::skills_list,
+            skills::skills_create_manual,
+            skills::skills_import_url,
+            skills::skills_import_local,
+            skills::skills_list_runtime,
+            skills::skills_import_runtime,
+            skills::skills_remove,
+            skills::skills_set_enabled,
+            skills::skills_read,
+            skills::skills_update,
+            skills::skills_duplicate,
+            skills::skills_refresh,
+            skills::skills_pick_source,
             mcp_ensure_sidecar,
             mcp_search_registry,
             mcp_authorize_server,
@@ -593,12 +1072,60 @@ pub fn run() {
             mcp_save_servers,
             mcp_remove_server,
             mcp_test_server,
+            mcp_probe_server_def,
+            mcp_connect_servers,
             mcp_get_exposure,
             mcp_set_exposure,
             mcp_list_profiles,
             mcp_save_profiles,
             mcp_get_status,
+            mcp_refresh_token,
+            proxy::proxy_get,
+            proxy::proxy_set,
+            proxy::proxy_test,
+            proxy::proxy_scan,
+            agent_store::created_agents_list,
+            agent_store::created_agents_save,
+            agent_store::created_agents_delete,
+            history::cli_op_history_load,
+            history::cli_op_history_upsert,
+            history::cli_op_history_remove,
+            history::cli_op_history_clear,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AgentCompose");
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn path_mentions_finds_existing_dir() {
+        let text = r"Path    REG_EXPAND_SZ    C:\Users\me\AppData\Local\Programs;C:\Users\me\.agent-compose\bin";
+        assert!(path_mentions(text, r"C:\Users\me\.agent-compose\bin"));
+        assert!(!path_mentions(text, r"C:\other\bin"));
+    }
+
+    #[test]
+    fn path_mentions_ignores_case_and_trailing_separator() {
+        let text = r"C:\Users\me\.agent-compose\bin;C:\Windows";
+        assert!(path_mentions(text, r"c:\users\ME\.agent-compose\bin\"));
+    }
+
+    #[test]
+    fn read_path_value_picks_the_path_line() {
+        let output = r"HKEY_CURRENT_USER\Environment
+    NVM_HOME    REG_EXPAND_SZ    D:\nvm
+    Path    REG_EXPAND_SZ    C:\a;C:\b
+    TEMP    REG_EXPAND_SZ    %TEMP%";
+        assert_eq!(read_path_value(output), r"C:\a;C:\b");
+    }
+
+    #[test]
+    fn read_path_value_returns_empty_when_absent() {
+        let output = r"HKEY_CURRENT_USER\Environment
+    NVM_HOME    REG_EXPAND_SZ    D:\nvm";
+        assert_eq!(read_path_value(output), "");
+    }
 }
