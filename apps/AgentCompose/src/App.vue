@@ -10,11 +10,32 @@ import AppSidebar, { type ViewKey } from '@/components/AppSidebar.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
 import SkillsView from '@/views/SkillsView.vue'
 import McpView from '@/views/McpView.vue'
-import WorkbenchView from '@/views/WorkbenchView.vue'
 import AgentsView from '@/views/AgentsView.vue'
 import AgentRunsView from '@/views/AgentRunsView.vue'
 import AgentCreateWizard from '@/views/AgentCreateWizard.vue'
+import AgentEditView from '@/views/AgentEditView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import { useNotifications } from '@/composables/useNotifications'
+import { useCliOps } from '@/composables/useCliOps'
+import { useCreatedAgents } from '@/data/createdAgents'
+
+const { init: initNotifications } = useNotifications()
+const { bindRetryActions } = useCliOps()
+const { load: loadAgents } = useCreatedAgents()
+
+/** 新建智能体：向导已经落盘了，这里只负责跳到智能体页 */
+const onAgentCreated = (): void => {
+  navigate('agentRuns')
+}
+
+/** 正在编辑的智能体 id */
+const editingAgentId = ref('')
+
+/** 点数据行 → 进编辑页 */
+const onAgentEdit = (id: string): void => {
+  editingAgentId.value = id
+  navigate('agentEdit')
+}
 
 /**
  * 主题覆盖：中性灰 + 单一靛蓝强调色，小圆角，无阴影堆砌。
@@ -84,11 +105,11 @@ const themeOverrides: GlobalThemeOverrides = {
 
 const views: ViewKey[] = [
   'skills',
-  'workbench',
   'mcp',
   'agents',
   'agentRuns',
   'agentCreate',
+  'agentEdit',
   'settings',
 ]
 
@@ -104,12 +125,32 @@ const navigate = (key: ViewKey) => {
   window.location.hash = key
 }
 
+/** 返回上一级：回到进入前的页面；没有可返回的历史记录时用 fallback */
+const navigateBack = (fallback: ViewKey = 'skills') => {
+  if (window.history.length > 1) {
+    window.history.back()
+    return
+  }
+
+  navigate(fallback)
+}
+
 const onHashChange = () => {
   activeView.value = readHash()
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('hashchange', onHashChange)
+  // 升级历史从磁盘读回来（重启后还在），再给失败的那些绑上「重试」。
+  await initNotifications()
+  bindRetryActions()
+  // 已创建的智能体也从磁盘读回来（重启后还在）。
+  try {
+    await loadAgents()
+  } catch (error) {
+    // 读不到就当没有：不让一个坏 JSON 把整个应用卡在启动阶段。
+    console.error('读取智能体列表失败', error)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -127,14 +168,23 @@ onBeforeUnmount(() => {
         <main class="main">
           <AppTopbar />
           <SkillsView v-if="activeView === 'skills'" />
-          <WorkbenchView v-else-if="activeView === 'workbench'" />
           <McpView v-else-if="activeView === 'mcp'" />
           <AgentsView v-else-if="activeView === 'agents'" />
-          <AgentRunsView v-else-if="activeView === 'agentRuns'" @create="navigate('agentCreate')" />
+          <AgentRunsView
+            v-else-if="activeView === 'agentRuns'"
+            @create="navigate('agentCreate')"
+            @edit="onAgentEdit"
+          />
           <AgentCreateWizard
             v-else-if="activeView === 'agentCreate'"
-            @cancel="navigate('agentRuns')"
-            @done="navigate('agentRuns')"
+            @cancel="navigateBack()"
+            @done="onAgentCreated"
+          />
+          <AgentEditView
+            v-else-if="activeView === 'agentEdit'"
+            :agent-id="editingAgentId"
+            @cancel="navigateBack('agentRuns')"
+            @saved="navigate('agentRuns')"
           />
           <SettingsView v-else />
         </main>

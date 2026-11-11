@@ -79,6 +79,41 @@ afterEach(() => {
 })
 
 describe('McpView', () => {
+  it('点「刷新 token」：调 mcp_refresh_token，接入片段里的 token 跟着更新', async () => {
+    stubCommands()
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'mcp_refresh_token') return Promise.resolve({ token: 'AgentSpace' })
+      switch (command) {
+        case 'mcp_ensure_sidecar':
+          return Promise.resolve({ running: true, port: 7801 })
+        case 'mcp_list_servers':
+          return Promise.resolve(servers)
+        case 'mcp_get_status':
+          return Promise.resolve(status)
+        case 'mcp_get_exposure':
+          return Promise.resolve(status.exposure)
+        case 'mcp_list_profiles':
+          return Promise.resolve([])
+        default:
+          return Promise.resolve(null)
+      }
+    })
+    const wrapper = await mountView()
+
+    const refreshButton = wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('刷新 token'))
+    expect(refreshButton).toBeTruthy()
+    await refreshButton!.trigger('click')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+
+    const call = invokeMock.mock.calls.find((item) => item[0] === 'mcp_refresh_token')
+    expect(call).toBeTruthy()
+    // 片段里的接入地址用的就是新 token
+    expect(wrapper.text()).toContain('token=AgentSpace')
+  })
+
   it('渲染上游 MCP server 列表', async () => {
     stubCommands()
     const wrapper = await mountView()

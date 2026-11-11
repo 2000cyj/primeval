@@ -1,61 +1,157 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { NButton, NIcon, NInput, NRadio, useMessage } from 'naive-ui'
-import { ArrowLeft, Monitor, Plus, Search, X } from 'lucide-vue-next'
-import { harnesses, type Harness } from '@/data/runtimes'
-import { skills } from '@/data/skills'
-import SkillPickerModal from '@/components/SkillPickerModal.vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { NButton, NIcon, NInput, NRadio, NSpin, useMessage } from 'naive-ui'
+import { ArrowLeft, Copy, Monitor, Search, X } from 'lucide-vue-next'
+import { scanAgents, type AgentInfo, type PackagePlan } from '@/api/agents'
+import { agentIconBgOf, agentIconOf } from '@/data/agentIcons'
+import type { CreatedAgentInput } from '@/data/createdAgents'
+import { useCreatedAgents } from '@/data/createdAgents'
+import AgentConfigForm from '@/components/AgentConfigForm.vue'
+import PackageOpModal from '@/components/PackageOpModal.vue'
+import { setUpgradeDoneHandler, useCliOps } from '@/composables/useCliOps'
 
-const emit = defineEmits<{ cancel: []; done: [name: string] }>()
+const emit = defineEmits<{ cancel: []; done: [agent: CreatedAgentInput] }>()
 
 const message = useMessage()
+const { performOp } = useCliOps()
+const { add, hasName } = useCreatedAgents()
 
 /** 当前步骤：1 选择运行时 / 2 配置 */
 const step = ref<1 | 2>(1)
 
-/** 选中的 harness */
-const selectedHarness = ref<Harness | null>(null)
+/** Pi 的安装命令（没装时告诉用户怎么装） */
+const PI_INSTALL_COMMAND = 'npm i -g @earendil-works/pi-coding-agent@latest'
 
+/** 本机探测到的 agent —— 跟 agents 页用同一套探测逻辑 */
+const agents = ref<AgentInfo[]>([])
+/** 正在探测（搜索中） */
+const scanning = ref(false)
 /** 搜索关键字 */
 const keyword = ref('')
 
-const filteredHarnesses = computed(() => {
+const loadAgents = async () => {
+  scanning.value = true
+  try {
+    agents.value = await scanAgents()
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+    agents.value = []
+  } finally {
+    scanning.value = false
+  }
+}
+
+/** 搜索结果：在探测到的 agent 里筛 */
+const visibleAgents = computed(() => {
   const word = keyword.value.trim().toLowerCase()
-  if (!word) return harnesses
-  return harnesses.filter((harness) =>
-    `${harness.name}${harness.version}`.toLowerCase().includes(word),
+  if (!word) return agents.value
+  return agents.value.filter((agent) =>
+    `${agent.name}${agent.command}`.toLowerCase().includes(word),
   )
 })
 
-const selectHarness = (harness: Harness) => {
-  selectedHarness.value = harness
+/** Pi（目前只支持它） */
+const piAgent = computed(() => agents.value.find((agent) => agent.command === 'pi'))
+const piInstalled = computed(() => piAgent.value?.installed === true)
+
+/** 选中的 agent（只有 Pi 能选） */
+const selectedHarness = ref<'pi' | null>(null)
+
+const selectAgent = (agent: AgentInfo) => {
+  if (agent.command !== 'pi') return
+  selectedHarness.value = 'pi'
 }
+
+/* ---------- 没装 Pi：给安装按钮 ---------- */
+
+/** 安装 Pi 的确认弹窗（与 agents 页共用） */
+const installModalOpen = ref(false)
+
+const openInstallPi = () => {
+  installModalOpen.value = true
+}
+
+/** 确认后转后台安装（进度在顶栏通知里） */
+const confirmInstallPi = (plan: PackagePlan) => {
+  installModalOpen.value = false
+  void performOp({
+    command: plan.command,
+    name: plan.name,
+    target: '',
+    commandLine: plan.commandLine,
+    op: 'install',
+    version: plan.version,
+  })
+}
+
+const copyInstallCommand = async () => {
+  await navigator.clipboard?.writeText(PI_INSTALL_COMMAND)
+  message.success('安装命令已复制')
+}
+
+onMounted(() => {
+  void loadAgents()
+  // 装完（或升级完）重新探一遍：Pi 可能就装上了
+  setUpgradeDoneHandler(() => loadAgents())
+})
+
+onBeforeUnmount(() => {
+  setUpgradeDoneHandler(null)
+})
 
 /* ---------- 第二步：配置 ---------- */
 
 const name = ref('')
 const description = ref('')
 const instruction = ref('')
-const showSkillPicker = ref(false)
-const selectedSkills = ref<string[]>(skills.slice(0, 8).map((skill) => skill.name))
-
-const descriptionLength = computed(() => description.value.length)
-const descriptionMax = 255
+/** 已选 skills（相对路径引用） */
+const selectedSkills = ref<string[]>([])
+/** 已选 MCP server（相对路径引用） */
+const selectedMcpServers = ref<string[]>([])
 
 const goNext = () => {
-  if (!selectedHarness.value) {
-    message.warning('请先选择运行位置')
+  if (!piInstalled.value) {
+    message.warning('Pi 还没装 —— 先装好再继续')
     return
+  }
+  if (!selectedHarness.value) {
+    selectedHarness.value = 'pi'
   }
   step.value = 2
 }
 
-const submit = () => {
+const submit = async (): Promise<void> => {
   if (!name.value.trim()) {
     message.warning('请填写智能体名称')
     return
   }
-  emit('done', name.value.trim())
+  // 名字是智能体的唯一标识（agentspace run <名称> 按名字找）→ 不允许重名
+  if (hasName(name.value)) {
+    message.warning(`已经有同名智能体了：${name.value.trim()}`)
+    return
+  }
+  // 落盘：列表数据进 agent.json，指令进同目录的 AGENTS.md
+  try {
+    await add({
+      name: name.value.trim(),
+      description: description.value.trim(),
+      instruction: instruction.value.trim(),
+      skills: selectedSkills.value,
+      mcpServers: selectedMcpServers.value,
+      // 现在只支持 Pi（第一步只能选 Pi）
+      runtime: 'pi',
+    })
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+    return
+  }
+  emit('done', {
+    name: name.value.trim(),
+    description: description.value.trim(),
+    instruction: instruction.value.trim(),
+    skills: selectedSkills.value,
+    mcpServers: selectedMcpServers.value,
+  })
   message.success(`已创建智能体：${name.value.trim()}`)
 }
 </script>
@@ -64,7 +160,13 @@ const submit = () => {
   <section class="wizard">
     <header class="wizard-head">
       <div class="head-left">
-        <NButton quaternary circle size="small" aria-label="关闭" @click="emit('cancel')">
+        <NButton
+          quaternary
+          circle
+          size="small"
+          aria-label="返回"
+          @click="step === 2 ? (step = 1) : emit('cancel')"
+        >
           <template #icon>
             <NIcon :size="16">
               <ArrowLeft v-if="step === 2" />
@@ -117,24 +219,59 @@ const submit = () => {
               <Monitor />
             </NIcon>
             <span class="group-title">智能体</span>
-            <span class="group-count tnum">{{ filteredHarnesses.length }}</span>
+            <span class="group-count tnum">1</span>
           </header>
 
           <ul class="harness-list">
-            <li v-for="harness in filteredHarnesses" :key="harness.id" class="harness-item">
+            <!-- 搜索中 / 探测中 -->
+            <li v-if="scanning" class="harness-loading">
+              <NSpin size="small" />
+              <span>正在检测本机 agent…</span>
+            </li>
+
+            <!-- 没找到 Pi：给安装按钮 -->
+            <li v-else-if="!piInstalled" class="install-hint">
+              <span class="install-text">没检测到 Pi，装一个就能跑智能体了：</span>
+              <NButton type="primary" size="tiny" @click="openInstallPi">安装 Pi</NButton>
+              <code class="install-cmd mono">{{ PI_INSTALL_COMMAND }}</code>
+              <NButton quaternary size="tiny" aria-label="复制安装命令" @click="copyInstallCommand">
+                <template #icon>
+                  <NIcon :size="12">
+                    <Copy />
+                  </NIcon>
+                </template>
+              </NButton>
+            </li>
+
+            <!-- 探测到的 agent（目前只有 Pi 能选） -->
+            <li
+              v-for="agent in visibleAgents"
+              :key="agent.id"
+              class="harness-item"
+              :class="{ disabled: agent.command !== 'pi' }"
+            >
               <NRadio
-                :checked="selectedHarness?.id === harness.id"
+                :checked="selectedHarness === 'pi' && agent.command === 'pi'"
                 class="harness-radio"
-                @update:checked="selectHarness(harness)"
+                :disabled="agent.command !== 'pi'"
+                @update:checked="selectAgent(agent)"
               >
                 <span class="harness-content">
-                  <span class="harness-icon" :style="{ background: harness.iconBg }">
-                    <img class="harness-icon-img" :src="harness.icon" alt="" />
+                  <span class="harness-icon" :style="{ background: agentIconBgOf(agent.command) }">
+                    <img class="harness-icon-img" :src="agentIconOf(agent.command)" alt="" />
                   </span>
-                  <span class="harness-name">{{ harness.name }}</span>
-                  <span class="harness-version mono">{{ harness.version }}</span>
+                  <span class="harness-name">{{ agent.name }}</span>
+                  <span class="harness-version mono">
+                    {{ agent.version ?? (agent.installed ? '已安装' : '未安装') }}
+                  </span>
+                  <!-- 暂不支持的 agent：右边标一个「未适配」 -->
+                  <span v-if="agent.command !== 'pi'" class="harness-tag">未适配</span>
                 </span>
               </NRadio>
+            </li>
+
+            <li v-if="!scanning && !visibleAgents.length && piInstalled" class="harness-loading">
+              <span>没有匹配的 agent</span>
             </li>
           </ul>
         </section>
@@ -147,89 +284,30 @@ const submit = () => {
         <h2 class="body-title">配置智能体</h2>
       </div>
 
-      <section class="card">
-        <h3 class="card-title">身份</h3>
-
-        <div class="field">
-          <label class="field-label" for="agent-name">名称</label>
-          <NInput
-            id="agent-name"
-            v-model:value="name"
-            size="small"
-            placeholder="给智能体起个名字"
-          />
-        </div>
-
-        <div class="field">
-          <label class="field-label" for="agent-desc">描述</label>
-          <div class="desc-wrap">
-            <NInput
-              id="agent-desc"
-              v-model:value="description"
-              type="textarea"
-              :autosize="{ minRows: 3, maxRows: 8 }"
-              placeholder="这个智能体负责什么、擅长什么"
-            />
-            <span class="counter tnum">{{ descriptionLength }} / {{ descriptionMax }}</span>
-          </div>
-        </div>
-
-        <div class="field">
-          <div class="field-label">
-            对话开场建议
-            <span class="field-hint">可选，新建与这个智能体的对话时显示。</span>
-          </div>
-          <div class="suggest">
-            <span class="suggest-text">正在使用 3 条内置建议</span>
-            <NButton size="tiny" secondary @click="message.info('自定义开场建议')">
-              <template #icon>
-                <NIcon :size="12">
-                  <Plus />
-                </NIcon>
-              </template>
-              自定义
-            </NButton>
-          </div>
-        </div>
-      </section>
-
-      <section class="card">
-        <h3 class="card-title">行为与能力</h3>
-
-        <div class="field">
-          <label class="field-label" for="agent-instruction">指令</label>
-          <NInput
-            id="agent-instruction"
-            v-model:value="instruction"
-            type="textarea"
-            :autosize="{ minRows: 6, maxRows: 14 }"
-            placeholder="写下这个智能体该做什么、关注什么、要避开什么…"
-          />
-        </div>
-
-        <div class="field">
-          <div class="field-label">SKILLS</div>
-          <button type="button" class="skills-toggle" @click="showSkillPicker = true">
-            <NIcon :size="13" color="var(--c-text-3)">
-              <Plus />
-            </NIcon>
-            <span>已选 {{ selectedSkills.length }} 个 —— 点击修改</span>
-          </button>
-        </div>
-      </section>
+      <AgentConfigForm
+        v-model:name="name"
+        v-model:description="description"
+        v-model:instruction="instruction"
+        v-model:skills="selectedSkills"
+        v-model:mcp-servers="selectedMcpServers"
+      />
     </div>
 
-    <SkillPickerModal
-      :show="showSkillPicker"
-      :selected="selectedSkills"
-      @update:selected="selectedSkills = $event"
-      @close="showSkillPicker = false"
+    <!-- 没装 Pi 时的安装确认（与 agents 页共用同一个弹窗） -->
+    <PackageOpModal
+      :show="installModalOpen"
+      op="install"
+      command="pi"
+      name="Pi"
+      @close="installModalOpen = false"
+      @confirm="confirmInstallPi"
     />
 
     <footer class="wizard-foot">
       <span class="foot-hint">
         <template v-if="step === 1">
-          <template v-if="selectedHarness">已选：{{ selectedHarness.name }}</template>
+          <template v-if="piInstalled">已选：Pi {{ piAgent?.version }}</template>
+          <template v-else>Pi 未安装 —— 先按上面的命令装好</template>
         </template>
         <template v-else>创建后可在智能体列表中继续调整</template>
       </span>
@@ -431,6 +509,50 @@ const submit = () => {
   background: var(--c-surface-sunken);
 }
 
+.harness-item.disabled {
+  opacity: 0.55;
+}
+
+/* 探测中 */
+.harness-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+/* 没装时的安装路径 */
+.install-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--c-border);
+  background: #fff7ed;
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.install-text {
+  flex: none;
+}
+
+.install-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  font-family: var(--c-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--c-text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .harness-radio {
   width: 100%;
   padding: 9px 14px;
@@ -474,92 +596,18 @@ const submit = () => {
   color: var(--c-text-4);
 }
 
-/* 表单卡片 */
-.card {
-  max-width: 720px;
-  margin: 0 auto 16px;
-  padding: 16px;
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: 8px;
-}
-
-.card-title {
-  margin: 0 0 14px;
-  font-size: 13px;
-  font-weight: 600;
+/* 暂不支持的 agent：灰色的「未适配」 */
+.harness-tag {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--c-surface-sunken);
+  font-size: 10px;
   color: var(--c-text);
 }
 
-.field {
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  align-items: start;
-  gap: 16px;
-  padding: 12px 0;
-}
-
-.field + .field {
-  border-top: 1px solid var(--c-border);
-}
-
-.field-label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-  color: var(--c-text-2);
-}
-
-.field-hint {
-  font-size: 11px;
-  color: var(--c-text-4);
-}
-
-.desc-wrap {
-  position: relative;
-}
-
-.counter {
-  position: absolute;
-  right: 10px;
-  bottom: 8px;
-  font-size: 11px;
-  color: var(--c-text-4);
-}
-
-.suggest {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 12px;
-  border: 1px dashed var(--c-border-strong);
-  border-radius: var(--radius);
-}
-
-.suggest-text {
-  font-size: 12px;
-  color: var(--c-text-3);
-}
-
-.skills-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius);
-  background: var(--c-surface);
-  font-size: 12px;
-  color: var(--c-text-2);
-  text-align: left;
-}
-
-.skills-toggle:hover {
-  border-color: var(--c-border-strong);
-}
+/* 表单卡片在 AgentConfigForm 里（新建与编辑共用一份） */
 
 /* 底栏 */
 .wizard-foot {

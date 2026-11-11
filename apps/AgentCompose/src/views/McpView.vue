@@ -6,7 +6,6 @@ import {
   CircleCheck,
   CircleSlash,
   Copy,
-  KeyRound,
   LoaderCircle,
   Pencil,
   Plug,
@@ -25,20 +24,20 @@ import {
   type McpExposure,
   type McpOAuthState,
   type McpOAuthStatus,
-  type McpProfile,
   type McpRuntimeStatus,
   type McpServerDef,
   type McpUpstreamState,
   type McpUpstreamStatus,
 } from '@remote/agent-compose-mcp/types'
+import { secretEnvName } from '@remote/agent-compose-mcp/secret'
 import {
-  authorizeServer,
+  connectServers,
   ensureSidecar,
   getExposure,
   getStatus,
-  listProfiles,
   listServers,
   openUrl,
+  refreshToken,
   removeServer,
   saveServers,
   setExposure,
@@ -53,8 +52,9 @@ const message = useMessage()
 
 const servers = ref<McpServerDef[]>([])
 const status = ref<McpRuntimeStatus | null>(null)
+/** 刷新 token 中 */
+const refreshingToken = ref(false)
 const exposure = ref<McpExposure>(defaultExposure())
-const profiles = ref<McpProfile[]>([])
 const loading = ref(false)
 /** 加载失败时的原因（sidecar 没起来等），用于页面顶部提示 */
 const loadError = ref('')
@@ -83,7 +83,16 @@ const STATE_META: Record<
 const upstreamOf = (serverId: string): McpUpstreamStatus | undefined =>
   status.value?.upstreams.find((upstream) => upstream.serverId === serverId)
 
-const stateMeta = (serverId: string) => STATE_META[upstreamOf(serverId)?.state ?? 'disconnected']
+const stateMeta = (serverId: string) => {
+  const upstream = upstreamOf(serverId)
+  const meta = STATE_META[upstream?.state ?? 'disconnected']
+  // 有缓存的工具清单但当前没连上：说明上次连成功过，
+  // 显示「上次连接」比一片「未连接」有用得多。
+  if (upstream?.toolsFromCache && upstream.state === 'disconnected') {
+    return { ...meta, label: '上次连接' }
+  }
+  return meta
+}
 
 const toolCount = (serverId: string): number => upstreamOf(serverId)?.tools.length ?? 0
 
@@ -101,13 +110,6 @@ const OAUTH_POLL_INTERVAL_MS = 3000
 /** 轮询上限：超过 2 分钟还没结果就认为用户没走完流程 */
 const OAUTH_POLL_TIMEOUT_MS = 120_000
 
-/** 正在发起授权的 server id */
-const authorizingId = ref<string | null>(null)
-/** 本地记录的授权地址（运行时状态尚未刷新时先给用户一个能点的链接） */
-const authorizeUrls = ref<Record<string, string>>({})
-/** 等待浏览器回调授权的 server id */
-const awaitingAuthorizeIds = ref<string[]>([])
-
 let pollTimer: number | null = null
 let pollDeadline = 0
 
@@ -115,30 +117,14 @@ const oauthOf = (serverId: string): McpOAuthStatus | undefined => upstreamOf(ser
 
 const oauthState = (serverId: string): McpOAuthState => oauthOf(serverId)?.state ?? 'idle'
 
-const OAUTH_META: Record<
-  McpOAuthState,
-  { label: string; icon: Component; tone: 'ok' | 'busy' | 'bad' | 'muted' }
-> = {
-  idle: { label: '未授权', icon: KeyRound, tone: 'muted' },
-  pending: { label: '等待授权', icon: LoaderCircle, tone: 'busy' },
-  authorized: { label: '已授权', icon: CircleCheck, tone: 'ok' },
-  error: { label: '授权失败', icon: CircleAlert, tone: 'bad' },
-}
-
 /**
- * 是否在等待授权：状态里已是 pending，或本地刚拿到授权地址但状态尚未刷新。
- * 两者都要把授权链接渲染出来，否则用户点了「授权」会看不到可点的地址。
+ * 是否在等待授权。
+ *
+ * 判据是**运行时状态** —— 不依赖「点过哪个按钮」：
+ * 授权是在浏览器里异步完成的，触发点可能在弹窗里（新增/编辑），
+ * 也可能是上一次的会话留下来的。
  */
-const isAwaitingAuthorize = (serverId: string): boolean => {
-  const state = oauthState(serverId)
-  if (state === 'pending') return true
-  return state === 'idle' && Boolean(authorizeUrls.value[serverId])
-}
-
-const oauthMeta = (serverId: string) => {
-  if (isAwaitingAuthorize(serverId)) return OAUTH_META.pending
-  return OAUTH_META[oauthState(serverId)]
-}
+const isAwaitingAuthorize = (serverId: string): boolean => oauthState(serverId) === 'pending'
 
 /** 正在等待浏览器授权的 server id */
 const pendingOauthIds = (): string[] =>
@@ -169,18 +155,14 @@ const startPolling = (): void => {
 const pollAuthorize = async (): Promise<void> => {
   await load({ quiet: true })
   // 授权结果只能在新的运行时状态里看到，逐个核对等待中的 server
-  for (const serverId of [...awaitingAuthorizeIds.value]) {
+  for (const serverId of pendingOauthIds()) {
     const server = servers.value.find((item) => item.id === serverId)
     if (!server) continue
     const state = oauthState(serverId)
     if (state === 'authorized') {
       message.success(`${server.name} 授权成功`)
-      awaitingAuthorizeIds.value = awaitingAuthorizeIds.value.filter((id) => id !== serverId)
-      delete authorizeUrls.value[serverId]
     } else if (state === 'error') {
       message.error(`${server.name} 授权失败：${oauthOf(serverId)?.error ?? '未知错误'}`)
-      awaitingAuthorizeIds.value = awaitingAuthorizeIds.value.filter((id) => id !== serverId)
-      delete authorizeUrls.value[serverId]
     }
   }
   if (!pendingOauthIds().length) {
@@ -195,18 +177,47 @@ const pollAuthorize = async (): Promise<void> => {
   schedulePoll()
 }
 
-const formatTime = (iso: string | undefined): string => {
-  if (!iso) return ''
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
 const serverSubtitle = (server: McpServerDef): string => {
   if (server.transport === 'http') return server.url ?? ''
   const args = server.args?.length ? ` ${server.args.join(' ')}` : ''
   return `${server.command ?? ''}${args}`
+}
+
+/**
+ * 令牌来源说明。
+ *
+ * 用户最常问的是「令牌到底从哪来的」：
+ * - 环境变量 XXX（配置里写的是 ${ENV:XXX}）
+ * - 手动配置的固定值
+ * - 浏览器授权换来的
+ * - 没配令牌
+ */
+const tokenSourceText = (server: McpServerDef): string | null => {
+  // 手动配的令牌（字面量或 env 占位）优先
+  const manual = server.token
+  if (manual) {
+    const envName = secretEnvName(manual)
+    return envName ? `令牌来自环境变量 ${envName}` : '令牌为手动配置的固定值'
+  }
+  // static 认证的令牌在 headers / env 里
+  const headerValue = Object.values(server.headers ?? {}).find((value) =>
+    /authorization|token|api[-_]?key/i.test(value),
+  )
+  const envValue = Object.values(server.env ?? {}).find((value) =>
+    /token|api[-_]?key|secret/i.test(value),
+  )
+  const candidate = headerValue ?? envValue
+  if (candidate) {
+    const envName = secretEnvName(candidate)
+    return envName ? `令牌来自环境变量 ${envName}` : '令牌为手动配置的固定值'
+  }
+  // oauth 授权来的
+  if (server.auth === 'oauth') {
+    const source = upstreamOf(server.id)?.tokenSource
+    if (source === 'oauth') return '令牌来自浏览器授权'
+    if (source === 'none') return '尚未授权，需要令牌'
+  }
+  return null
 }
 
 const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
@@ -215,24 +226,23 @@ const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
     // 先确保 sidecar 在跑：它没起来时 admin 调用会失败，
     // 那样在页面里加的 server 实际存不住。
     await ensureSidecar()
-    const [serverList, runtime, exposureConfig, profileList] = await Promise.all([
+    const [serverList, runtime, exposureConfig] = await Promise.all([
       listServers(),
       getStatus(),
       getExposure(),
-      listProfiles(),
     ])
     servers.value = serverList
     status.value = runtime
     exposure.value = exposureConfig
-    profiles.value = profileList
     loadError.value = ''
     // 授权是异步的：状态里已有 pending 的 server 意味着用户正在浏览器里走流程
-    for (const serverId of pendingOauthIds()) {
-      if (!awaitingAuthorizeIds.value.includes(serverId)) {
-        awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, serverId]
-      }
-    }
     if (pendingOauthIds().length) startPolling()
+
+    // 上游默认惰性连接 —— 不主动连，页面就一直显示「未连接」。
+    // 这里让代理把所有启用的上游连一遍，连上的工具清单会落盘。
+    void connectServers().catch((error) => {
+      console.warn('[mcp] 连接上游失败', error)
+    })
   } catch (error) {
     // 不降级成假数据：如实显示失败原因，让用户知道 sidecar 没起来
     const detail = error instanceof Error ? error.message : String(error)
@@ -287,6 +297,14 @@ const onSaveServer = async (def: McpServerDef): Promise<void> => {
   showServerModal.value = false
   editingServer.value = null
   message.success(exists ? `已更新：${def.name}` : `已新增：${def.name}`)
+
+  // 存完就把它连上，把工具清单落盘 ——
+  // 这样刷新页面不用重连就能看到上次拿到过哪些工具。
+  // 连接是后台做的，不阻塞界面。
+  await load({ quiet: true })
+  void connectServers().catch((error) => {
+    console.warn('[mcp] 连接上游失败', error)
+  })
 }
 
 /** 从官方目录一键添加：目录条目已由 sidecar 翻译成上游定义 */
@@ -325,6 +343,24 @@ const onDeleteServer = async (): Promise<void> => {
   message.success(`已删除：${target.name}`)
 }
 
+const copyText = async (text: string, label: string): Promise<void> => {
+  if (!navigator.clipboard) {
+    message.warning('当前环境不支持剪贴板，请手动复制')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success(`${label}已复制`)
+  } catch {
+    message.error('复制失败，请手动选择文本')
+  }
+}
+
+/**
+ * 测一个**已保存**的上游。
+ *
+ * 弹窗里的「测试」测的是还没保存的表单内容；这里的「测试」测的是存好的那个。
+ */
 const onTestServer = async (server: McpServerDef): Promise<void> => {
   const upstream = await testServer(server.id)
   if (!upstream) {
@@ -337,14 +373,9 @@ const onTestServer = async (server: McpServerDef): Promise<void> => {
   }
 
   // oauth 上游尚未授权：后端已把授权地址带回来，直接打开浏览器
-  // 让用户人工登录并同意
   const authorizeUrl = upstream.oauth?.authorizeUrl
   if (authorizeUrl) {
-    authorizeUrls.value = { ...authorizeUrls.value, [server.id]: authorizeUrl }
-    if (!awaitingAuthorizeIds.value.includes(server.id)) {
-      awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, server.id]
-    }
-    await openAuthorizePage(authorizeUrl)
+    await openUrl(authorizeUrl)
     message.info(`请在浏览器中完成授权：${server.name}`)
     startPolling()
     return
@@ -361,57 +392,6 @@ const onTestServer = async (server: McpServerDef): Promise<void> => {
   message.error(upstream.error ?? `${server.name} 连接失败`)
 }
 
-/**
- * 打开授权页。
- *
- * 优先用系统默认浏览器（webview 里的 window.open 常被拦）。
- * 浏览器打不开时，卡片上的链接仍可手动点开。
- */
-const openAuthorizePage = async (url: string): Promise<void> => {
-  try {
-    await openUrl(url)
-  } catch (error) {
-    console.warn('[mcp] 打开系统浏览器失败，请手动点击授权链接', error)
-    try {
-      window.open(url, '_blank')
-    } catch {
-      // 留给卡片上的手动链接
-    }
-  }
-}
-
-/** 发起 OAuth 授权：拿到授权地址 → 打开浏览器 → 轮询等待授权结果 */
-const onAuthorize = async (server: McpServerDef): Promise<void> => {
-  authorizingId.value = server.id
-  try {
-    const result = await authorizeServer(server.id)
-    authorizeUrls.value = { ...authorizeUrls.value, [server.id]: result.authorizeUrl }
-    if (!awaitingAuthorizeIds.value.includes(server.id)) {
-      awaitingAuthorizeIds.value = [...awaitingAuthorizeIds.value, server.id]
-    }
-    await openAuthorizePage(result.authorizeUrl)
-    message.info(`请在浏览器中完成授权：${server.name}`)
-    startPolling()
-  } catch (error) {
-    reportWriteError('授权', error)
-  } finally {
-    authorizingId.value = null
-  }
-}
-
-const copyText = async (text: string, label: string): Promise<void> => {
-  if (!navigator.clipboard) {
-    message.warning('当前环境不支持剪贴板，请手动复制')
-    return
-  }
-  try {
-    await navigator.clipboard.writeText(text)
-    message.success(`${label}已复制`)
-  } catch {
-    message.error('复制失败，请手动选择文本')
-  }
-}
-
 const copyServerUrl = (server: McpServerDef): void => {
   if (!status.value) return
   const url = buildMcpUrl(
@@ -420,6 +400,20 @@ const copyServerUrl = (server: McpServerDef): void => {
     status.value.token,
   )
   void copyText(url, `${server.name} 接入地址`)
+}
+
+/** 刷新代理的访问令牌 */
+const onRefreshToken = async (): Promise<void> => {
+  refreshingToken.value = true
+  try {
+    const token = await refreshToken()
+    if (status.value) status.value = { ...status.value, token }
+    message.success('已刷新 token')
+  } catch (error) {
+    reportWriteError('刷新 token', error)
+  } finally {
+    refreshingToken.value = false
+  }
 }
 
 const onSaveExposure = async (next: McpExposure): Promise<void> => {
@@ -477,6 +471,8 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
       :endpoint="status?.endpoint ?? ''"
       :token="status?.token ?? ''"
       :sessions="status?.sessions ?? 0"
+      :refreshing="refreshingToken"
+      @refresh-token="onRefreshToken"
     />
 
     <section class="block">
@@ -495,6 +491,19 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
         </NButton>
       </header>
 
+      <div class="exposure-summary">
+        <span class="summary-chip">
+          <span class="summary-label">可见 server</span>
+          <span class="summary-value tnum">{{ exposure.serverIds.length }}</span>
+        </span>
+        <span class="summary-chip">
+          <span class="summary-label">已选工具</span>
+          <span class="summary-value tnum">
+            {{ exposure.toolKeys.length }}<span class="summary-max">/ {{ exposure.maxTools }}</span>
+          </span>
+        </span>
+      </div>
+
       <div v-if="servers.length" class="server-list">
         <article v-for="server in servers" :key="server.id" class="server">
           <div class="server-main">
@@ -509,6 +518,9 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
                 <NTag size="small" :bordered="false">{{ server.transport }}</NTag>
               </div>
               <span class="server-sub mono">{{ serverSubtitle(server) }}</span>
+              <span v-if="tokenSourceText(server)" class="server-token">
+                {{ tokenSourceText(server) }}
+              </span>
             </div>
           </div>
 
@@ -568,33 +580,6 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
               </template>
             </NButton>
           </div>
-
-          <div v-if="server.auth === 'oauth'" class="oauth-row">
-            <NIcon :size="14" class="oauth-icon" :class="oauthMeta(server.id).tone">
-              <component :is="oauthMeta(server.id).icon" />
-            </NIcon>
-            <span class="oauth-label">{{ oauthMeta(server.id).label }}</span>
-            <span v-if="oauthState(server.id) === 'authorized'" class="oauth-time tnum">
-              {{ formatTime(oauthOf(server.id)?.authorizedAt) }}
-            </span>
-            <span v-if="oauthState(server.id) === 'error'" class="oauth-error">
-              {{ oauthOf(server.id)?.error }}
-            </span>
-            <NButton
-              v-if="oauthState(server.id) !== 'authorized'"
-              size="tiny"
-              secondary
-              :loading="authorizingId === server.id"
-              @click="onAuthorize(server)"
-            >
-              <template #icon>
-                <NIcon :size="13">
-                  <KeyRound />
-                </NIcon>
-              </template>
-              授权
-            </NButton>
-          </div>
         </article>
       </div>
 
@@ -602,37 +587,6 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
         <p class="empty-title">还没有上游 MCP server</p>
         <p class="empty-sub">新增一个 server，连接后即可把它的工具暴露给 agent。</p>
         <NButton size="small" type="primary" @click="openCreate">新增 server</NButton>
-      </div>
-    </section>
-
-    <section class="card exposure">
-      <header class="exposure-head">
-        <div>
-          <span class="block-name">对外暴露</span>
-          <span class="block-sub">只有白名单里的工具会被 agent 看到</span>
-        </div>
-        <NButton size="small" @click="showExposureDrawer = true">配置暴露</NButton>
-      </header>
-
-      <dl class="exposure-stats">
-        <div class="stat">
-          <dt class="stat-label">可见 server</dt>
-          <dd class="stat-value tnum">{{ exposure.serverIds.length }}</dd>
-        </div>
-        <div class="stat">
-          <dt class="stat-label">已选工具</dt>
-          <dd class="stat-value tnum">{{ exposure.toolKeys.length }} / {{ exposure.maxTools }}</dd>
-        </div>
-        <div class="stat">
-          <dt class="stat-label">命名组合</dt>
-          <dd class="stat-value tnum">{{ profiles.length }}</dd>
-        </div>
-      </dl>
-
-      <div v-if="profiles.length" class="profile-tags">
-        <NTag v-for="profile in profiles" :key="profile.id" size="small" :bordered="false">
-          {{ profile.name }} · {{ profile.serverIds.length }} 个 server
-        </NTag>
       </div>
     </section>
 
@@ -830,6 +784,14 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
   white-space: nowrap;
 }
 
+.server-token {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .server-state {
   display: flex;
   align-items: center;
@@ -903,49 +865,6 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
   border-color: var(--c-danger);
 }
 
-.oauth-row {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--c-border);
-  font-size: 12px;
-  color: var(--c-text-3);
-}
-
-.oauth-icon.ok {
-  color: var(--c-success);
-}
-
-.oauth-icon.bad {
-  color: var(--c-danger);
-}
-
-.oauth-icon.busy {
-  color: var(--c-accent);
-}
-
-.oauth-icon.busy :deep(svg) {
-  animation: spin 1s linear infinite;
-}
-
-.oauth-label {
-  flex: none;
-  color: var(--c-text-2);
-}
-
-.oauth-time {
-  flex: none;
-}
-
-.oauth-error {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .empty {
   display: flex;
   flex-direction: column;
@@ -966,49 +885,37 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
   color: var(--c-text-3);
 }
 
-.exposure {
-  padding: 14px 16px;
-}
-
-.exposure-head {
+.exposure-summary {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -2px;
 }
 
-.exposure-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0;
+.summary-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--c-surface-sunken);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.stat-label {
-  font-size: 11px;
+.summary-label {
   color: var(--c-text-3);
 }
 
-.stat-value {
-  margin: 0;
-  font-size: 14px;
+.summary-value {
   font-weight: 600;
+  color: var(--c-text);
 }
 
-.profile-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--c-border);
+.summary-max {
+  font-weight: 500;
+  color: var(--c-text-4);
 }
 
 .confirm-text {

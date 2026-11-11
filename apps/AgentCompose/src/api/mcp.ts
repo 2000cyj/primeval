@@ -76,6 +76,48 @@ export async function testServer(id: string): Promise<McpUpstreamStatus | null> 
   }
 }
 
+/** 测一个还没保存的上游定义的结果 */
+export type McpProbeResult = {
+  serverId: string
+  ok: boolean
+  state: string
+  /** 工具数量 */
+  tools: number
+  error?: string
+  /** 需要浏览器授权时给出的地址 */
+  authorizeUrl?: string
+  /** 令牌来源：手动配置 / 环境变量 / 浏览器授权 / 无 */
+  tokenSource?: 'manual' | 'oauth' | 'env' | 'none'
+}
+
+/**
+ * 让代理把所有启用的上游都连一遍。
+ *
+ * 上游默认惰性连接 —— 页面刚打开时全是「未连接」。调它来主动建连，
+ * 连上的工具清单会落盘到 `~/.agent-compose/mcp/tools.json`。
+ */
+export async function connectServers(): Promise<void> {
+  try {
+    await invoke(MCP_COMMANDS.connectServers)
+  } catch (error) {
+    throw fail('连接上游', error)
+  }
+}
+
+/**
+ * 测一个**还没保存**的上游定义。
+ *
+ * 「新增/编辑 MCP server」弹窗里的「测试」按钮用它 —— 填完就能知道能不能连上，
+ * 不用先保存。
+ */
+export async function probeServerDef(server: McpServerDef): Promise<McpProbeResult> {
+  try {
+    return await invoke<McpProbeResult>(MCP_COMMANDS.probeServerDef, { server })
+  } catch (error) {
+    throw fail('测试连接', error)
+  }
+}
+
 /** 读取对外暴露配置 */
 export async function getExposure(): Promise<McpExposure> {
   try {
@@ -109,6 +151,16 @@ export async function saveProfiles(profiles: McpProfile[]): Promise<void> {
     await invoke(MCP_COMMANDS.saveProfiles, { profiles })
   } catch (error) {
     throw fail('保存组合列表', error)
+  }
+}
+
+/** 刷新访问令牌：让运行中的 sidecar 立刻用上当前的 token */
+export async function refreshToken(): Promise<string> {
+  try {
+    const payload = await invoke<{ token?: string }>(MCP_COMMANDS.refreshToken)
+    return payload.token ?? ''
+  } catch (error) {
+    throw fail('刷新令牌', error)
   }
 }
 

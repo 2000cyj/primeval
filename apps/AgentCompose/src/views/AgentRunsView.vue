@@ -2,27 +2,43 @@
 import { computed, ref } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSpace, useMessage } from 'naive-ui'
 import { Plus, Search } from 'lucide-vue-next'
-import { agentRuns, type AgentRun } from '@/data/agentRuns'
+import { agentIcons } from '@/data/agentIcons'
+import { useCreatedAgents, type CreatedAgent } from '@/data/createdAgents'
 import AgentRunMenu, { type AgentRunMenuAction } from '@/components/AgentRunMenu.vue'
 
-const emit = defineEmits<{ create: [] }>()
+const emit = defineEmits<{ create: []; edit: [id: string] }>()
 
 const message = useMessage()
 const query = ref('')
 
-/** 页面自有副本：切换运行状态不污染 data 模块的共享状态 */
-const runList = ref(agentRuns.map((run) => ({ ...run })))
+/** 已创建的智能体（会话内；「新建智能体」里建的就是它们） */
+const { createdAgents, remove } = useCreatedAgents()
+
+/** 智能体跑在 Pi 上，所以图标就用 Pi 的 */
+const iconOf = (): string => agentIcons.pi
+
+/** 创建时间 → 「刚刚 / N 分钟前 / …」 */
+const sinceText = (timestamp: number): string => {
+  const diff = Date.now() - timestamp
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (diff < minute) return '刚刚'
+  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`
+  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
+  return `${Math.floor(diff / day)} 天前`
+}
 
 const visibleRuns = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  if (!keyword) return runList.value
-  return runList.value.filter((run) =>
-    `${run.name}${run.skills.join(' ')}`.toLowerCase().includes(keyword),
+  if (!keyword) return createdAgents.value
+  return createdAgents.value.filter((run) =>
+    `${run.name}${run.description}${run.skills.join(' ')}`.toLowerCase().includes(keyword),
   )
 })
 
 /** 待删除的实例 */
-const deleteTarget = ref<AgentRun | null>(null)
+const deleteTarget = ref<CreatedAgent | null>(null)
 
 const onRowAction = (action: AgentRunMenuAction, agentName: string) => {
   if (action === 'copy') {
@@ -30,13 +46,24 @@ const onRowAction = (action: AgentRunMenuAction, agentName: string) => {
     message.success('已复制名称')
     return
   }
-  deleteTarget.value = runList.value.find((run) => run.name === agentName) ?? null
+  if (action === 'copyCommand') {
+    // 终端里敲这条命令就能按这个智能体启动 Pi
+    void navigator.clipboard?.writeText(`agentspace run ${agentName}`)
+    message.success('已复制启动命令')
+    return
+  }
+  deleteTarget.value = createdAgents.value.find((run) => run.name === agentName) ?? null
 }
 
-const confirmDelete = () => {
+const confirmDelete = async () => {
   const target = deleteTarget.value
   if (!target) return
-  runList.value = runList.value.filter((run) => run.id !== target.id)
+  try {
+    await remove(target.id)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+    return
+  }
   deleteTarget.value = null
   message.success(`已删除：${target.name}`)
 }
@@ -47,7 +74,7 @@ const confirmDelete = () => {
     <header class="page-head">
       <div>
         <h1 class="page-title">智能体</h1>
-        <p class="page-sub">{{ runList.length }} 个运行实例，可绑定能力后交给智能体执行</p>
+        <p class="page-sub">{{ createdAgents.length }} 个智能体，可绑定能力后交给智能体执行</p>
       </div>
       <NSpace :size="8">
         <NInput
@@ -78,8 +105,10 @@ const confirmDelete = () => {
       <!-- 表头独立于表格体，固定不滚动 -->
       <div class="table-head table-grid" role="row">
         <span role="columnheader">名称</span>
-        <span role="columnheader">最近活跃</span>
-        <span role="columnheader">运行次数</span>
+        <span role="columnheader">能力</span>
+        <span role="columnheader">MCP</span>
+        <span role="columnheader">版本</span>
+        <span role="columnheader">创建于</span>
         <span role="columnheader"><span class="sr-only">操作</span></span>
       </div>
 
@@ -89,21 +118,30 @@ const confirmDelete = () => {
           v-for="run in visibleRuns"
           :key="run.id"
           class="run-row table-grid"
-          :class="{ idle: !run.running }"
           role="row"
+          tabindex="0"
+          @click="emit('edit', run.id)"
+          @keydown.enter="emit('edit', run.id)"
         >
           <div class="cell-name" role="cell">
-            <span class="cell-icon" :style="{ background: run.iconBg }" aria-hidden="true">
-              <img class="cell-icon-img" :src="run.icon" :alt="run.name" />
+            <span class="cell-icon" style="background: #fbeffe" aria-hidden="true">
+              <img class="cell-icon-img" :src="iconOf()" :alt="run.name" />
             </span>
-            <span class="cell-title">{{ run.name }}</span>
+            <span class="cell-text">
+              <span class="cell-title">{{ run.name }}</span>
+              <span v-if="run.description" class="cell-sub">{{ run.description }}</span>
+            </span>
           </div>
 
-          <div class="cell-muted" role="cell">{{ run.lastActive }}</div>
+          <div class="cell-muted" role="cell">{{ run.skills.length }} 个 skill</div>
 
-          <div class="cell-muted tnum" role="cell">{{ run.runs.toLocaleString('en-US') }}</div>
+          <div class="cell-muted" role="cell">{{ run.mcpServers.length }} 个 MCP</div>
 
-          <div class="cell-actions" role="cell">
+          <div class="cell-muted tnum" role="cell">v{{ run.version }}</div>
+
+          <div class="cell-muted" role="cell">{{ sinceText(run.createdAt) }}</div>
+
+          <div class="cell-actions" role="cell" @click.stop>
             <AgentRunMenu
               :agent-name="run.name"
               @action="(action: AgentRunMenuAction, name: string) => onRowAction(action, name)"
@@ -111,7 +149,13 @@ const confirmDelete = () => {
           </div>
         </div>
 
-        <p v-if="!visibleRuns.length" class="empty">没有匹配的智能体</p>
+        <p v-if="!visibleRuns.length" class="empty">
+          {{
+            createdAgents.length
+              ? '没有匹配的智能体'
+              : '还没有智能体 —— 点右上角「新建智能体」建一个'
+          }}
+        </p>
       </div>
     </div>
 
@@ -184,7 +228,7 @@ const confirmDelete = () => {
 /* 表头与数据行共用同一套列宽定义，保证纵向对齐 */
 .table-grid {
   display: grid;
-  grid-template-columns: 38fr 22fr 20fr 8fr;
+  grid-template-columns: 30fr 11fr 22fr 10fr 15fr 8fr;
   align-items: center;
   column-gap: 12px;
   padding: 0 20px;
@@ -211,6 +255,12 @@ const confirmDelete = () => {
   padding: 12px 20px;
   border-bottom: 1px solid var(--c-border);
   transition: background 0.15s;
+  cursor: pointer;
+}
+
+.run-row:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
 }
 
 .run-row:hover {
@@ -225,6 +275,14 @@ const confirmDelete = () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+/* 名称与描述上下排列 */
+.cell-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -248,6 +306,15 @@ const confirmDelete = () => {
   font-size: 13px;
   font-weight: 500;
   color: var(--c-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-sub {
+  overflow: hidden;
+  max-width: 320px;
+  font-size: 11px;
+  color: var(--c-text-4);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

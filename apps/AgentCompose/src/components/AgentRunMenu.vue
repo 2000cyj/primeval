@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { h } from 'vue'
 import { NButton, NDropdown, NIcon, type DropdownOption } from 'naive-ui'
-import { Copy, MoreHorizontal, Trash2 } from 'lucide-vue-next'
+import { Copy, MoreHorizontal, Terminal, Trash2 } from 'lucide-vue-next'
 
-export type AgentRunMenuAction = 'copy' | 'delete'
+export type AgentRunMenuAction = 'copy' | 'copyCommand' | 'delete'
 
 const props = defineProps<{ agentName: string }>()
 const emit = defineEmits<{ action: [action: AgentRunMenuAction, agentName: string] }>()
 
 const options: DropdownOption[] = [
   { label: '复制', key: 'copy', icon: () => h(Copy, { size: 14 }) },
+  {
+    label: '复制启动命令',
+    key: 'copyCommand',
+    icon: () => h(Terminal, { size: 14 }),
+  },
   {
     label: '删除',
     key: 'delete',

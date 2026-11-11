@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import { Blocks, Cpu, Network, Server, Settings, Workflow } from 'lucide-vue-next'
-import { cliAgents } from '@/data/agents'
+import { computed } from 'vue'
+import { Blocks, Cpu, Network, Server, Settings } from 'lucide-vue-next'
+import { agentScan } from '@/api/agents'
 
 export type ViewKey =
-  'skills' | 'workbench' | 'mcp' | 'agents' | 'agentRuns' | 'agentCreate' | 'settings'
+  'skills' | 'mcp' | 'agents' | 'agentRuns' | 'agentCreate' | 'agentEdit' | 'settings'
 
 defineProps<{ active: ViewKey }>()
 const emit = defineEmits<{ navigate: [key: ViewKey] }>()
 
 const navItems = [
   { key: 'skills' as const, label: 'Skills', icon: Blocks },
-  { key: 'workbench' as const, label: '智能体工作台', icon: Workflow },
   { key: 'mcp' as const, label: 'MCP', icon: Server },
-  { key: 'agents' as const, label: 'agents', icon: Network, count: cliAgents.length },
+  { key: 'agents' as const, label: 'Agents', icon: Network },
   { key: 'agentRuns' as const, label: '智能体', icon: Cpu },
 ]
+
+/** Agents 的计数：本机真实装好的 CLI 数量（探测结果在模块级共享） */
+const detectedCount = computed(() => agentScan.value.filter((agent) => agent.installed).length)
 </script>
 
 <template>
@@ -38,7 +41,9 @@ const navItems = [
       >
         <component :is="item.icon" :size="15" aria-hidden="true" />
         <span class="nav-label">{{ item.label }}</span>
-        <span v-if="item.count" class="nav-count tnum">{{ item.count }}</span>
+        <span v-if="item.key === 'agents' && detectedCount" class="nav-count tnum">
+          {{ detectedCount }}
+        </span>
       </button>
     </nav>
 

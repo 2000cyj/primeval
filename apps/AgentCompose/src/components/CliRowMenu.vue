@@ -1,40 +1,73 @@
 <script setup lang="ts">
-import { h } from 'vue'
-import { NButton, NDropdown, NIcon, type DropdownOption } from 'naive-ui'
-import { Info, MoreHorizontal, RefreshCw } from 'lucide-vue-next'
+import { NButton, NIcon, NPopover } from 'naive-ui'
+import { MoreHorizontal, Trash2 } from 'lucide-vue-next'
 
-export type CliMenuAction = 'detail' | 'copy-path' | 'reinstall'
+/** 行内菜单的动作 */
+export type CliMenuAction = 'uninstall'
 
-const props = defineProps<{ agentName: string }>()
-const emit = defineEmits<{ action: [action: CliMenuAction, agentName: string] }>()
+const props = defineProps<{ agentName: string; command: string }>()
+const emit = defineEmits<{ action: [action: CliMenuAction, command: string] }>()
 
-const options: DropdownOption[] = [
-  { label: '查看详情', key: 'detail', icon: () => h(Info, { size: 14 }) },
-  { label: '复制路径', key: 'copy-path', icon: () => h(RefreshCw, { size: 14 }) },
-  { label: '重新安装', key: 'reinstall', icon: () => h(RefreshCw, { size: 14 }) },
-]
-
-const onSelect = (key: string) => {
-  emit('action', key as CliMenuAction, props.agentName)
+const onSelect = (action: CliMenuAction) => {
+  emit('action', action, props.command)
 }
 </script>
 
 <template>
-  <NDropdown trigger="click" :options="options" placement="bottom-end" @select="onSelect">
-    <NButton quaternary circle size="tiny" :aria-label="`${props.agentName} 更多操作`">
-      <template #icon>
-        <NIcon :size="15">
-          <MoreHorizontal />
+  <NPopover trigger="click" placement="bottom-end" :width="140" :show-arrow="false">
+    <template #trigger>
+      <NButton quaternary circle size="tiny" :aria-label="`${props.agentName} 更多操作`">
+        <template #icon>
+          <NIcon :size="15">
+            <MoreHorizontal />
+          </NIcon>
+        </template>
+      </NButton>
+    </template>
+
+    <div class="menu">
+      <!-- 卸载是破坏性的，标红 -->
+      <button class="menu-item menu-item-danger" type="button" @click="onSelect('uninstall')">
+        <NIcon :size="14">
+          <Trash2 />
         </NIcon>
-      </template>
-    </NButton>
-  </NDropdown>
+        卸载
+      </button>
+    </div>
+  </NPopover>
 </template>
 
 <style scoped>
-:deep(.n-dropdown-option-body__label) {
-  display: inline-flex;
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu-item {
+  display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  font-size: 12px;
+  color: var(--c-text-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.menu-item:hover {
+  background: var(--c-surface-sunken);
+}
+
+.menu-item-danger {
+  color: var(--c-danger);
+}
+
+.menu-item-danger:hover {
+  background: rgb(220 38 38 / 10%);
 }
 </style>

@@ -11,7 +11,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { ShieldCheck } from 'lucide-vue-next'
+import { ChevronRight, ShieldCheck } from 'lucide-vue-next'
 import {
   exposedToolName,
   parseToolKey,
@@ -36,16 +36,28 @@ const emit = defineEmits<{
 const message = useMessage()
 
 const selectedKeys = ref<string[]>([])
-const selectedServerIds = ref<string[]>([])
+/** server 的排序提示（兼作裁剪顺序）；实际暴露哪些 server 由选中的工具推导 */
+const serverOrder = ref<string[]>([])
 const maxTools = ref(150)
+/** 展开的 server 分组 */
+const expandedGroups = ref<string[]>([])
 
 watch(
   () => [props.show, props.exposure] as const,
   ([show]) => {
     if (!show) return
     selectedKeys.value = [...props.exposure.toolKeys]
-    selectedServerIds.value = [...props.exposure.serverIds]
+    serverOrder.value = [...props.exposure.serverIds]
     maxTools.value = props.exposure.maxTools
+    // 有已选工具的分组默认展开，其余收起
+    expandedGroups.value = props.servers
+      .filter((server) => {
+        const upstream = props.upstreams.find((item) => item.serverId === server.id)
+        return (upstream?.tools ?? []).some((tool) =>
+          props.exposure.toolKeys.includes(toolKey(server.id, tool.name)),
+        )
+      })
+      .map((server) => server.id)
   },
   { immediate: true },
 )
@@ -76,33 +88,67 @@ const setTool = (serverId: string, toolName: string, checked: boolean): void => 
     if (!selectedKeys.value.includes(key)) {
       selectedKeys.value = [...selectedKeys.value, key]
     }
+    if (!serverOrder.value.includes(serverId)) {
+      serverOrder.value = [...serverOrder.value, serverId]
+    }
     return
   }
   selectedKeys.value = selectedKeys.value.filter((item) => item !== key)
 }
 
-const groupSelectedCount = (serverId: string, tools: { name: string }[]): number =>
-  tools.filter((tool) => isToolSelected(serverId, tool.name)).length
+/**
+ * 参与暴露的 server = 至少选了一个工具的 server。
+ *
+ * 后端 `registry.build()` 是按 `serverIds` 遍历再过滤 `toolKeys` 的，
+ * 所以 serverIds 必须由工具选择推导，否则单独勾的工具会静默丢失。
+ */
+const exposedServerIds = computed(() => {
+  const ids = new Set<string>()
+  for (const key of selectedKeys.value) {
+    const parsed = parseToolKey(key)
+    if (parsed) ids.add(parsed.serverId)
+  }
+  const rank = new Map(serverOrder.value.map((id, index) => [id, index]))
+  return [...ids].sort(
+    (a, b) => (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER),
+  )
+})
+
+/** 分组的勾选状态：全选 / 部分 / 未选 */
+const groupStat = (group: (typeof groups.value)[number]) => {
+  const total = group.tools.length
+  const selected = group.tools.filter((tool) => isToolSelected(group.server.id, tool.name)).length
+  return {
+    total,
+    selected,
+    checked: total > 0 && selected === total,
+    indeterminate: selected > 0 && selected < total,
+  }
+}
 
 const toggleServer = (serverId: string, tools: { name: string }[], checked: boolean): void => {
-  if (checked) {
-    if (!selectedServerIds.value.includes(serverId)) {
-      selectedServerIds.value = [...selectedServerIds.value, serverId]
-    }
-    for (const tool of tools) {
-      setTool(serverId, tool.name, true)
-    }
-    return
-  }
-  selectedServerIds.value = selectedServerIds.value.filter((id) => id !== serverId)
   for (const tool of tools) {
-    setTool(serverId, tool.name, false)
+    setTool(serverId, tool.name, checked)
   }
+}
+
+/** 半选状态下点击一律转为全选 */
+const onToggleGroup = (group: (typeof groups.value)[number], checked: boolean): void => {
+  const stat = groupStat(group)
+  toggleServer(group.server.id, group.tools, stat.indeterminate ? true : checked)
+}
+
+const isExpanded = (serverId: string): boolean => expandedGroups.value.includes(serverId)
+
+const toggleGroup = (serverId: string): void => {
+  expandedGroups.value = isExpanded(serverId)
+    ? expandedGroups.value.filter((id) => id !== serverId)
+    : [...expandedGroups.value, serverId]
 }
 
 /** 按 serverIds 顺序排列工具白名单，超出上限的部分裁剪掉 */
 const orderedKeys = (): string[] => {
-  const order = new Map(selectedServerIds.value.map((id, index) => [id, index]))
+  const order = new Map(exposedServerIds.value.map((id, index) => [id, index]))
   const rank = (key: string): number => {
     const parsed = parseToolKey(key)
     if (!parsed) return Number.MAX_SAFE_INTEGER
@@ -123,7 +169,7 @@ const save = (): void => {
     message.warning(`超出上限，已按 server 顺序保留前 ${trimmed.length} 个工具`)
   }
   emit('save', {
-    serverIds: [...selectedServerIds.value],
+    serverIds: [...exposedServerIds.value],
     toolKeys: trimmed,
     maxTools: maxTools.value,
   })
@@ -172,23 +218,38 @@ const save = (): void => {
 
         <section v-for="group in groups" :key="group.server.id" class="group">
           <header class="group-head">
-            <NCheckbox
-              :checked="selectedServerIds.includes(group.server.id)"
-              @update:checked="
-                (checked: boolean) => toggleServer(group.server.id, group.tools, checked)
-              "
-            >
-              {{ group.server.name }}
-            </NCheckbox>
+            <div class="group-left">
+              <NCheckbox
+                :checked="groupStat(group).checked"
+                :indeterminate="groupStat(group).indeterminate"
+                :disabled="!groupStat(group).total"
+                @update:checked="(checked: boolean) => onToggleGroup(group, checked)"
+              />
+              <button
+                type="button"
+                class="group-toggle"
+                :aria-expanded="isExpanded(group.server.id)"
+                @click="toggleGroup(group.server.id)"
+              >
+                <NIcon
+                  :size="13"
+                  class="toggle-caret"
+                  :class="{ open: isExpanded(group.server.id) }"
+                >
+                  <ChevronRight />
+                </NIcon>
+                <span class="group-name">{{ group.server.name }}</span>
+              </button>
+            </div>
             <div class="group-meta">
               <NTag size="small" :bordered="false">{{ group.server.transport }}</NTag>
               <span class="tnum group-count">
-                {{ groupSelectedCount(group.server.id, group.tools) }} / {{ group.tools.length }}
+                {{ groupStat(group).selected }} / {{ groupStat(group).total }}
               </span>
             </div>
           </header>
 
-          <ul v-if="group.tools.length" class="tool-list">
+          <ul v-if="groupStat(group).total && isExpanded(group.server.id)" class="tool-list">
             <li v-for="tool in group.tools" :key="tool.name" class="tool">
               <NCheckbox
                 :checked="isToolSelected(group.server.id, tool.name)"
@@ -203,7 +264,9 @@ const save = (): void => {
             </li>
           </ul>
 
-          <p v-else class="tool-empty">该 server 暂未上报工具，先在列表里测试连接。</p>
+          <p v-else-if="!groupStat(group).total" class="tool-empty">
+            该 server 暂未上报工具，先在列表里测试连接。
+          </p>
         </section>
 
         <p v-if="!groups.length" class="tool-empty">还没有启用的上游 MCP server。</p>
@@ -291,6 +354,49 @@ const save = (): void => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.group-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  cursor: pointer;
+}
+
+.group-toggle:hover {
+  background: var(--c-surface-sunken);
+}
+
+.group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle-caret {
+  flex: none;
+  color: var(--c-text-3);
+  transition: transform 0.15s ease;
+}
+
+.toggle-caret.open {
+  transform: rotate(90deg);
 }
 
 .group-meta {

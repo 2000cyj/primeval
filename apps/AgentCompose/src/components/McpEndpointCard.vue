@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NButton, NIcon, NRadioButton, NRadioGroup, useMessage } from 'naive-ui'
-import { Copy, Eye, EyeOff } from 'lucide-vue-next'
+import { Copy, Eye, EyeOff, RefreshCw } from 'lucide-vue-next'
 import { buildMcpUrl } from '@remote/agent-compose-mcp/types'
 
 const props = defineProps<{
@@ -11,7 +11,11 @@ const props = defineProps<{
   token: string
   /** 当前在线 MCP session 数 */
   sessions: number
+  /** 刷新 token 中 */
+  refreshing?: boolean
 }>()
+
+const emit = defineEmits<{ 'refresh-token': [] }>()
 
 const message = useMessage()
 
@@ -116,6 +120,20 @@ const copy = async (text: string, label: string): Promise<void> => {
               </NIcon>
             </template>
             复制
+          </NButton>
+          <NButton
+            size="tiny"
+            quaternary
+            :loading="props.refreshing"
+            title="让运行中的 sidecar 立刻用上当前的 token"
+            @click="emit('refresh-token')"
+          >
+            <template #icon>
+              <NIcon :size="13">
+                <RefreshCw />
+              </NIcon>
+            </template>
+            刷新 token
           </NButton>
         </div>
       </div>

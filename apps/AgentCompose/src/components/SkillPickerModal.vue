@@ -1,47 +1,76 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NModal } from 'naive-ui'
-import { Check, Search, X } from 'lucide-vue-next'
-import { skills } from '@/data/skills'
+import { NButton, NIcon, NInput, NModal, useMessage } from 'naive-ui'
+import { Blocks, Check, Search, X } from 'lucide-vue-next'
+import { listSkills, type SkillInfo } from '@/api/skills'
 
 /**
  * 新建智能体时的 skill 选择弹窗。
  *
  * 与工作台的「绑定能力」弹窗效果一致，但两者是各自独立的组件，
  * 不共用同一份实现——这里的交互（默认全选、勾选即生效）服务于新建流程。
+ *
+ * 数据来自 skills 页的真实数据（工作区里已添加的 skills），不是演示数据。
  */
 const props = defineProps<{
   show: boolean
-  /** 已选中的 skill 名称 */
+  /** 已选中的 skill（相对路径引用，如 `skills/knowledge-base`） */
   selected: string[]
 }>()
 
 const emit = defineEmits<{
   close: []
-  'update:selected': [names: string[]]
+  'update:selected': [refs: string[]]
 }>()
 
+const message = useMessage()
 const keyword = ref('')
+/** 真实的 skill 列表（skills 页添加过的） */
+const skills = ref<SkillInfo[]>([])
+const loading = ref(false)
+
+const load = async () => {
+  loading.value = true
+  try {
+    skills.value = await listSkills()
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+    skills.value = []
+  } finally {
+    loading.value = false
+  }
+}
 
 const visibleSkills = computed(() => {
   const word = keyword.value.trim().toLowerCase()
-  if (!word) return skills
-  return skills.filter((skill) => `${skill.name}${skill.description}`.toLowerCase().includes(word))
+  if (!word) return skills.value
+  return skills.value.filter((skill) =>
+    `${skill.name}${skill.description}`.toLowerCase().includes(word),
+  )
 })
 
-const isSelected = (name: string) => props.selected.includes(name)
+/** skill 的来源（手动 / URL / 本地 / 运行时） */
+const SOURCE_LABEL: Record<SkillInfo['source'], string> = {
+  manual: '手动创建',
+  url: 'URL 导入',
+  local: '本地导入',
+  runtime: '运行时复制',
+  duplicate: '副本',
+}
 
-const toggle = (name: string) => {
-  const next = isSelected(name)
-    ? props.selected.filter((item) => item !== name)
-    : [...props.selected, name]
+const isSelected = (ref: string) => props.selected.includes(ref)
+
+const toggle = (ref: string) => {
+  const next = isSelected(ref)
+    ? props.selected.filter((item) => item !== ref)
+    : [...props.selected, ref]
   emit('update:selected', next)
 }
 
 const selectAll = () => {
   emit(
     'update:selected',
-    visibleSkills.value.map((skill) => skill.name),
+    visibleSkills.value.map((skill) => skill.relativePath),
   )
 }
 
@@ -49,11 +78,14 @@ const clearAll = () => {
   emit('update:selected', [])
 }
 
-// 每次打开时清空搜索
+// 每次打开时清空搜索并重新拉一次
 watch(
   () => props.show,
   (show) => {
-    if (show) keyword.value = ''
+    if (show) {
+      keyword.value = ''
+      void load()
+    }
   },
 )
 </script>
@@ -95,27 +127,30 @@ watch(
     </div>
 
     <ul class="skill-list">
-      <li v-for="skill in visibleSkills" :key="skill.name">
+      <li v-for="skill in visibleSkills" :key="skill.relativePath">
         <button
           type="button"
           class="skill-option"
-          :class="{ checked: isSelected(skill.name) }"
-          :aria-pressed="isSelected(skill.name)"
-          @click="toggle(skill.name)"
+          :class="{ checked: isSelected(skill.relativePath) }"
+          :aria-pressed="isSelected(skill.relativePath)"
+          @click="toggle(skill.relativePath)"
         >
-          <span class="skill-icon" :style="{ background: skill.iconBg, color: skill.iconColor }">
-            <component :is="skill.icon" :size="17" />
+          <span class="skill-icon">
+            <Blocks :size="17" />
           </span>
           <span class="skill-text">
             <span class="skill-name">{{ skill.name }}</span>
-            <span class="skill-desc">{{ skill.description }}</span>
+            <span class="skill-desc">{{ skill.description || SOURCE_LABEL[skill.source] }}</span>
           </span>
-          <span class="skill-check" :class="{ on: isSelected(skill.name) }">
-            <Check v-if="isSelected(skill.name)" :size="13" />
+          <span class="skill-check" :class="{ on: isSelected(skill.relativePath) }">
+            <Check v-if="isSelected(skill.relativePath)" :size="13" />
           </span>
         </button>
       </li>
-      <li v-if="!visibleSkills.length" class="skill-empty">没有匹配的结果</li>
+      <li v-if="loading" class="skill-empty">正在读取 skills…</li>
+      <li v-else-if="!visibleSkills.length" class="skill-empty">
+        {{ skills.length ? '没有匹配的结果' : '还没有 skill —— 先去 Skills 页添加' }}
+      </li>
     </ul>
 
     <footer class="modal-foot">
@@ -207,6 +242,8 @@ watch(
   width: 34px;
   height: 34px;
   border-radius: var(--radius);
+  background: var(--c-surface-sunken);
+  color: var(--c-text-3);
 }
 
 .skill-text {
