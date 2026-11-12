@@ -201,6 +201,9 @@ export default async function (pi: any) {
           : theme.fg('warning', `✗ ${item.name}`),
       )
       ctx.ui.setStatus('agentspace-mcp', parts.join('  '))
+      if (process.env.AGENTSPACE_MCP_DEBUG) {
+        console.error('[agentspace-mcp-bridge] status:', parts.join('  '))
+      }
     } catch {
       statusCtx = null
     }
@@ -243,6 +246,8 @@ export default async function (pi: any) {
           entry.ok = true
           entry.tools = count
         }
+        // 连上一个就报一个 —— 不然要等全部连完 footer 才更新
+        refreshStatus()
         return true
       } catch (error: any) {
         lastError = error
@@ -307,25 +312,46 @@ export default async function (pi: any) {
   }
 
   // ── 连接所有 server ──────────────────────────────────────
-  for (const spec of servers) {
-    results.push({ name: spec.name, ok: false, tools: 0 })
-    await connect(spec)
+  //
+  // 连接放在 session_start 里做，不在扩展加载时。
+  //
+  // 原因：footer 状态靠 session_start 给的 ctx.ui.setStatus 渲染。
+  // 加载阶段就开连的话，session_start 触发时连接还没完 —— 刷出来的是
+  // 一排初始的 ✗，而连完之后的刷新又因为 ctx 还没就绪而落空。
+  //
+  // 这里不在 session_start 里 await —— 连接要好几秒，await 会把界面卡住。
+  // 后台连，连完一个刷一个。
+  const connectAll = async () => {
+    for (const spec of servers) {
+      if (!results.some((item) => item.name === spec.name)) {
+        results.push({ name: spec.name, ok: false, tools: 0 })
+      }
+      await connect(spec)
+    }
+    refreshStatus()
   }
-  refreshStatus()
+
+  let connecting = false
 
   // ── 探测：中途挂掉的 server 要能自己回来 ──────────────────
   //
   // 远端上游会掉（IDE 的 mcp-proxy 停了之类）。启动时的结果数组是死的，
-  // footer 上的 ✓ / ✗ 会说谎。所以每 30s 用普通 HTTP GET 探一下：
+  // footer 上的 ✓ / ✗ 会说谎。所以定期探一下：
   //   - 活着但之前是 ✗ → 恢复了，重连并重新注册工具
   //   - 之前是 ✓ 但现在不通 → 掉了，把 client 关掉
+  //
+  // 探活用「有没有拿到响应」，不是「状态码是不是 2xx」：
+  // MCP 的 streamable http 端点只接受 POST，对 GET 一般回 405 ——
+  // 那恰恰说明服务活着，只是这个方法不允许。早先按 `res.ok` 判，
+  // 结果每个 server 都被误判成挂了，footer 全是 ✗。
   const httpAlive = async (url: string): Promise<boolean> => {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
     try {
-      const res = await fetch(url, { method: 'GET', signal: controller.signal })
-      return res.ok
+      await fetch(url, { method: 'GET', signal: controller.signal })
+      return true
     } catch {
+      // 连不上（连接拒绝 / 超时 / DNS 不对）才算不通
       return false
     } finally {
       clearTimeout(timer)
@@ -337,7 +363,27 @@ export default async function (pi: any) {
     for (const item of results) {
       const spec = servers.find((s) => s.name === item.name)
       if (!spec) continue
-      const alive = await httpAlive(spec.url)
+
+      // 手里有活着的 client —— 用协议级探测（工具清单还能不能拿到），
+      // 这样也能发现「HTTP 通但 MCP 会话死了」的情况。
+      // 没有 client 才退回 HTTP 探活。
+      const client = clientByName[spec.name]
+      let alive: boolean
+      if (client) {
+        try {
+          await withTimeout(
+            client.listTools(),
+            PROBE_TIMEOUT_MS,
+            `agentspace-mcp: ${spec.name} 探测`,
+          )
+          alive = true
+        } catch {
+          alive = false
+        }
+      } else {
+        alive = await httpAlive(spec.url)
+      }
+
       if (alive && !item.ok) {
         pi.log?.(`agentspace-mcp: ${spec.name} 恢复了，重连中…`)
         if (await connect(spec)) dirty = true
@@ -369,6 +415,14 @@ export default async function (pi: any) {
   pi.on('session_start', (_event: any, ctx: any) => {
     statusCtx = ctx
     refreshStatus()
+    // 后台连 —— 不 await，界面不能被连接卡住
+    if (!connecting) {
+      connecting = true
+      void connectAll().finally(() => {
+        connecting = false
+        refreshStatus()
+      })
+    }
     if (!probeTimer) probeTimer = setInterval(probe, PROBE_INTERVAL_MS)
   })
 
@@ -380,6 +434,11 @@ export default async function (pi: any) {
     statusCtx = null
     for (const client of Object.values(clientByName)) {
       client?.close?.().catch?.(() => {})
+    }
+    // 状态归零 —— 下个 session 重新连，不拿旧结果说事
+    for (const item of results) {
+      item.ok = false
+      item.tools = 0
     }
   })
 

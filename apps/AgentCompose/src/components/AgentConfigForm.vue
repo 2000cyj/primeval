@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NIcon, NInput } from 'naive-ui'
-import { Plus, Wrench } from 'lucide-vue-next'
+import { Plus } from 'lucide-vue-next'
 import SkillPickerModal from '@/components/SkillPickerModal.vue'
 import McpPickerModal from '@/components/McpPickerModal.vue'
 import ExtensionPickerModal from '@/components/ExtensionPickerModal.vue'
+import ToolboxIcon from '@/components/ToolboxIcon.vue'
 
 /**
  * 智能体配置表单（身份 + 行为与能力）。
@@ -91,9 +92,7 @@ const descriptionMax = 255
         <span class="field-hint">Pi 自带的扩展运行时自动加载，这里只管工具箱里的。</span>
       </div>
       <button type="button" class="skills-toggle" @click="showExtensionPicker = true">
-        <NIcon :size="13" color="var(--c-text-3)">
-          <Wrench />
-        </NIcon>
+        <ToolboxIcon :size="14" />
         <span>已选 {{ extensions.length }} 个 —— 点击修改</span>
       </button>
     </div>

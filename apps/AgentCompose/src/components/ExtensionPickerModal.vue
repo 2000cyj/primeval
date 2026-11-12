@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSpin, useMessage } from 'naive-ui'
-import { Check, Search, Wrench } from 'lucide-vue-next'
+import { Check, Search } from 'lucide-vue-next'
+import ToolboxIcon from '@/components/ToolboxIcon.vue'
 import { listExtensions, type ExtensionInfo } from '@/api/extensions'
 
 /**
@@ -126,9 +127,7 @@ watch(
               </NIcon>
             </span>
             <span class="item-icon" aria-hidden="true">
-              <NIcon :size="13">
-                <Wrench />
-              </NIcon>
+              <ToolboxIcon :size="15" />
             </span>
             <span class="item-text">
               <span class="item-name">

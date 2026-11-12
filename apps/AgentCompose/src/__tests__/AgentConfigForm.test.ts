@@ -64,6 +64,17 @@ describe('配置表单', () => {
 
     expect(wrapper.text()).toContain('已选 0 个')
   })
+
+  it('Pi 扩展区用工具箱图标（不是扳手）', async () => {
+    const wrapper = await mountForm()
+
+    // 「PI 扩展」那一行的按钮里得有工具箱图标
+    const icon = wrapper.find('.toolbox-icon')
+    expect(icon.exists()).toBe(true)
+    expect(icon.attributes('src')).toContain('toolbox-icon')
+    // 旧的扳手图标不该还在
+    expect(wrapper.find('.skills-toggle svg.lucide-wrench').exists()).toBe(false)
+  })
 })
 
 afterEach(() => {
