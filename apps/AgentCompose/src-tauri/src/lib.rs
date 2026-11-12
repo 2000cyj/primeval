@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager};
 
 pub(crate) mod agents;
 mod agent_store;
+mod extensions;
 mod github;
 mod history;
 mod paths;
@@ -1069,6 +1070,15 @@ pub fn run() {
             github::skills_repo_branches,
             github::skills_repo_discover,
             github::skills_repo_import,
+            extensions::extensions_list,
+            extensions::extensions_read,
+            extensions::extensions_set_enabled,
+            extensions::extensions_remove,
+            extensions::extensions_save,
+            extensions::extensions_template,
+            extensions::extensions_market_search,
+            extensions::extensions_install_npm,
+            extensions::extensions_remove_library,
             mcp_ensure_sidecar,
             mcp_search_registry,
             mcp_authorize_server,

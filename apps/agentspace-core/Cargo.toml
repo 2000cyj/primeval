@@ -19,3 +19,6 @@ serde_yaml = "0.9.34"
 
 [profile.release]
 strip = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

@@ -16,8 +16,10 @@
 
 pub mod agent;
 pub mod bridge;
+pub mod extensions;
 pub mod git_source;
 pub mod github;
+pub mod marketplace;
 pub mod paths;
 pub mod pi_settings;
 pub mod toolbox;
