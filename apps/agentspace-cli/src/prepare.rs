@@ -325,8 +325,17 @@ pub fn land(
     };
 
     if !overwrite {
-        println!("保持项目里现有的配置，继续启动。");
-        return previous.unwrap_or_default();
+        // 版本一致 —— 但落地物可能被人手动删了（.pi/extensions/、.pi/skills/…）。
+        // 这种得补上，不然用户看到的“配置已就绪”，实际扩展没了。
+        let intact = previous
+            .as_ref()
+            .map(|item| item.files.iter().all(|file| cwd.join(file).exists()))
+            .unwrap_or(false);
+        if intact {
+            println!("保持项目里现有的配置，继续启动。");
+            return previous.unwrap_or_default();
+        }
+        println!("项目里缺了些配置，补齐一下。");
     }
 
     let mut skill_names: Vec<String> = Vec::new();
@@ -365,6 +374,32 @@ pub fn land(
         match write_extension(&path, asset.source) {
             Ok(()) => files.push(relative_to(cwd, &path)),
             Err(error) => eprintln!("写扩展失败（{}）：{error}", path.display()),
+        }
+    }
+
+    // ── 绑定的 Pi 扩展 ────────────────────────────────────
+    //
+    // 复制到项目的 `.pi/extensions/` —— pi 会自动发现这个目录。
+    //
+    // 整个扩展目录一起复制（包括它自己的 node_modules）：
+    // - 扩展之间的相对 import 才不断
+    // - 依赖跟着走 —— 扩展里 `import yaml from 'yaml'` 靠 node 的模块解析
+    //   （从扩展文件往上找 node_modules）。不带上就会报
+    //   "Cannot find module 'yaml'"。
+    let ext_dirs = agentspace_core::agent::extension_dirs(paths, agent);
+    if !ext_dirs.is_empty() {
+        let target_root = cwd.join(".pi").join("extensions");
+        for dir in &ext_dirs {
+            let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
+                continue;
+            };
+            let target = target_root.join(&name);
+            // 先清掉旧的
+            let _ = std::fs::remove_dir_all(&target);
+            match agentspace_core::extensions::copy_dir(dir, &target) {
+                Ok(()) => files.push(relative_to(cwd, &target)),
+                Err(error) => eprintln!("复制扩展失败（{name}）：{error}"),
+            }
         }
     }
 

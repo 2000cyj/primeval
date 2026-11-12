@@ -58,6 +58,8 @@ pub struct CreatedAgent {
     pub skills: Vec<String>,
     /// 绑定的 MCP server：`mcp/servers.json#<id>`。
     pub mcp_servers: Vec<String>,
+    /// 绑定的 Pi 扩展：相对扩展库的路径，如 `extensions/npm/pi-mcp-adapter`。
+    pub extensions: Vec<String>,
     /// 跑在哪个 agent 上（`pi`）。启动脚本据此决定拉起谁。
     pub runtime: String,
     /// 配置版本：每次变更 +1（智能体改动 / 它绑的 skill 或 MCP 变了）。
@@ -77,6 +79,7 @@ impl Default for CreatedAgent {
             instruction: String::new(),
             skills: Vec::new(),
             mcp_servers: Vec::new(),
+            extensions: Vec::new(),
             runtime: DEFAULT_RUNTIME.to_string(),
             version: 0,
             created_at: 0,
@@ -93,6 +96,9 @@ pub struct AgentMeta {
     pub description: String,
     pub skills: Vec<String>,
     pub mcp_servers: Vec<String>,
+    /// 绑定的 Pi 扩展：相对扩展库的路径，如 `extensions/npm/pi-mcp-adapter`。
+    #[serde(default)]
+    pub extensions: Vec<String>,
     pub runtime: String,
     pub version: u64,
     pub created_at: u64,
@@ -106,6 +112,7 @@ impl Default for AgentMeta {
             description: String::new(),
             skills: Vec::new(),
             mcp_servers: Vec::new(),
+            extensions: Vec::new(),
             runtime: DEFAULT_RUNTIME.to_string(),
             version: 0,
             created_at: 0,
@@ -159,6 +166,7 @@ fn read_agent(dir: &Path) -> Option<CreatedAgent> {
         instruction,
         skills: meta.skills,
         mcp_servers: meta.mcp_servers,
+        extensions: meta.extensions,
         runtime: meta.runtime,
         version: meta.version,
         created_at: meta.created_at,
@@ -194,6 +202,7 @@ pub fn save_at(root: &Path, agent: &CreatedAgent) -> Result<(), String> {
         description: agent.description.clone(),
         skills: agent.skills.clone(),
         mcp_servers: agent.mcp_servers.clone(),
+        extensions: agent.extensions.clone(),
         runtime: agent.runtime.clone(),
         version: agent.version,
         created_at: agent.created_at,
@@ -352,6 +361,47 @@ pub fn skill_dirs(paths: &Paths, agent: &CreatedAgent) -> Vec<PathBuf> {
         .collect()
 }
 
+/// 绑定的扩展目录（相对扩展库）。
+///
+/// 引用格式：`extensions/<来源>/<名字>`，如 `extensions/npm/pi-mcp-adapter`。
+/// 相对路径而不是绝对路径 —— 换机器、换用户都不用改数据。
+pub fn extension_dirs(paths: &Paths, agent: &CreatedAgent) -> Vec<PathBuf> {
+    let root = crate::extensions::library_dir(paths);
+    let mut out: Vec<PathBuf> = Vec::new();
+    for reference in &agent.extensions {
+        let Some(rest) = reference.strip_prefix("extensions/") else {
+            continue;
+        };
+        if rest.is_empty() || rest.contains("..") {
+            continue;
+        }
+        // 引用形如 `extensions/npm/<flat>`（flat 是扁平化的目录名）或
+        // `extensions/custom/<name>`。
+        let dir = match rest.split_once('/') {
+            Some(("npm", flat)) => {
+                let direct = root.join("npm").join(flat);
+                if direct.is_dir() {
+                    direct
+                } else {
+                    // 旧格式：引用里存的是包名（`@scope/pkg`）—— 按 package.json 的 name 找
+                    crate::extensions::find_npm_package_dir(&root.join("npm"), flat).unwrap_or(direct)
+                }
+            }
+            Some(("custom", name)) => root.join("custom").join(name),
+            _ => continue,
+        };
+        // 一个包可能有多个入口文件 —— 按目录去重，别复制两遍
+        if !dir.is_dir() {
+            // 包被卸了 / 还没装 —— 跳过，不报错
+            continue;
+        }
+        if !out.contains(&dir) {
+            out.push(dir);
+        }
+    }
+    out
+}
+
 /// 绑定的 MCP server id（从 `mcp/servers.json#<id>` 里取 id）。
 pub fn mcp_server_ids(agent: &CreatedAgent) -> Vec<String> {
     agent
@@ -382,6 +432,7 @@ mod tests {
             instruction: "只根据知识库回答".to_string(),
             skills: vec!["skills/kb".to_string()],
             mcp_servers: vec!["mcp/servers.json#filesystem".to_string()],
+            extensions: vec!["extensions/npm/pi-mcp-adapter".to_string()],
             runtime: DEFAULT_RUNTIME.to_string(),
             version: 1,
             created_at: 1,
@@ -497,5 +548,51 @@ mod tests {
     fn mcp_server_ids_extracted_from_refs() {
         let agent = sample("agent-1");
         assert_eq!(mcp_server_ids(&agent), vec!["filesystem".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod extension_ref_tests {
+    use super::*;
+    use crate::paths::Paths;
+
+    /// 引用要能解析到扩展库里真实的目录
+    #[test]
+    fn resolves_npm_reference_to_node_modules() {
+        let home = std::env::temp_dir().join(format!("agentspace-core-ref-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let paths = Paths::new(&home);
+
+        // 造一个假包（扁平目录名）
+        let pkg = crate::extensions::library_dir(&paths).join("npm").join("@scope-pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), r#"{"name":"@scope/pkg"}"#).unwrap();
+
+        let agent = CreatedAgent {
+            id: "a".into(),
+            extensions: vec!["extensions/npm/@scope-pkg".into()],
+            ..Default::default()
+        };
+        let dirs = extension_dirs(&paths, &agent);
+        assert_eq!(dirs.len(), 1, "{dirs:?}");
+        assert_eq!(dirs[0], pkg);
+
+        // 旧格式的引用（存的是包名）也要认
+        let agent_legacy = CreatedAgent {
+            id: "c".into(),
+            extensions: vec!["extensions/npm/@scope/pkg".into()],
+            ..Default::default()
+        };
+        assert_eq!(extension_dirs(&paths, &agent_legacy), vec![pkg]);
+
+        // 不存在的包要跳过
+        let agent2 = CreatedAgent {
+            id: "b".into(),
+            extensions: vec!["extensions/npm/gone".into()],
+            ..Default::default()
+        };
+        assert!(extension_dirs(&paths, &agent2).is_empty());
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

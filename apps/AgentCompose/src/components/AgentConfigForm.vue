@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NIcon, NInput } from 'naive-ui'
-import { Plus } from 'lucide-vue-next'
+import { Plus, Wrench } from 'lucide-vue-next'
 import SkillPickerModal from '@/components/SkillPickerModal.vue'
 import McpPickerModal from '@/components/McpPickerModal.vue'
+import ExtensionPickerModal from '@/components/ExtensionPickerModal.vue'
 
 /**
  * 智能体配置表单（身份 + 行为与能力）。
@@ -15,9 +16,12 @@ const description = defineModel<string>('description', { required: true })
 const instruction = defineModel<string>('instruction', { required: true })
 const skills = defineModel<string[]>('skills', { required: true })
 const mcpServers = defineModel<string[]>('mcpServers', { required: true })
+/** 绑定的 Pi 扩展（相对引用，如 `extensions/npm/pi-mcp-adapter`） */
+const extensions = defineModel<string[]>('extensions', { required: true })
 
 const showSkillPicker = ref(false)
 const showMcpPicker = ref(false)
+const showExtensionPicker = ref(false)
 
 const descriptionLength = computed(() => description.value.length)
 const descriptionMax = 255
@@ -80,6 +84,19 @@ const descriptionMax = 255
         <span>已选 {{ mcpServers.length }} 个 —— 点击修改</span>
       </button>
     </div>
+
+    <div class="field">
+      <div class="field-label">
+        PI 扩展
+        <span class="field-hint">Pi 自带的扩展运行时自动加载，这里只管工具箱里的。</span>
+      </div>
+      <button type="button" class="skills-toggle" @click="showExtensionPicker = true">
+        <NIcon :size="13" color="var(--c-text-3)">
+          <Wrench />
+        </NIcon>
+        <span>已选 {{ extensions.length }} 个 —— 点击修改</span>
+      </button>
+    </div>
   </section>
 
   <SkillPickerModal
@@ -94,6 +111,13 @@ const descriptionMax = 255
     :selected="mcpServers"
     @update:selected="mcpServers = $event"
     @close="showMcpPicker = false"
+  />
+
+  <ExtensionPickerModal
+    :show="showExtensionPicker"
+    :selected="extensions"
+    @update:selected="extensions = $event"
+    @close="showExtensionPicker = false"
   />
 </template>
 

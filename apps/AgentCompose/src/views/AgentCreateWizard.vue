@@ -108,6 +108,8 @@ const instruction = ref('')
 const selectedSkills = ref<string[]>([])
 /** 已选 MCP server（相对路径引用） */
 const selectedMcpServers = ref<string[]>([])
+/** 已选 Pi 扩展（相对扩展库的引用） */
+const selectedExtensions = ref<string[]>([])
 
 const goNext = () => {
   if (!piInstalled.value) {
@@ -138,6 +140,7 @@ const submit = async (): Promise<void> => {
       instruction: instruction.value.trim(),
       skills: selectedSkills.value,
       mcpServers: selectedMcpServers.value,
+      extensions: selectedExtensions.value,
       // 现在只支持 Pi（第一步只能选 Pi）
       runtime: 'pi',
     })
@@ -151,6 +154,7 @@ const submit = async (): Promise<void> => {
     instruction: instruction.value.trim(),
     skills: selectedSkills.value,
     mcpServers: selectedMcpServers.value,
+    extensions: selectedExtensions.value,
   })
   message.success(`已创建智能体：${name.value.trim()}`)
 }
@@ -290,6 +294,7 @@ const submit = async (): Promise<void> => {
         v-model:instruction="instruction"
         v-model:skills="selectedSkills"
         v-model:mcp-servers="selectedMcpServers"
+        v-model:extensions="selectedExtensions"
       />
     </div>
 

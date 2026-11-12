@@ -47,6 +47,9 @@ pub struct ImportArgs {
     /// 同时绑定的 mcp server id（可重复）
     #[arg(long = "mcp")]
     mcp: Vec<String>,
+    /// 绑定的 pi 扩展（相对引用，如 extensions/npm/pi-mcp-adapter，可重复）
+    #[arg(long = "extension")]
+    extension: Vec<String>,
     /// 不导入，只看会做什么
     #[arg(long)]
     dry_run: bool,
@@ -93,6 +96,9 @@ pub struct CreateArgs {
     /// 绑定的 MCP server id（可重复）
     #[arg(long = "mcp")]
     mcp: Vec<String>,
+    /// 绑定的 pi 扩展（相对引用，如 extensions/npm/pi-mcp-adapter，可重复）
+    #[arg(long = "extension")]
+    extension: Vec<String>,
     /// 跑在哪个 agent 上（现在只有 pi）
     #[arg(long, default_value = agent::DEFAULT_RUNTIME)]
     runtime: String,
@@ -120,6 +126,9 @@ pub struct UpdateArgs {
     /// 绑定的 MCP（整体替换，可重复）
     #[arg(long = "mcp")]
     mcp: Option<Vec<String>>,
+    /// 绑定的 pi 扩展（整体替换，可重复）
+    #[arg(long = "extension")]
+    extension: Option<Vec<String>>,
 }
 
 #[derive(Args, Debug)]
@@ -327,6 +336,7 @@ fn create(paths: &Paths, args: CreateArgs) -> u8 {
             .iter()
             .map(|id| format!("mcp/servers.json#{id}"))
             .collect(),
+        extensions: args.extension.clone(),
         runtime: args.runtime,
         version: 0,
         created_at: now_ms(),
@@ -391,6 +401,21 @@ fn update(paths: &Paths, args: UpdateArgs) -> u8 {
             .map(|id| format!("mcp/servers.json#{id}"))
             .collect();
     }
+    if let Some(value) = args.extension {
+        found.extensions = value
+            .iter()
+            .filter_map(|reference| {
+                let rest = reference.strip_prefix("extensions/")?;
+                let (source, name) = rest.split_once('/')?;
+                if !matches!(source, "npm" | "custom") || name.is_empty() {
+                    return None;
+                }
+                // 存扁平化的目录名 —— npm 的包名带斜杠，引用里放斜杠会断
+                let flat = agentspace_core::extensions::flat_dir_name(name);
+                Some(format!("extensions/{source}/{flat}"))
+            })
+            .collect();
+    }
     match agent::save(paths, &found) {
         Ok(saved) => {
             println!("已更新智能体「{}」→ v{}", saved.name, saved.version);
@@ -451,6 +476,7 @@ fn copy(paths: &Paths, args: CopyArgs) -> u8 {
         instruction: source.instruction,
         skills: source.skills,
         mcp_servers: source.mcp_servers,
+        extensions: source.extensions.clone(),
         runtime: source.runtime,
         version: 0,
         created_at: now_ms(),
@@ -768,6 +794,21 @@ fn import_agent(paths: &Paths, args: ImportArgs) -> u8 {
         .map(|id| format!("mcp/servers.json#{id}"))
         .collect();
 
+    // ── pi 扩展 ──
+    // 只认工具箱里的（npm / 自定义）—— pi 自带的运行时自动加载，不用绑。
+    let extension_refs: Vec<String> = args
+        .extension
+        .iter()
+        .filter_map(|reference| {
+            let rest = reference.strip_prefix("extensions/")?;
+            let (source, name) = rest.split_once('/')?;
+            if !matches!(source, "npm" | "custom") || name.is_empty() {
+                return None;
+            }
+            Some(format!("extensions/{source}/{name}"))
+        })
+        .collect();
+
     if args.dry_run {
         println!("将会创建智能体「{name}」：");
         println!("  skill：{} 个", skill_refs.len());
@@ -794,6 +835,7 @@ fn import_agent(paths: &Paths, args: ImportArgs) -> u8 {
         instruction: instruction.trim_end().to_string(),
         skills: skill_refs,
         mcp_servers: mcp_refs,
+        extensions: extension_refs,
         runtime: agent::DEFAULT_RUNTIME.to_string(),
         version: 0,
         created_at: now_ms(),

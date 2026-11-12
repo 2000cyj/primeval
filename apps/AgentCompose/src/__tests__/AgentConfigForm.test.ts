@@ -25,6 +25,7 @@ const mountForm = async () => {
           v-model:instruction="instruction"
           v-model:skills="skills"
           v-model:mcp-servers="mcpServers"
+          v-model:extensions="extensions"
         />
       </NMessageProvider>
     `,
@@ -34,6 +35,7 @@ const mountForm = async () => {
       instruction: '',
       skills: [] as string[],
       mcpServers: [] as string[],
+      extensions: [] as string[],
     }),
   })
   await flushPromises()
