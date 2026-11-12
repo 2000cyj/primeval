@@ -2,9 +2,17 @@
 import { computed } from 'vue'
 import { Blocks, Cpu, Network, Server, Settings } from 'lucide-vue-next'
 import { agentScan } from '@/api/agents'
+import PiGlyph from '@/components/PiGlyph.vue'
 
 export type ViewKey =
-  'skills' | 'mcp' | 'agents' | 'agentRuns' | 'agentCreate' | 'agentEdit' | 'settings'
+  | 'skills'
+  | 'mcp'
+  | 'agents'
+  | 'extensions'
+  | 'agentRuns'
+  | 'agentCreate'
+  | 'agentEdit'
+  | 'settings'
 
 defineProps<{ active: ViewKey }>()
 const emit = defineEmits<{ navigate: [key: ViewKey] }>()
@@ -13,6 +21,7 @@ const navItems = [
   { key: 'skills' as const, label: 'Skills', icon: Blocks },
   { key: 'mcp' as const, label: 'MCP', icon: Server },
   { key: 'agents' as const, label: 'Agents', icon: Network },
+  { key: 'extensions' as const, label: 'Pi 扩展', icon: PiGlyph },
   { key: 'agentRuns' as const, label: '智能体', icon: Cpu },
 ]
 

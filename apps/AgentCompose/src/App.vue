@@ -11,16 +11,19 @@ import AppTopbar from '@/components/AppTopbar.vue'
 import SkillsView from '@/views/SkillsView.vue'
 import McpView from '@/views/McpView.vue'
 import AgentsView from '@/views/AgentsView.vue'
+import ExtensionsView from '@/views/ExtensionsView.vue'
 import AgentRunsView from '@/views/AgentRunsView.vue'
 import AgentCreateWizard from '@/views/AgentCreateWizard.vue'
 import AgentEditView from '@/views/AgentEditView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import { useNotifications } from '@/composables/useNotifications'
 import { useCliOps } from '@/composables/useCliOps'
+import { useExtensionOps } from '@/composables/useExtensionOps'
 import { useCreatedAgents } from '@/data/createdAgents'
 
 const { init: initNotifications } = useNotifications()
 const { bindRetryActions } = useCliOps()
+const { bindRetryActions: bindExtensionRetry } = useExtensionOps()
 const { load: loadAgents } = useCreatedAgents()
 
 /** 新建智能体：向导已经落盘了，这里只负责跳到智能体页 */
@@ -107,6 +110,7 @@ const views: ViewKey[] = [
   'skills',
   'mcp',
   'agents',
+  'extensions',
   'agentRuns',
   'agentCreate',
   'agentEdit',
@@ -144,6 +148,7 @@ onMounted(async () => {
   // 升级历史从磁盘读回来（重启后还在），再给失败的那些绑上「重试」。
   await initNotifications()
   bindRetryActions()
+  bindExtensionRetry()
   // 已创建的智能体也从磁盘读回来（重启后还在）。
   try {
     await loadAgents()
@@ -170,6 +175,7 @@ onBeforeUnmount(() => {
           <SkillsView v-if="activeView === 'skills'" />
           <McpView v-else-if="activeView === 'mcp'" />
           <AgentsView v-else-if="activeView === 'agents'" />
+          <ExtensionsView v-else-if="activeView === 'extensions'" />
           <AgentRunsView
             v-else-if="activeView === 'agentRuns'"
             @create="navigate('agentCreate')"

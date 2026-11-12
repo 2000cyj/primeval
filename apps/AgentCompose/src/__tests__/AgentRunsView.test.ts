@@ -63,6 +63,7 @@ const createAgent = async (
     instruction: '',
     skills: [],
     mcpServers: [],
+    extensions: [],
     ...agent,
   })
   return created
