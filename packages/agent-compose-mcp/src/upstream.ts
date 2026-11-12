@@ -6,6 +6,7 @@
  * - 断线重连：指数退避 1s → 2s → 4s → 8s，之后封顶 30s。
  * - 工具清单定时刷新（默认 60s），状态变化通过事件总线推给 UI。
  */
+import { stat } from 'node:fs/promises'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import type { CallToolResult, Tool, Transport } from '@modelcontextprotocol/client'
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio'
@@ -124,6 +125,19 @@ export function explainUpstreamError(detail: string, def: McpServerDef): string 
  */
 async function findMissingCommand(command: string): Promise<string | null> {
   const isWindows = process.platform === 'win32'
+
+  // 绝对路径：直接看文件在不在。
+  // `where <绝对路径>` 找不到的 —— where 只查 PATH 里的可执行文件，
+  // 而 stdio 上游的命令经常是脚本或某个目录下的可执行文件。
+  if (command.includes('/') || command.includes('\\')) {
+    try {
+      await stat(command)
+      return null
+    } catch {
+      return '（找不到这个文件）'
+    }
+  }
+
   const probe = isWindows ? 'where' : 'which'
   try {
     const { execFile } = await import('node:child_process')
@@ -134,6 +148,20 @@ async function findMissingCommand(command: string): Promise<string | null> {
   } catch {
     return isWindows ? '（windows 下可用 where <命令> 确认）' : '（可用 which <命令> 确认）'
   }
+}
+
+/**
+ * 脚本类命令改用 node 跑。
+ *
+ * `.js` / `.mjs` / `.cjs` 在 windows 上不能直接 spawn ——
+ * 系统不知道拿什么去执行，会报「不是有效的 win32 应用程序」。
+ * 改成 `node <脚本>`，脚本路径挪到第一个参数。
+ */
+function scriptAwareCommand(command: string, args: string[]): { command: string; args: string[] } {
+  const lower = command.toLowerCase()
+  const isScript = lower.endsWith('.js') || lower.endsWith('.mjs') || lower.endsWith('.cjs')
+  if (!isScript) return { command, args }
+  return { command: 'node', args: [command, ...args] }
 }
 
 /**
@@ -559,9 +587,13 @@ export class UpstreamPool {
       if (env.errors.length) {
         throw new Error(`环境变量没配好：${env.errors.join('；')}`)
       }
+      // 脚本类命令（.js / .mjs / .cjs）不能直接 spawn ——
+      // windows 不认这些扩展名，会报「不是有效的 win32 应用程序」。
+      // 用 node 跑，脚本路径作为第一个参数。
+      const { command, args } = scriptAwareCommand(def.command, def.args ?? [])
       return new StdioClientTransport({
-        command: def.command,
-        args: def.args ?? [],
+        command,
+        args,
         env: { ...getDefaultEnvironment(), ...env.values },
         // 收集 stderr：上游启动失败时才能看到「缺少参数」这类真实原因
         stderr: 'pipe',
