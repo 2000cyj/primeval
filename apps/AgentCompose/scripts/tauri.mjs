@@ -443,6 +443,33 @@ if (process.argv.slice(2).some((arg) => arg === 'dev' || arg === '--dev')) {
   releaseDevPort()
 }
 
+// build 前置检查：两个随包分发的可执行文件都得先构建出来。
+//
+// 它们在 `src-tauri/bin/`（gitignore），打包时当 resource 带进安装包。
+// 缺了不会让 tauri 报错 —— 它只会打出一个「装完 MCP 用不了」的包，
+// 所以在这儿挡住，给出能照着做的提示。
+const isBuild = process.argv.slice(2).some((arg) => arg === 'build')
+if (isBuild) {
+  const binDir = join(packageRoot, 'src-tauri', 'bin')
+  const exe = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name)
+  const missing = [exe('agentspace'), exe('agent-compose-mcp')].filter(
+    (path) => !existsSync(path),
+  )
+  if (missing.length) {
+    console.error('[tauri.mjs] build 缺少随包分发的可执行文件：')
+    for (const path of missing) {
+      console.error(`  - ${path}`)
+    }
+    console.error('')
+    console.error('  先构建它们：')
+    console.error('    node scripts/build-cli.mjs        （agentspace CLI）')
+    console.error('    node scripts/build-sidecar.mjs    （MCP 代理）')
+    console.error('')
+    console.error('  或者直接跑 pnpm build，它会把两步都带上。')
+    process.exit(1)
+  }
+}
+
 const chosen = pickStrategy()
 const env = withRustFlags(baseEnv, chosen.flags)
 if (chosen.extraPath) {

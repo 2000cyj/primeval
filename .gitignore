@@ -6,6 +6,9 @@
 # 依赖
 node_modules/
 
+# sidecar 编译产物（由 packages/agent-compose-mcp 的 build:bin 生成）
+apps/AgentCompose/src-tauri/bin/
+
 # 系统文件
 .DS_Store
 Thumbs.db
@@ -24,6 +27,8 @@ apps/agent-data-grid/target/
 apps/agent-data-grid/crates/*/target/
 apps/agent-data-grid/src-tauri/target/
 apps/AgentCompose/src-tauri/target/
+apps/agentspace-cli/target/
+apps/agentspace-core/target/
 # turbo 本地缓存(内容寻址,跨机器哈希不同,不提交)
 .turbo/
 

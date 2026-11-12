@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "node scripts/tauri.mjs dev",
     "dev:web": "vite",
-    "build": "node scripts/tauri.mjs build",
+    "build": "node scripts/build-cli.mjs && node scripts/build-sidecar.mjs && node scripts/tauri.mjs build",
+    "build:cli": "node scripts/build-cli.mjs",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
     "build:web": "vite build",
     "tauri": "node scripts/tauri.mjs",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",

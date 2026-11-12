@@ -30,6 +30,11 @@
     "@remote/agent-data-grid#typecheck": {
       "dependsOn": ["^build"]
     },
+    "@remote/agent-compose#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "src-tauri/bin/**"],
+      "cache": false
+    },
     "lint": {},
     "lint:fix": {},
     "format": {
