@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use clap::{Args, Subcommand};
-use agentspace_core::Paths;
+use agentspace_core::{bridge, Paths};
 
 use crate::commands::mcp_client::McpClient;
 use crate::output::{self, Format};
@@ -23,6 +23,8 @@ pub enum McpCmd {
     Get(GetArgs),
     /// 新建一个 server
     Create(CreateArgs),
+    /// 从配置文件批量导入 server
+    Import(ImportArgs),
     /// 改一个 server
     Update(UpdateArgs),
     /// 删一个 server
@@ -36,7 +38,7 @@ pub enum McpCmd {
     /// 连上所有启用的上游，刷新工具清单
     Connect,
     /// 看对外暴露的配置
-    Exposure(GetArgs),
+    Exposure(ListArgs),
     /// 设对外暴露的配置
     SetExposure(SetExposureArgs),
     /// 刷新访问令牌
@@ -45,6 +47,21 @@ pub enum McpCmd {
     Status(ListArgs),
     /// 测一个**还没保存**的 server 定义
     Probe(ProbeArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ImportArgs {
+    /// 配置文件路径（yaml）
+    source: String,
+    /// 相对路径的基准目录（如仓库根）—— 源文件里的相对 command 会按它解析成绝对路径
+    #[arg(long)]
+    base_dir: Option<String>,
+    /// 覆盖已有的同名 server（默认跳过）
+    #[arg(long)]
+    overwrite: bool,
+    /// 不导入，只看会导入什么
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args, Debug)]
@@ -141,9 +158,12 @@ pub struct DeleteArgs {
 
 #[derive(Args, Debug)]
 pub struct SetExposureArgs {
-    /// 暴露哪些 server（相对引用 `mcp/servers.json#<id>`，可重复）
+    /// 暴露哪些 server（server id，可重复）
     #[arg(long = "server")]
     servers: Vec<String>,
+    /// 暴露这些 server 的全部工具（按当前连上的工具清单展开）
+    #[arg(long)]
+    all_tools: bool,
     /// 暴露哪些工具（`serverId::工具名`，可重复）
     #[arg(long = "tool")]
     tools: Vec<String>,
@@ -166,6 +186,7 @@ impl McpCmd {
             McpCmd::List(args) => list(&client, args),
             McpCmd::Get(args) => get(&client, args),
             McpCmd::Create(args) => create(&client, args),
+            McpCmd::Import(args) => import(&client, args),
             McpCmd::Update(args) => update(&client, args),
             McpCmd::Delete(args) => delete(&client, args),
             McpCmd::Enable(args) => set_enabled(&client, args, true),
@@ -444,14 +465,44 @@ fn connect(client: &McpClient) -> u8 {
     }
 }
 
-fn exposure(client: &McpClient, args: GetArgs) -> u8 {
+fn exposure(client: &McpClient, args: ListArgs) -> u8 {
     match client.exposure() {
         Ok(value) => {
             if output::wants_json(args.format, args.json) {
                 output::json(&value);
-            } else {
-                output::text(&serde_json::to_string_pretty(&value).unwrap_or_default());
+                return 0;
             }
+            // 人看的形式：server 列表 + 工具数
+            let server_ids: Vec<String> = value
+                .get("serverIds")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let tool_keys: Vec<String> = value
+                .get("toolKeys")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let max_tools = value.get("maxTools").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!("可见 server：{}", server_ids.len());
+            for id in &server_ids {
+                let count = tool_keys
+                    .iter()
+                    .filter(|key| key.starts_with(&format!("{id}::")))
+                    .count();
+                println!("  - {id}（{count} 个工具）");
+            }
+            println!("已选工具：{} / {}", tool_keys.len(), max_tools);
             0
         }
         Err(error) => {
@@ -473,14 +524,90 @@ fn set_exposure(client: &McpClient, args: SetExposureArgs) -> u8 {
         eprintln!("曝光配置格式不对");
         return 1;
     };
-    object.insert("serverIds".into(), serde_json::json!(args.servers));
-    object.insert("toolKeys".into(), serde_json::json!(args.tools));
+    // server id 的引用形式有两种：`mcp/servers.json#<id>` 和裸 id。
+    // 前端存的是前者，这里两种都认。
+    let server_ids: Vec<String> = args
+        .servers
+        .iter()
+        .map(|raw| {
+            raw.rsplit('#')
+                .next()
+                .unwrap_or(raw)
+                .trim()
+                .to_string()
+        })
+        .filter(|id| !id.is_empty())
+        .collect();
+    object.insert("serverIds".into(), serde_json::json!(server_ids));
+
+    // 工具清单：`--all-tools` 时按当前连上的工具展开，
+    // 否则用命令行给的（`serverId::工具名`）。
+    let tool_keys: Vec<String> = if args.all_tools {
+        match client.status() {
+            Ok(status) => status
+                .get("upstreams")
+                .and_then(|v| v.as_array())
+                .map(|upstreams| {
+                    upstreams
+                        .iter()
+                        .filter(|u| {
+                            u.get("serverId")
+                                .and_then(|v| v.as_str())
+                                .map(|id| server_ids.iter().any(|s| s == id))
+                                .unwrap_or(false)
+                        })
+                        .flat_map(|u| {
+                            u.get("tools")
+                                .and_then(|v| v.as_array())
+                                .map(|tools| {
+                                    tools
+                                        .iter()
+                                        .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+                                        .map(|name| {
+                                            format!(
+                                                "{}::{}",
+                                                u.get("serverId")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or_default(),
+                                                name
+                                            )
+                                        })
+                                        .collect::<Vec<String>>()
+                                })
+                                .unwrap_or_default()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(error) => {
+                eprintln!("读工具清单失败：{error}");
+                return 1;
+            }
+        }
+    } else {
+        args.tools
+            .iter()
+            .map(|raw| {
+                raw.rsplit('#')
+                    .next()
+                    .unwrap_or(raw)
+                    .trim()
+                    .to_string()
+            })
+            .filter(|key| !key.is_empty())
+            .collect()
+    };
+    object.insert("toolKeys".into(), serde_json::json!(tool_keys));
     if let Some(max) = args.max_tools {
         object.insert("maxTools".into(), serde_json::json!(max));
     }
     match client.set_exposure(&value) {
         Ok(()) => {
-            println!("已更新对外暴露的配置。");
+            println!(
+                "已更新对外暴露的配置：{} 个 server，{} 个工具。",
+                server_ids.len(),
+                tool_keys.len()
+            );
             0
         }
         Err(error) => {
@@ -547,6 +674,81 @@ fn probe(client: &McpClient, args: ProbeArgs) -> u8 {
         }
         Err(error) => {
             eprintln!("探测失败：{error}");
+            1
+        }
+    }
+}
+
+fn import(client: &McpClient, args: ImportArgs) -> u8 {
+    let base_dir = args.base_dir.as_ref().map(std::path::PathBuf::from);
+    let (defs, skipped) = match bridge::load_bridge_servers(
+        std::path::Path::new(&args.source),
+        base_dir.as_deref(),
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("导入失败：{error}");
+            return 1;
+        }
+    };
+    if !skipped.is_empty() {
+        eprintln!("提示：这些条目没法用，已跳过：{}", skipped.join("、"));
+    }
+
+    if args.dry_run {
+        println!("将会导入 {} 个 server：", defs.len());
+        for def in &defs {
+            let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let transport = def.get("transport").and_then(|v| v.as_str()).unwrap_or("?");
+            println!("  - {id}（{transport}）");
+        }
+        return 0;
+    }
+
+    let mut servers = match client.servers() {
+        Ok(servers) => servers,
+        Err(error) => {
+            eprintln!("读取 server 列表失败：{error}");
+            return 1;
+        }
+    };
+    let mut added = 0usize;
+    let mut skipped_existing = Vec::new();
+    for def in defs {
+        let id = def
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let exists = servers
+            .iter()
+            .any(|item| item.get("id").and_then(|v| v.as_str()) == Some(id.as_str()));
+        if exists && !args.overwrite {
+            skipped_existing.push(id);
+            continue;
+        }
+        // 覆盖：先去掉旧的
+        if exists {
+            servers.retain(|item| item.get("id").and_then(|v| v.as_str()) != Some(id.as_str()));
+        }
+        servers.push(def);
+        added += 1;
+    }
+
+    if added == 0 {
+        println!("没有新增（已有的：{}）", skipped_existing.join("、"));
+        return 0;
+    }
+    match client.save_servers(&servers) {
+        Ok(()) => {
+            println!("已导入 {added} 个 MCP server。");
+            if !skipped_existing.is_empty() {
+                println!("跳过了已有的：{}", skipped_existing.join("、"));
+            }
+            0
+        }
+        Err(error) => {
+            eprintln!("导入失败：{error}");
             1
         }
     }

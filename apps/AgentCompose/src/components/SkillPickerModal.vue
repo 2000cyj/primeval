@@ -56,6 +56,7 @@ const SOURCE_LABEL: Record<SkillInfo['source'], string> = {
   local: '本地导入',
   runtime: '运行时复制',
   duplicate: '副本',
+  git: 'GitHub 仓库',
 }
 
 const isSelected = (ref: string) => props.selected.includes(ref)

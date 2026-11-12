@@ -12,7 +12,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
 /** skill 的来源 */
-export type SkillSource = 'manual' | 'url' | 'local' | 'runtime' | 'duplicate'
+export type SkillSource = 'manual' | 'url' | 'local' | 'runtime' | 'duplicate' | 'git'
 
 /** 工作区里的一个 skill */
 export interface SkillInfo {
@@ -79,6 +79,25 @@ export interface SkillDetail {
   updatedAtMs: number
 }
 
+/** 一个 GitHub 仓库 */
+export interface RepoRef {
+  owner: string
+  name: string
+}
+
+/** 仓库里的一个 skill（还没导入时的发现结果） */
+export interface DiscoveredSkill {
+  name: string
+  description: string
+  /** 相对仓库根的路径（`skills/foo/SKILL.md`） */
+  path: string
+}
+
+/** 仓库的一个分支 */
+export interface RepoBranch {
+  name: string
+}
+
 export const SKILL_COMMANDS = {
   list: 'skills_list',
   createManual: 'skills_create_manual',
@@ -93,6 +112,10 @@ export const SKILL_COMMANDS = {
   update: 'skills_update',
   duplicate: 'skills_duplicate',
   pickSource: 'skills_pick_source',
+  parseRepoUrl: 'skills_parse_repo_url',
+  repoBranches: 'skills_repo_branches',
+  repoDiscover: 'skills_repo_discover',
+  repoImport: 'skills_repo_import',
 } as const
 
 /** 统一的错误包装：保留原始原因，便于界面直接展示 */
@@ -229,5 +252,50 @@ export async function pickSource(kind: 'folder' | 'archive'): Promise<string | n
     return await invoke<string | null>(SKILL_COMMANDS.pickSource, { kind })
   } catch (error) {
     throw fail('打开系统选择框', error)
+  }
+}
+
+/**
+ * 从 GitHub 链接里解析 owner/repo。
+ *
+ * 认 `https://github.com/owner/repo`、`git@github.com:owner/repo.git`、
+ * `owner/repo`。解析不出来返回 null。
+ */
+export async function parseRepoUrl(url: string): Promise<RepoRef | null> {
+  try {
+    return await invoke<RepoRef | null>(SKILL_COMMANDS.parseRepoUrl, { url })
+  } catch (error) {
+    throw fail('解析仓库地址', error)
+  }
+}
+
+/** 列出仓库的分支 */
+export async function listRepoBranches(url: string): Promise<RepoBranch[]> {
+  try {
+    return await invoke<RepoBranch[]>(SKILL_COMMANDS.repoBranches, { url })
+  } catch (error) {
+    throw fail('读取仓库分支', error)
+  }
+}
+
+/** 列出仓库里的 skill（不导入） */
+export async function discoverRepoSkills(url: string, branch: string): Promise<DiscoveredSkill[]> {
+  try {
+    return await invoke<DiscoveredSkill[]>(SKILL_COMMANDS.repoDiscover, { url, branch })
+  } catch (error) {
+    throw fail('读取仓库里的 skill', error)
+  }
+}
+
+/** 从仓库里导入选中的 skill */
+export async function importRepoSkills(
+  url: string,
+  branch: string,
+  paths: string[],
+): Promise<SkillInfo[]> {
+  try {
+    return await invoke<SkillInfo[]>(SKILL_COMMANDS.repoImport, { url, branch, paths })
+  } catch (error) {
+    throw fail('从仓库导入 skill', error)
   }
 }

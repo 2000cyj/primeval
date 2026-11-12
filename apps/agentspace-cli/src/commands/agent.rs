@@ -3,7 +3,7 @@
 //! 对应桌面端的「智能体」页。
 
 use clap::{Args, Subcommand};
-use agentspace_core::{agent, Paths};
+use agentspace_core::{agent, github, pi_settings, skills, Paths};
 
 use crate::output::{self, Format};
 
@@ -21,12 +21,35 @@ pub enum AgentCmd {
     Delete(DeleteArgs),
     /// 复制一个智能体
     Copy(CopyArgs),
+    /// 从 pi 项目一键导入：skill、mcp、指令、绑定关系
+    Import(ImportArgs),
     /// 管理绑定的 Skill
     #[command(subcommand)]
     Skills(SkillBindCmd),
     /// 管理绑定的 MCP
     #[command(subcommand)]
     Mcp(McpBindCmd),
+}
+
+#[derive(Args, Debug)]
+pub struct ImportArgs {
+    /// 智能体名称
+    name: String,
+    /// pi 项目的目录（含 .pi/）
+    #[arg(long, default_value = ".")]
+    project: String,
+    /// 描述
+    #[arg(long, default_value = "")]
+    description: String,
+    /// 指令文件（默认取项目里的 AGENTS.md，存在才用）
+    #[arg(long)]
+    instruction_file: Option<String>,
+    /// 同时绑定的 mcp server id（可重复）
+    #[arg(long = "mcp")]
+    mcp: Vec<String>,
+    /// 不导入，只看会做什么
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args, Debug)]
@@ -61,6 +84,9 @@ pub struct CreateArgs {
     /// 指令（会写进 AGENTS.md）
     #[arg(long, default_value = "")]
     instruction: String,
+    /// 从文件读指令（如项目里的 AGENTS.md）—— 比 --instruction 适合长文本
+    #[arg(long, conflicts_with = "instruction")]
+    instruction_file: Option<String>,
     /// 绑定的 skill（相对引用，如 `skills/knowledge-base`，可重复）
     #[arg(long = "skill")]
     skills: Vec<String>,
@@ -85,6 +111,9 @@ pub struct UpdateArgs {
     /// 改指令
     #[arg(long)]
     instruction: Option<String>,
+    /// 从文件读指令（如项目里的 AGENTS.md）
+    #[arg(long, conflicts_with = "instruction")]
+    instruction_file: Option<String>,
     /// 绑定的 skill（整体替换，可重复）
     #[arg(long = "skill")]
     skills: Option<Vec<String>>,
@@ -159,6 +188,7 @@ impl AgentCmd {
             AgentCmd::Update(args) => update(paths, args),
             AgentCmd::Delete(args) => delete(paths, args),
             AgentCmd::Copy(args) => copy(paths, args),
+            AgentCmd::Import(args) => import_agent(paths, args),
             AgentCmd::Skills(cmd) => skills(paths, cmd),
             AgentCmd::Mcp(cmd) => mcp(paths, cmd),
         }
@@ -278,11 +308,19 @@ fn create(paths: &Paths, args: CreateArgs) -> u8 {
         eprintln!("已经有同名智能体了：{name}");
         return 2;
     }
+    // 指令：命令行给的是短文本，长文本从文件读
+    let instruction = match read_instruction(&args.instruction, args.instruction_file.as_deref()) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return 1;
+        }
+    };
     let draft = agent::CreatedAgent {
         id: new_id(),
         name: name.clone(),
         description: args.description,
-        instruction: args.instruction,
+        instruction,
         skills: args.skills,
         mcp_servers: args
             .mcp
@@ -334,6 +372,15 @@ fn update(paths: &Paths, args: UpdateArgs) -> u8 {
     }
     if let Some(value) = args.instruction {
         found.instruction = value;
+    }
+    if let Some(path) = args.instruction_file {
+        match read_instruction("", Some(&path)) {
+            Ok(value) => found.instruction = value,
+            Err(error) => {
+                eprintln!("{error}");
+                return 1;
+            }
+        }
     }
     if let Some(value) = args.skills {
         found.skills = value;
@@ -579,4 +626,193 @@ pub fn confirm(question: &str) -> bool {
     }
     let answer = answer.trim().to_lowercase();
     answer == "y" || answer == "yes"
+}
+
+/// 读指令正文。
+///
+/// 命令行给的是短文本；长文本（项目的 AGENTS.md 动辄上万字）从文件读。
+fn read_instruction(inline: &str, file: Option<&str>) -> Result<String, String> {
+    match file {
+        Some(path) => {
+            let raw = std::fs::read_to_string(path)
+                .map_err(|e| format!("读指令文件 {path} 失败：{e}"))?;
+            Ok(raw.trim_end().to_string())
+        }
+        None => Ok(inline.trim_end().to_string()),
+    }
+}
+
+/// 从 pi 项目一键导入一个智能体。
+///
+/// 做的事：
+/// 1. 项目 `.pi/skills/` 里的 skill → 收进 skill 仓库
+/// 2. 项目 `.pi/settings.json` 的 packages 声明的 skill → 也收进来
+/// 3. 项目的 `AGENTS.md` → 智能体的指令
+/// 4. 上面这些 skill + 指定的 mcp → 绑定到新智能体
+fn import_agent(paths: &Paths, args: ImportArgs) -> u8 {
+    let project = std::path::PathBuf::from(args.project.trim());
+    let pi_dir = project.join(".pi");
+    let name = args.name.trim().to_string();
+    if name.is_empty() {
+        eprintln!("名字不能为空");
+        return 2;
+    }
+    if !agent::find_by_name(paths, &name).is_empty() {
+        eprintln!("已经有同名智能体了：{name}");
+        return 2;
+    }
+
+    // ── 收集 skill ──
+    let mut skill_refs: Vec<String> = Vec::new();
+
+    // 1) 项目本地的 .pi/skills/<名字>/
+    let local_skills = pi_dir.join("skills");
+    if local_skills.is_dir() {
+        let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&local_skills)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir() && path.join("SKILL.md").is_file())
+                    .collect()
+            })
+            .unwrap_or_default();
+        dirs.sort();
+        for dir in dirs {
+            let dir_name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            match skills::skills_import_local(paths, dir.to_string_lossy().to_string()) {
+                Ok(info) => {
+                    skill_refs.push(info.relative_path);
+                    if !args.dry_run {
+                        println!("已导入 skill「{}」", info.name);
+                    }
+                }
+                Err(error) => {
+                    // 已存在同名 —— 直接按引用绑定
+                    if error.contains("已存在同名 skill") {
+                        skill_refs.push(format!("skills/{dir_name}"));
+                    } else {
+                        eprintln!("导入 skill 失败（{dir_name}）：{error}");
+                    }
+                }
+            }
+        }
+    }
+
+    // 2) packages 声明的 skill
+    let settings_path = pi_dir.join("settings.json");
+    if settings_path.is_file() {
+        match pi_settings::read_settings(&settings_path) {
+            Ok(settings) => {
+                for item in pi_settings::resolve_skills(&settings, &pi_dir) {
+                    // git 源自己 clone，npm 源从 node_modules 导
+                    let result = if item.package.starts_with("git:") {
+                        github::skills_import_git(paths, &item.package, &[item.declared.clone()])
+                            .map(|list| list.into_iter().next())
+                    } else {
+                        skills::skills_import_local(paths, item.dir.to_string_lossy().to_string())
+                            .map(Some)
+                    };
+                    match result {
+                        Ok(Some(info)) => {
+                            if !skill_refs.contains(&info.relative_path) {
+                                skill_refs.push(info.relative_path);
+                                if !args.dry_run {
+                                    println!("已导入 skill「{}」", info.name);
+                                }
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            if error.contains("已存在同名 skill") {
+                                // 已经在仓库里了 —— 按引用绑定就行
+                                // 引用用的是仓库里的目录名，不是 skill 名
+                                let dir_name = item
+                                    .dir
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| item.name.clone());
+                                let reference = format!("skills/{dir_name}");
+                                if !skill_refs.contains(&reference) {
+                                    skill_refs.push(reference);
+                                }
+                            } else {
+                                eprintln!("导入 skill 失败（{}）：{error}", item.declared);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(error) => eprintln!("读 settings.json 失败：{error}"),
+        }
+    }
+
+    // ── 指令 ──
+    let instruction_path = match args.instruction_file {
+        Some(path) => std::path::PathBuf::from(path),
+        None => project.join("AGENTS.md"),
+    };
+    let instruction = if instruction_path.is_file() {
+        std::fs::read_to_string(&instruction_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // ── mcp ──
+    let mcp_refs: Vec<String> = args
+        .mcp
+        .iter()
+        .map(|id| format!("mcp/servers.json#{id}"))
+        .collect();
+
+    if args.dry_run {
+        println!("将会创建智能体「{name}」：");
+        println!("  skill：{} 个", skill_refs.len());
+        for item in &skill_refs {
+            println!("    - {item}");
+        }
+        println!("  mcp：{} 个", mcp_refs.len());
+        for item in &mcp_refs {
+            println!("    - {item}");
+        }
+        let instruction_from = if instruction.is_empty() {
+            "（没有）".to_string()
+        } else {
+            instruction_path.display().to_string()
+        };
+        println!("  指令：{instruction_from}");
+        return 0;
+    }
+
+    let draft = agent::CreatedAgent {
+        id: new_id(),
+        name: name.clone(),
+        description: args.description,
+        instruction: instruction.trim_end().to_string(),
+        skills: skill_refs,
+        mcp_servers: mcp_refs,
+        runtime: agent::DEFAULT_RUNTIME.to_string(),
+        version: 0,
+        created_at: now_ms(),
+    };
+    match agent::save(paths, &draft) {
+        Ok(saved) => {
+            println!(
+                "已创建智能体「{}」（{}）v{}：{} 个 skill，{} 个 MCP",
+                saved.name,
+                saved.id,
+                saved.version,
+                saved.skills.len(),
+                saved.mcp_servers.len()
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("创建失败：{error}");
+            1
+        }
+    }
 }

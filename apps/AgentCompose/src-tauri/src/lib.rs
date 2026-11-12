@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager};
 
 pub(crate) mod agents;
 mod agent_store;
+mod github;
 mod history;
 mod paths;
 mod proxy;
@@ -1064,6 +1065,10 @@ pub fn run() {
             skills::skills_duplicate,
             skills::skills_refresh,
             skills::skills_pick_source,
+            github::skills_parse_repo_url,
+            github::skills_repo_branches,
+            github::skills_repo_discover,
+            github::skills_repo_import,
             mcp_ensure_sidecar,
             mcp_search_registry,
             mcp_authorize_server,

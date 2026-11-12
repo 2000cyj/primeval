@@ -15,8 +15,12 @@
 //! **不依赖 Tauri** —— 桌面端和 CLI 都要能引它，Tauri 只能待在桌面端那一侧。
 
 pub mod agent;
-pub mod toolbox;
+pub mod bridge;
+pub mod git_source;
+pub mod github;
 pub mod paths;
+pub mod pi_settings;
+pub mod toolbox;
 pub mod proxy;
 pub mod skills;
 

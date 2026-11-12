@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NButton, NCheckbox, NIcon, NInput, NModal, NSpin } from 'naive-ui'
+import { NButton, NCheckbox, NIcon, NInput, NModal, NSelect, NSpin } from 'naive-ui'
 import {
   ArrowLeft,
   ChevronRight,
@@ -9,6 +9,7 @@ import {
   FileArchive,
   FilePlus2,
   FolderOpen,
+  Github,
   Globe,
   HardDrive,
   Loader2,
@@ -16,16 +17,21 @@ import {
 } from 'lucide-vue-next'
 import {
   createManualSkill,
+  discoverRepoSkills,
+  importRepoSkills,
   importRuntimeSkill,
   importSkillFromLocal,
   importSkillFromUrl,
+  listRepoBranches,
   listRuntimeSkills,
+  parseRepoUrl,
   pickSource,
+  type DiscoveredSkill,
   type RuntimeSkillInfo,
   type SkillInfo,
 } from '@/api/skills'
 
-export type CreateMethod = 'manual' | 'local' | 'url' | 'runtime'
+export type CreateMethod = 'manual' | 'local' | 'url' | 'runtime' | 'github'
 
 const props = defineProps<{
   /** 直接打开某种方式；不传则先显示方式选择 */
@@ -61,6 +67,116 @@ const selectedPaths = ref<string[]>([])
 /** 运行时列表的搜索词 */
 const runtimeQuery = ref('')
 
+/** ── 从 GitHub 仓库导入 ── */
+
+/** 仓库地址 */
+const repoUrl = ref('')
+/** 选中的分支 */
+const repoBranch = ref('')
+/** 仓库里的分支列表 */
+const repoBranches = ref<string[]>([])
+/** 读分支中 */
+const branchesLoading = ref(false)
+/** 仓库里发现的 skill */
+const repoSkills = ref<DiscoveredSkill[]>([])
+/** 发现中 */
+const discovering = ref(false)
+/** 勾选的 skill（存仓库里的相对路径） */
+const selectedRepoSkills = ref<string[]>([])
+/** 仓库里 skill 的搜索词 */
+const repoQuery = ref('')
+/** 地址解析失败时的提示 */
+const repoUrlError = ref('')
+
+/** 按搜索词过滤仓库里的 skill */
+const visibleRepoSkills = computed(() => {
+  const keyword = repoQuery.value.trim().toLowerCase()
+  if (!keyword) return repoSkills.value
+  return repoSkills.value.filter((item) =>
+    `${item.name}${item.description}`.toLowerCase().includes(keyword),
+  )
+})
+
+/** 填好地址后：解析仓库 → 拉分支列表 */
+const loadRepoBranches = async () => {
+  const trimmed = repoUrl.value.trim()
+  repoUrlError.value = ''
+  repoBranch.value = ''
+  repoSkills.value = []
+  selectedRepoSkills.value = []
+  if (!trimmed) return
+  try {
+    const parsed = await parseRepoUrl(trimmed)
+    if (!parsed) {
+      repoUrlError.value = '看不出仓库地址 —— 应该是 https://github.com/owner/repo'
+      return
+    }
+    branchesLoading.value = true
+    repoBranches.value = (await listRepoBranches(trimmed)).map((item) => item.name)
+    if (repoBranches.value.length > 0) {
+      repoBranch.value = repoBranches.value.includes('main') ? 'main' : repoBranches.value[0]!
+    }
+  } catch (err) {
+    repoUrlError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    branchesLoading.value = false
+  }
+}
+
+/** 选好分支后：列出仓库里的 skill */
+const discoverRepo = async () => {
+  const trimmed = repoUrl.value.trim()
+  const branch = repoBranch.value.trim()
+  if (!trimmed || !branch) return
+  discovering.value = true
+  repoSkills.value = []
+  selectedRepoSkills.value = []
+  try {
+    repoSkills.value = await discoverRepoSkills(trimmed, branch)
+    error.value = ''
+    if (repoSkills.value.length === 0) {
+      error.value = '这个分支里没找到 skill（仓库根目录下需要有带 SKILL.md 的目录）'
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    discovering.value = false
+  }
+}
+
+/** 勾选 / 取消勾选一个仓库里的 skill */
+const toggleRepoSkill = (path: string, checked: boolean) => {
+  selectedRepoSkills.value = checked
+    ? [...selectedRepoSkills.value, path]
+    : selectedRepoSkills.value.filter((item) => item !== path)
+}
+
+/** 导入勾选的 skill */
+const submitRepo = async () => {
+  if (selectedRepoSkills.value.length === 0) {
+    error.value = '请至少选一个 skill'
+    return
+  }
+  if (busy.value) return
+  busy.value = true
+  error.value = ''
+  try {
+    const items = await importRepoSkills(
+      repoUrl.value.trim(),
+      repoBranch.value.trim(),
+      selectedRepoSkills.value,
+    )
+    if (items.length > 0) {
+      emit('created', items[0]!)
+      visible.value = false
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    busy.value = false
+  }
+}
+
 /** 按搜索词过滤（名称 / 描述 / 运行时） */
 const visibleRuntimeSkills = computed(() => {
   const keyword = runtimeQuery.value.trim().toLowerCase()
@@ -95,6 +211,12 @@ const methods = [
     desc: '把本地运行时里已装好的 skill 提升到工作区。',
     icon: Copy,
   },
+  {
+    key: 'github' as const,
+    title: '从 GitHub 仓库导入',
+    desc: '填仓库地址和分支，挑里面的 skill 导入。',
+    icon: Github,
+  },
 ]
 
 /** 各步骤的标题与说明 */
@@ -110,6 +232,7 @@ const stepMeta = computed<{ title: string; desc: string }>(() => {
 const modalWidth = computed(() => {
   if (step.value === 'chooser') return '460px'
   if (step.value === 'runtime') return '640px'
+  if (step.value === 'github') return '680px'
   return '560px'
 })
 
@@ -121,7 +244,13 @@ const resetForms = () => {
   runtimeSkills.value = []
   selectedPaths.value = []
   runtimeQuery.value = ''
-  runtimeLoading.value = false
+  repoUrl.value = ''
+  repoBranch.value = ''
+  repoBranches.value = []
+  repoSkills.value = []
+  selectedRepoSkills.value = []
+  repoQuery.value = ''
+  repoUrlError.value = ''
   error.value = ''
 }
 
@@ -402,6 +531,78 @@ watch(
       <p v-else class="picked-empty">还没有选择文件夹或压缩包。</p>
     </div>
 
+    <!-- 从 GitHub 仓库导入 -->
+    <div v-else-if="step === 'github'" class="form">
+      <div class="repo-row">
+        <NInput
+          v-model:value="repoUrl"
+          size="small"
+          placeholder="https://github.com/owner/repo"
+          :status="repoUrlError ? 'error' : undefined"
+          @keyup.enter="loadRepoBranches"
+        />
+        <NButton size="small" :loading="branchesLoading" @click="loadRepoBranches">
+          <template #icon>
+            <NIcon :size="14">
+              <Search />
+            </NIcon>
+          </template>
+          读分支
+        </NButton>
+      </div>
+      <p v-if="repoUrlError" class="repo-error">{{ repoUrlError }}</p>
+
+      <div v-if="repoBranches.length" class="repo-row">
+        <NSelect
+          v-model:value="repoBranch"
+          size="small"
+          :options="repoBranches.map((name) => ({ label: name, value: name }))"
+          placeholder="选分支"
+        />
+        <NButton size="small" :loading="discovering" @click="discoverRepo">
+          <template #icon>
+            <NIcon :size="14">
+              <Github />
+            </NIcon>
+          </template>
+          列出 skill
+        </NButton>
+      </div>
+
+      <div v-if="discovering" class="repo-empty">
+        <NSpin size="small" />
+        <span>正在扫仓库里的 SKILL.md…</span>
+      </div>
+
+      <template v-else-if="repoSkills.length">
+        <div class="repo-head">
+          <NInput v-model:value="repoQuery" size="tiny" clearable placeholder="搜索名称或描述">
+            <template #prefix>
+              <NIcon :size="13">
+                <Search />
+              </NIcon>
+            </template>
+          </NInput>
+          <span class="repo-count tnum">
+            已选 {{ selectedRepoSkills.length }} / {{ repoSkills.length }}
+          </span>
+        </div>
+        <ul class="repo-list">
+          <li v-for="item in visibleRepoSkills" :key="item.path" class="repo-item">
+            <NCheckbox
+              :checked="selectedRepoSkills.includes(item.path)"
+              @update:checked="(checked: boolean) => toggleRepoSkill(item.path, checked)"
+            >
+              {{ item.name }}
+            </NCheckbox>
+            <span class="repo-desc">{{ item.description || '（无描述）' }}</span>
+          </li>
+        </ul>
+      </template>
+
+      <p v-else-if="repoBranch" class="repo-empty">先选分支，再点「列出 skill」。</p>
+    </div>
+
     <!-- 运行时复制 -->
     <div v-else class="form">
       <div class="runtime-head">
@@ -503,6 +704,21 @@ watch(
           </NIcon>
         </template>
         导入
+      </NButton>
+      <NButton
+        v-else-if="step === 'github'"
+        size="small"
+        type="primary"
+        :disabled="busy || !selectedRepoSkills.length"
+        :loading="busy"
+        @click="submitRepo"
+      >
+        <template #icon>
+          <NIcon :size="14">
+            <Download />
+          </NIcon>
+        </template>
+        导入<span v-if="selectedRepoSkills.length">（{{ selectedRepoSkills.length }}）</span>
       </NButton>
       <NButton
         v-else
@@ -680,6 +896,81 @@ watch(
   margin: 0;
   font-size: 12px;
   color: var(--c-text-3);
+}
+
+/* ── GitHub 仓库导入 ── */
+
+.repo-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.repo-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--c-danger);
+}
+
+.repo-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.repo-head > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
+.repo-empty {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  padding: 12px 0;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.repo-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.repo-desc {
+  padding-left: 22px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-hints {

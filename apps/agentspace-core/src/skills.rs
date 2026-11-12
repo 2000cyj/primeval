@@ -76,6 +76,32 @@ pub struct RuntimeSkillInfo {
     pub installed: bool,
 }
 
+/// 写一组文件进工作区（给同 crate 的其它模块用）。
+pub fn write_skill_public(
+    paths: &Paths,
+    name: &str,
+    description: &str,
+    source: &str,
+    files: Vec<SkillFile>,
+) -> Result<SkillInfo, String> {
+    write_skill(paths, name, description, source, files)
+}
+
+/// 记来源出处（给同 crate 的其它模块用）。
+pub fn set_origin_public(paths: &Paths, name: &str, origin: Option<serde_json::Value>) {
+    set_origin(paths, name, origin);
+}
+
+/// git 源的出处（给同 crate 的其它模块用）。
+pub fn origin_git_public(repo: &str, reference: Option<&str>) -> serde_json::Value {
+    origin_git(repo, reference)
+}
+
+/// 目录名清洗（给同 crate 的其它模块用）。
+pub fn sanitize_skill_name_public(raw: &str) -> String {
+    sanitize_skill_name(raw)
+}
+
 /// 落盘前先在内存里攒好的一组文件。
 #[derive(Clone, Debug)]
 pub struct SkillFile {
@@ -233,6 +259,21 @@ fn scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
         serde_yaml::Value::Number(value) => Some(value.to_string()),
         _ => None,
     }
+}
+
+/// 解析 frontmatter（给同 crate 的其它模块用）。
+pub fn parse_frontmatter_public(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
+    parse_frontmatter(raw)
+}
+
+/// 取 frontmatter 里的字符串字段（给同 crate 的其它模块用）。
+pub fn fm_get_public(frontmatter: &Option<BTreeMap<String, String>>, key: &str) -> String {
+    fm_get(frontmatter, key)
+}
+
+/// 收集一个 skill 目录下的所有文件（给同 crate 的其它模块用）。
+pub fn collect_skill_files_public(dir: &Path) -> Result<Vec<SkillFile>, String> {
+    collect_dir_files(dir)
 }
 
 /// 取 frontmatter 里的字符串字段。
@@ -627,6 +668,15 @@ fn zip_skill_prefix(entries: &[ZipEntry]) -> Option<String> {
 ///
 /// - url：记 source_url，刷新时重新抓
 /// - local / runtime：记 source_path，刷新时重新读本地目录
+/// git 源的出处：`type: "git"`，记仓库地址与 ref。
+fn origin_git(repo: &str, reference: Option<&str>) -> serde_json::Value {
+    let mut origin = json!({ "type": "git", "source_url": repo });
+    if let Some(reference) = reference {
+        origin["source_ref"] = json!(reference);
+    }
+    origin
+}
+
 fn origin_json(kind: &str, source_url: Option<&str>, source_path: Option<&str>) -> serde_json::Value {
     let mut origin = json!({ "type": kind });
     if let Some(url) = source_url {
@@ -666,7 +716,7 @@ fn is_refreshable(dir: &Path) -> bool {
     };
     let kind = origin.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match kind {
-        "url" => origin
+        "url" | "git" => origin
             .get("source_url")
             .and_then(|v| v.as_str())
             .map(|v| !v.trim().is_empty())
@@ -887,6 +937,56 @@ pub async fn skills_import_url(paths: &Paths, url: String) -> Result<SkillInfo, 
 }
 
 /// 从本地目录或压缩包导入 skill。
+/// 批量导入一个目录下的所有 skill。
+///
+/// 目录本身没有 `SKILL.md`、但里面有若干个带 `SKILL.md` 的子目录时，
+/// 把它们全部导进来 —— 项目里常见 `.pi/skills/<名字>/SKILL.md` 这种布局。
+///
+/// 返回导入成功的 skill（失败的跳过，不中断整批）。
+pub fn skills_import_local_all(
+    paths: &Paths,
+    path: String,
+) -> Result<Vec<SkillInfo>, String> {
+    let source = PathBuf::from(path.trim());
+    if !source.exists() {
+        return Err("所选路径不存在".to_string());
+    }
+    if !source.is_dir() {
+        return Err("批量导入只支持目录".to_string());
+    }
+    // 目录自己就是 skill → 当成单个导入
+    if source.join("SKILL.md").is_file() {
+        return skills_import_local(paths, path).map(|info| vec![info]);
+    }
+
+    let mut dirs: Vec<PathBuf> = fs::read_dir(&source)
+        .map_err(|e| format!("读目录失败：{e}"))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join("SKILL.md").is_file())
+        .collect();
+    dirs.sort();
+    if dirs.is_empty() {
+        return Err(format!(
+            "{} 里没有找到任何带 SKILL.md 的子目录",
+            source.display()
+        ));
+    }
+
+    let mut out: Vec<SkillInfo> = Vec::new();
+    for dir in dirs {
+        match skills_import_local(paths, dir.to_string_lossy().to_string()) {
+            Ok(info) => out.push(info),
+            // 一个失败不影响整批 —— 名字撞了之类的
+            Err(_) => continue,
+        }
+    }
+    if out.is_empty() {
+        return Err("一个都没导进来（可能都已存在同名 skill）".to_string());
+    }
+    Ok(out)
+}
+
 pub fn skills_import_local(paths: &Paths, path: String) -> Result<SkillInfo, String> {
     let source = PathBuf::from(path.trim());
     if !source.exists() {

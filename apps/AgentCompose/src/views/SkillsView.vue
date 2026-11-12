@@ -202,6 +202,7 @@ const sourceLabel = (source: SkillInfo['source']): string => {
     url: '从 URL 导入',
     runtime: '从运行时复制',
     duplicate: '创建副本',
+    git: 'GitHub 仓库',
   }
   return labels[source] ?? source
 }

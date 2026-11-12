@@ -5,7 +5,7 @@
 //! 逻辑都在共享 core（`agentspace_core::skills`）里，这里只管参数和输出。
 
 use clap::{Args, Subcommand};
-use agentspace_core::{skills, Paths};
+use agentspace_core::{github, pi_settings, skills, Paths};
 
 use crate::output::{self, Format};
 
@@ -31,9 +31,44 @@ pub enum SkillCmd {
     Refresh(NameArgs),
     /// 从本地目录或网址导入
     Import(ImportArgs),
+    /// 从 pi 项目的配置里导入 package 带的 skill
+    ImportFromPi(ImportFromPiArgs),
+    /// 从 GitHub 仓库导入
+    Github(GithubArgs),
     /// 管理 skill 里的文件
     #[command(subcommand)]
     Files(FileCmd),
+}
+
+#[derive(Args, Debug)]
+pub struct GithubArgs {
+    /// GitHub 仓库地址（https://github.com/owner/repo）
+    repo: String,
+    /// 分支（不给就用 main）
+    #[arg(long)]
+    branch: Option<String>,
+    /// 只列分支，不扫仓库
+    #[arg(long)]
+    branches: bool,
+    /// 真的导入（不给就只列出来 —— 误用不会把一堆 skill 拉进来）
+    #[arg(long)]
+    import: bool,
+    /// 导入哪些 skill（按名字或仓库里的相对路径，可重复）
+    #[arg(long)]
+    skill: Vec<String>,
+    /// 输出格式
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+}
+
+#[derive(Args, Debug)]
+pub struct ImportFromPiArgs {
+    /// pi 项目的目录（含 .pi/）
+    #[arg(default_value = ".")]
+    project: String,
+    /// 只看会导入什么
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args, Debug)]
@@ -112,6 +147,9 @@ pub struct DuplicateArgs {
 pub struct ImportArgs {
     /// 本地目录，或 http(s) 网址
     source: String,
+    /// 目录里有多个 skill 时全部导入（默认只导一个）
+    #[arg(long)]
+    all: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -156,6 +194,8 @@ impl SkillCmd {
             SkillCmd::Disable(args) => set_enabled(paths, args, false),
             SkillCmd::Refresh(args) => refresh(paths, args),
             SkillCmd::Import(args) => import(paths, args),
+            SkillCmd::ImportFromPi(args) => import_from_pi(paths, args),
+            SkillCmd::Github(args) => from_github(paths, args),
             SkillCmd::Files(cmd) => files(paths, cmd),
         }
     }
@@ -338,21 +378,49 @@ fn refresh(paths: &Paths, args: NameArgs) -> u8 {
 
 fn import(paths: &Paths, args: ImportArgs) -> u8 {
     let source = args.source.trim().to_string();
-    let result = crate::commands::block_on(async move {
-        if source.starts_with("http://") || source.starts_with("https://") {
+    // 网址只能导一个
+    let is_url = source.starts_with("http://") || source.starts_with("https://");
+    if is_url {
+        let result = crate::commands::block_on(async move {
             skills::skills_import_url(paths, source).await
-        } else {
-            skills::skills_import_local(paths, source)
+        });
+        return match result {
+            Ok(info) => {
+                println!("已导入 skill「{}」（{}）", info.name, info.relative_path);
+                0
+            }
+            Err(error) => {
+                eprintln!("导入失败：{error}");
+                1
+            }
+        };
+    }
+
+    if args.all {
+        // 批量：目录里每个带 SKILL.md 的子目录都导
+        match skills::skills_import_local_all(paths, source) {
+            Ok(items) => {
+                for info in &items {
+                    println!("已导入 skill「{}」（{}）", info.name, info.relative_path);
+                }
+                println!("共导入 {} 个 skill。", items.len());
+                0
+            }
+            Err(error) => {
+                eprintln!("导入失败：{error}");
+                1
+            }
         }
-    });
-    match result {
-        Ok(info) => {
-            println!("已导入 skill「{}」（{}）", info.name, info.relative_path);
-            0
-        }
-        Err(error) => {
-            eprintln!("导入失败：{error}");
-            1
+    } else {
+        match skills::skills_import_local(paths, source) {
+            Ok(info) => {
+                println!("已导入 skill「{}」（{}）", info.name, info.relative_path);
+                0
+            }
+            Err(error) => {
+                eprintln!("导入失败：{error}");
+                1
+            }
         }
     }
 }
@@ -414,6 +482,209 @@ fn files(paths: &Paths, cmd: FileCmd) -> u8 {
                     1
                 }
             }
+        }
+    }
+}
+
+/// 从 pi 项目的配置里导入 package 带的 skill。
+///
+/// pi 的 `.pi/settings.json` 用 `packages` 声明 skill，包本身由 pi 克隆到
+/// `.pi/git/` 和 `.pi/npm/` 里。这里把那些 skill 收进我们的 skill 仓库。
+fn import_from_pi(paths: &Paths, args: ImportFromPiArgs) -> u8 {
+    let project = std::path::PathBuf::from(args.project.trim());
+    let pi_dir = project.join(".pi");
+    let settings_path = pi_dir.join("settings.json");
+    if !settings_path.is_file() {
+        eprintln!("找不到 {} —— 这不是一个 pi 项目目录。", settings_path.display());
+        return 1;
+    }
+    let settings = match pi_settings::read_settings(&settings_path) {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("{error}");
+            return 1;
+        }
+    };
+    let resolved = pi_settings::resolve_skills(&settings, &pi_dir);
+    if resolved.is_empty() {
+        eprintln!(
+            "没找到 skill —— {} 里声明的包可能还没克隆下来（先跑一次 pi）。",
+            settings_path.display()
+        );
+        return 1;
+    }
+
+    if args.dry_run {
+        println!("将会导入 {} 个 skill：", resolved.len());
+        for item in &resolved {
+            println!("  - {}（{}）", item.declared, item.package);
+        }
+        return 0;
+    }
+
+    // 按来源类型分派：
+    // - git 源 → 自己 clone 仓库再导（不依赖 pi 的本地缓存，来源也记成 git）
+    // - npm 源 → 包就装在 node_modules 里，直接从那儿导
+    let mut imported = 0usize;
+    let mut failed = Vec::new();
+    for item in &resolved {
+        let result = if item.package.starts_with("git:") {
+            github::skills_import_git(paths, &item.package, &[item.declared.clone()])
+                .map(|list| list.into_iter().next())
+        } else {
+            skills::skills_import_local(paths, item.dir.to_string_lossy().to_string())
+                .map(Some)
+        };
+        match result {
+            Ok(Some(info)) => {
+                println!("已导入 skill「{}」（{}）", info.name, info.relative_path);
+                imported += 1;
+            }
+            Ok(None) => {
+                failed.push(format!("{}（没找到 skill）", item.declared));
+            }
+            Err(error) => {
+                // 已存在同名 —— 不算失败，跳过
+                if error.contains("已存在同名 skill") {
+                    println!("已存在，跳过：{}", item.declared);
+                    imported += 1;
+                } else {
+                    failed.push(format!("{}（{error}）", item.declared));
+                }
+            }
+        }
+    }
+    if !failed.is_empty() {
+        eprintln!("这些没导进来：");
+        for item in &failed {
+            eprintln!("  - {item}");
+        }
+    }
+    println!("共处理 {imported} 个 skill。");
+    if imported == 0 {
+        return 1;
+    }
+    0
+}
+
+/// 从 GitHub 仓库导入 skill。
+///
+/// 流程跟 cc-switch 的「仓库管理」一样：填地址 → 选分支 → 列出 skill → 导入。
+fn from_github(paths: &Paths, args: GithubArgs) -> u8 {
+    let repo = match github::parse_repo_url(&args.repo) {
+        Some(repo) => repo,
+        None => {
+            eprintln!("看不出仓库地址：{}", args.repo);
+            eprintln!("应该是 https://github.com/owner/repo");
+            return 2;
+        }
+    };
+    let branch = args
+        .branch
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "main".to_string());
+
+    // 只列分支
+    if args.branches {
+        return match github::list_branches(&repo) {
+            Ok(branches) => {
+                if output::wants_json(args.format, false) {
+                    let names: Vec<serde_json::Value> = branches
+                        .iter()
+                        .map(|name| serde_json::json!({ "name": name }))
+                        .collect();
+                    output::json(&serde_json::json!({
+                        "repo": repo.slug(),
+                        "branches": names,
+                    }));
+                    return 0;
+                }
+                println!("{} —— {} 个分支：", repo.slug(), branches.len());
+                for name in &branches {
+                    println!("  {name}");
+                }
+                0
+            }
+            Err(error) => {
+                eprintln!("读分支失败：{error}");
+                1
+            }
+        };
+    }
+
+    // 列出仓库里的 skill
+    let found = match github::discover_skills(paths, &repo, &branch) {
+        Ok(found) => found,
+        Err(error) => {
+            eprintln!("读仓库失败：{error}");
+            return 1;
+        }
+    };
+    if found.is_empty() {
+        eprintln!("分支 {branch} 里没找到 skill（仓库里要有带 SKILL.md 的目录）。");
+        return 1;
+    }
+
+    // 默认只列出来 —— 导入要显式加 --import。
+    // agent 误用参数时不会莫名其妙拉一堆 skill 进来。
+    if !args.import {
+        if output::wants_json(args.format, false) {
+            let payload = serde_json::json!({
+                "repo": repo.slug(),
+                "branch": branch,
+                "skills": found,
+            });
+            output::json(&payload);
+            return 0;
+        }
+        println!("{} @ {} —— {} 个 skill：", repo.slug(), branch, found.len());
+        for item in &found {
+            println!("  - {}（{}）", item.name, item.path);
+        }
+        println!();
+        println!("要导入就加 --import（可再用 --skill <名字> 挑其中几个）。");
+        return 0;
+    }
+
+    // 导入：不给 --skill 就是全导
+    let selected: Vec<String> = if args.skill.is_empty() {
+        found.iter().map(|item| item.path.clone()).collect()
+    } else {
+        // 支持按名字或按仓库里的相对路径选
+        found
+            .iter()
+            .filter(|item| {
+                args.skill
+                    .iter()
+                    .any(|want| want == &item.name || want == &item.path)
+            })
+            .map(|item| item.path.clone())
+            .collect()
+    };
+    if selected.is_empty() {
+        eprintln!("没匹配到要导入的 skill。");
+        eprintln!("仓库里有的：");
+        for item in &found {
+            eprintln!("  - {}", item.name);
+        }
+        return 2;
+    }
+    match github::import_skills(paths, &repo, &branch, &selected) {
+        Ok(items) => {
+            if output::wants_json(args.format, false) {
+                output::json(&items);
+                return 0;
+            }
+            for info in &items {
+                println!("已导入 skill「{}」（{}）", info.name, info.relative_path);
+            }
+            println!("共导入 {} 个。", items.len());
+            0
+        }
+        Err(error) => {
+            eprintln!("导入失败：{error}");
+            1
         }
     }
 }

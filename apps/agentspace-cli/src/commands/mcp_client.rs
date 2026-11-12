@@ -50,8 +50,11 @@ impl McpClient {
     }
 
     /// 覆盖式保存 server 定义。
+    ///
+    /// sidecar 收的是 `{ servers: [...] }` —— 不是裸数组。
     pub fn save_servers(&self, servers: &[Value]) -> Result<(), String> {
-        let body = serde_json::to_vec(servers).map_err(|e| e.to_string())?;
+        let payload = serde_json::json!({ "servers": servers });
+        let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
         self.request_raw("PUT", "/admin/servers", Some(body))?;
         Ok(())
     }
@@ -88,8 +91,11 @@ impl McpClient {
     }
 
     /// 设置对外暴露的配置。
+    ///
+    /// sidecar 收的是 `{ exposure: {...} }` —— 不是裸对象。
     pub fn set_exposure(&self, exposure: &Value) -> Result<(), String> {
-        let body = serde_json::to_vec(exposure).map_err(|e| e.to_string())?;
+        let payload = serde_json::json!({ "exposure": exposure });
+        let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
         self.request_raw("PUT", "/admin/exposure", Some(body))?;
         Ok(())
     }
