@@ -159,8 +159,20 @@ fn runtime_skill_dirs(paths: &Paths) -> Vec<(String, PathBuf)> {
 
 /// 解析 SKILL.md 的 frontmatter。
 ///
-/// 只认顶层标量 `key: value` —— skill 的 frontmatter 本来就只有 name /
-/// description 这类标量字段，嵌套结构按原样忽略。
+/// frontmatter 是 **YAML** —— 必须用 YAML 解析器，不能按行 split(':')。
+///
+/// 按行读的话，块标量只能拿到符号、拿不到内容：
+///
+/// ```yaml
+/// description: |
+///   第一行
+///   第二行
+/// ```
+///
+/// 于是界面上描述显示成 `|` 或 `>`，内容全丢。
+///
+/// 解析不出来（不是合法 YAML / 没有 frontmatter）→ 返回 `(None, 全文)`，
+/// 调用方按「没有 frontmatter」处理。
 fn parse_frontmatter(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
     let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
     let mut lines = text.lines();
@@ -169,8 +181,9 @@ fn parse_frontmatter(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
         _ => return (None, text.to_string()),
     }
 
-    let mut map: BTreeMap<String, String> = BTreeMap::new();
-    let mut body: Vec<&str> = Vec::new();
+    // 找 frontmatter 的结束位置
+    let mut fm_lines: Vec<&str> = Vec::new();
+    let mut body_lines: Vec<&str> = Vec::new();
     let mut closed = false;
     for line in lines {
         if !closed {
@@ -178,29 +191,48 @@ fn parse_frontmatter(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
                 closed = true;
                 continue;
             }
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim();
-                if key.is_empty() || key.starts_with('#') {
-                    continue;
-                }
-                let value = value.trim();
-                let value = value
-                    .strip_prefix('"')
-                    .and_then(|v| v.strip_suffix('"'))
-                    .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                    .unwrap_or(value);
-                map.insert(key.to_string(), value.to_string());
-            }
+            fm_lines.push(line);
             continue;
         }
-        body.push(line);
+        body_lines.push(line);
     }
-
     if !closed {
         return (None, text.to_string());
     }
-    let frontmatter = if map.is_empty() { None } else { Some(map) };
-    (frontmatter, body.join("\n"))
+
+    let yaml = fm_lines.join("\n");
+    // 用 YAML 解析 —— 块标量、折叠标量、引号都能正确还原
+    let parsed: serde_yaml::Value = match serde_yaml::from_str(&yaml) {
+        Ok(value) => value,
+        Err(_) => return (None, text.to_string()),
+    };
+    let mapping = match parsed.as_mapping() {
+        Some(map) => map,
+        None => return (None, text.to_string()),
+    };
+
+    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    for (key, value) in mapping {
+        let Some(key) = key.as_str() else { continue };
+        // 只取标量 —— 嵌套结构按原样忽略
+        if let Some(text) = scalar_to_string(value) {
+            out.insert(key.to_string(), text);
+        }
+    }
+    let frontmatter = if out.is_empty() { None } else { Some(out) };
+    (frontmatter, body_lines.join("\n"))
+}
+
+/// YAML 标量 → 字符串。
+///
+/// 块标量的内容会带换行 —— 折成一行（界面显示用）。
+fn scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(text) => Some(text.clone()),
+        serde_yaml::Value::Bool(value) => Some(value.to_string()),
+        serde_yaml::Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 /// 取 frontmatter 里的字符串字段。
@@ -323,26 +355,19 @@ fn write_skill(
         // frontmatter 已经完整：原样保留，别把多行 YAML 压成一行。
         // 来源信息另写到 sidecar 里。
     } else {
-        let mut fm = frontmatter.unwrap_or_default();
-        if !has_name {
-            fm.insert("name".to_string(), name.to_string());
-        }
-        if !has_description {
-            fm.insert("description".to_string(), description.clone());
-        } else if description_too_long {
-            // 只在超长时重建 frontmatter：把描述截到规范上限。
-            fm.insert(
-                "description".to_string(),
-                truncate_description(&declared_description),
-            );
-        }
-        fm.insert("source".to_string(), source.to_string());
-
+        // frontmatter 是 YAML —— 重建会把多行块标量压成一行、内容丢掉，
+        // 还会剥掉引号（值里的 `: ` 就成了 YAML 嵌套映射）。
+        // 所以只做「最小改动」：整段保留，只动 name / description。
+        // source 单独记在 sidecar 里，不进 frontmatter（免得多一个非标准字段）。
+        let wanted = if !has_name || !has_description {
+            Some(description.clone())
+        } else {
+            None
+        };
+        let fm_text = patch_frontmatter(&fm_text_of(&raw), name, wanted.as_deref());
         let mut out = String::from("---\n");
-        for (key, value) in &fm {
-            out.push_str(&format!("{key}: {value}\n"));
-        }
-        out.push_str("---\n\n");
+        out.push_str(fm_text.trim_end_matches('\n'));
+        out.push_str("\n---\n\n");
         if !body.trim().is_empty() {
             out.push_str(body.trim_start());
             if !out.ends_with('\n') {
@@ -1288,26 +1313,27 @@ pub fn skills_read(paths: &Paths, name: String) -> Result<SkillDetail, String> {
 fn render_skill_md(
     raw: &str,
     name: &str,
-    description: &str,
+    description: Option<&str>,
     content: Option<&str>,
 ) -> String {
-    let (frontmatter, body) = parse_frontmatter(raw);
-    let mut fm = frontmatter.unwrap_or_default();
-    fm.insert("name".to_string(), name.to_string());
-    if description.trim().is_empty() {
-        fm.remove("description");
-    } else {
-        fm.insert("description".to_string(), description.trim().to_string());
-    }
+    let (_, body) = parse_frontmatter(raw);
 
+    // frontmatter 是 YAML —— 不能按 key-value 文本重建。
+    // 重建会把多行块标量（`description: |`）压成一行、内容丢掉，
+    // 还会剥掉引号 —— 值里的 `: ` 就成了 YAML 嵌套映射，解析直接报错。
+    //
+    // 所以只做「最小改动」：整段保留，只替换 name / description 那两行。
+    let fm_text = patch_frontmatter(&fm_text_of(raw), name, description);
     let text = match content {
         Some(value) => value.to_string(),
         None => body,
     };
 
     let mut out = String::from("---\n");
-    for (key, value) in &fm {
-        out.push_str(&format!("{key}: {value}\n"));
+    out.push_str(&fm_text);
+    // fm_text 末尾不一定有换行 —— 不补的话会跟结束的 `---` 粘成一行
+    if !fm_text.is_empty() && !fm_text.ends_with('\n') {
+        out.push('\n');
     }
     out.push_str("---\n\n");
     if !text.trim().is_empty() {
@@ -1317,6 +1343,143 @@ fn render_skill_md(
         }
     }
     out
+}
+
+/// 取出 frontmatter 段（不含首尾的 `---`）。
+fn fm_text_of(raw: &str) -> String {
+    let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    let mut lines = text.lines();
+    match lines.next() {
+        Some(first) if first.trim() == "---" => {}
+        _ => return String::new(),
+    }
+    let mut out: Vec<&str> = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        out.push(line);
+    }
+    out.join("\n")
+}
+
+/// 在 frontmatter 段里替换 name / description，其余原样保留。
+///
+/// `description` 是 `None` = 不动描述那几行。
+/// `Some(空串)` = 删掉描述。
+///
+/// 只动那两行的值 —— 块标量的内容行、缩进、引号都别动。
+fn patch_frontmatter(fm_text: &str, name: &str, description: Option<&str>) -> String {
+    let lines: Vec<&str> = fm_text.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let split = line.split_once(':');
+        let key = split.map(|(k, _)| k.trim().to_string());
+        let is_target = matches!(key.as_deref(), Some("name") | Some("description"));
+
+        if !is_target {
+            out.push(line.to_string());
+            i += 1;
+            continue;
+        }
+        let key = key.unwrap_or_default();
+        let value = split
+            .map(|(_, v)| v.trim().to_string())
+            .unwrap_or_default();
+
+        // 描述要改吗？
+        let want_description = match (key.as_str(), description) {
+            ("description", Some(value)) => Some(value.trim().to_string()),
+            _ => None,
+        };
+
+        // 块标量（`|` / `>`）的内容在后面几行 —— 一起搬过去
+        let is_block = value == "|" || value == ">";
+        if is_block {
+            out.push(format!("{key}: {value}"));
+            i += 1;
+            let mut content: Vec<&str> = Vec::new();
+            while i < lines.len() {
+                let next = lines[i];
+                // 块标量的内容是缩进的；遇到非缩进行就结束
+                if next.trim().is_empty() || next.starts_with(' ') || next.starts_with('\t') {
+                    content.push(next);
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            match want_description {
+                Some(text) => {
+                    // 换掉块的内容（第一行缩进，其余原样）
+                    out.push(format!("  {text}"));
+                    for item in content.iter().skip(1) {
+                        out.push((*item).to_string());
+                    }
+                }
+                None => {
+                    // 不动 → 整块原样
+                    out.extend(content.iter().map(|item| (*item).to_string()));
+                }
+            }
+            continue;
+        }
+
+        // 普通单行值 —— 要改就改，不改就原样
+        match key.as_str() {
+            "name" => out.push(format!("{key}: {name}")),
+            "description" => match want_description {
+                // 描述清空 → 整行去掉
+                Some(value) if value.is_empty() => {}
+                Some(value) => out.push(format!("{key}: {}", yaml_scalar(&value))),
+                None => out.push(line.to_string()),
+            },
+            _ => out.push(line.to_string()),
+        }
+        i += 1;
+    }
+
+    // 目标 key 原本不存在 → 补上
+    let mut text = out.join("\n");
+    if !text.lines().any(|line| line.starts_with("name:")) {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&format!("name: {name}\n"));
+    }
+    if let Some(value) = description {
+        let value = value.trim();
+        if !value.is_empty() && !text.lines().any(|line| line.starts_with("description:")) {
+            text.push_str(&format!("description: {}\n", yaml_scalar(value)));
+        }
+    }
+    text
+}
+
+/// 把值渲染成安全的 YAML 标量。
+///
+/// 值里有 `: `、`#`、换行时必须加引号 —— 否则 YAML 会把它当映射或注释。
+fn yaml_scalar(value: &str) -> String {
+    let needs_quote = value.contains(": ")
+        || value.contains(" #")
+        || value.starts_with('#')
+        || value.starts_with('"')
+        || value.ends_with('"')
+        || value.contains('\n')
+        || value.contains('\r');
+    if needs_quote {
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', " ")
+            .replace('\r', " ");
+        format!("\"{escaped}\"")
+    } else {
+        value.to_string()
+    }
 }
 
 /// 修改 skill：可改名、改描述、改正文。
@@ -1351,10 +1514,11 @@ pub fn skills_update(
     }
 
     let raw = fs::read_to_string(&skill_md).map_err(|e| format!("读取 SKILL.md 失败：{e}"))?;
+    // 描述没传 → 不动它（可能是块标量，重建会丢内容）
     let rendered = render_skill_md(
         &raw,
         &target_name,
-        description.as_deref().unwrap_or(""),
+        description.as_deref(),
         content.as_deref(),
     );
     fs::write(&skill_md, rendered.as_bytes()).map_err(|e| format!("写入 SKILL.md 失败：{e}"))?;
@@ -1424,11 +1588,11 @@ pub fn skills_duplicate(paths: &Paths, name: String, new_name: String) -> Result
     }
 
     copy_dir(&dir, &target_dir)?;
-    // 副本的 frontmatter 要换成新名字。
+    // 副本的 frontmatter 要换成新名字（描述原样保留）。
     let raw = fs::read_to_string(target_dir.join("SKILL.md")).unwrap_or_default();
     let (frontmatter, _) = parse_frontmatter(&raw);
     let description = fm_get(&frontmatter, "description");
-    let rendered = render_skill_md(&raw, &new_name, &description, None);
+    let rendered = render_skill_md(&raw, &new_name, None, None);
     fs::write(target_dir.join("SKILL.md"), rendered.as_bytes())
         .map_err(|e| format!("写入 SKILL.md 失败：{e}"))?;
 
@@ -1460,7 +1624,7 @@ pub fn skills_duplicate(paths: &Paths, name: String, new_name: String) -> Result
 fn overwrite_skill_files(
     dir: &Path,
     name: &str,
-    description: &str,
+    _description: &str,
     files: Vec<SkillFile>,
 ) -> Result<(), String> {
     // 先清掉旧文件（sidecar 留着，它记的是启用状态与来源）。
@@ -1491,11 +1655,15 @@ fn overwrite_skill_files(
         fs::write(&target, &file.data).map_err(|e| format!("写入 {} 失败：{e}", target.display()))?;
     }
 
-    // frontmatter 统一：名字用本地的，描述用新的。
+    // frontmatter 统一：名字用本地的。
+    //
+    // 描述**不动** —— 源文件里的描述可能是块标量（`description: |`），
+    // 解析器只能拿到 `|` 而拿不到内容，重建会把内容丢掉。
+    // 源文件已经写好的 SKILL.md 就是对的。
     let skill_md = dir.join("SKILL.md");
     if skill_md.is_file() {
         let raw = fs::read_to_string(&skill_md).unwrap_or_default();
-        let rendered = render_skill_md(&raw, name, description, None);
+        let rendered = render_skill_md(&raw, name, None, None);
         fs::write(&skill_md, rendered.as_bytes()).map_err(|e| format!("写入 SKILL.md 失败：{e}"))?;
     }
     Ok(())
@@ -1736,5 +1904,132 @@ mod tests {
             name_from_url("https://raw.githubusercontent.com/o/r/main/SKILL.md"),
             "r"
         );
+    }
+}
+
+#[cfg(test)]
+mod frontmatter_tests {
+    use super::*;
+
+    /// 块标量的内容要能读出来 —— 界面上显示的描述不能是 `|`
+    #[test]
+    fn block_scalar_content_is_read() {
+        let raw = "---\nname: ctx\ndescription: |\n  Search indexed content.\n  Trigger: /ctx\n---\n\nbody\n";
+        let (fm, _) = parse_frontmatter(raw);
+        let description = fm_get(&fm, "description");
+        assert!(description.contains("Search indexed content."), "{description}");
+        assert!(!description.contains('|'), "{description}");
+    }
+
+    /// 折叠标量同理
+    #[test]
+    fn folded_scalar_content_is_read() {
+        let raw = "---\nname: y\ndescription: >\n  folded text\n  more text\n---\n";
+        let (fm, _) = parse_frontmatter(raw);
+        let description = fm_get(&fm, "description");
+        assert!(description.contains("folded text"), "{description}");
+        assert!(description.contains("more text"), "{description}");
+    }
+
+    /// 带引号的值里的 `: ` 不能被当映射
+    #[test]
+    fn quoted_colon_is_read_whole() {
+        let raw = "---\nname: p\ndescription: \"Lazy mode: the smallest change\"\n---\n";
+        let (fm, _) = parse_frontmatter(raw);
+        assert_eq!(fm_get(&fm, "description"), "Lazy mode: the smallest change");
+    }
+
+    /// 没引号的 `: ` 在 yaml 里本来就是嵌套映射 —— 不该把整段当描述
+    #[test]
+    fn unquoted_colon_is_a_nested_mapping() {
+        let raw = "---\nname: p\ndescription: Lazy mode: the smallest\n---\n";
+        let (fm, _) = parse_frontmatter(raw);
+        assert!(fm.is_none(), "{fm:?}");
+    }
+
+    /// 普通的单行值照常
+    #[test]
+    fn plain_scalar_is_read() {
+        let raw = "---\nname: demo\ndescription: 一个示例\n---\n\n正文\n";
+        let (fm, body) = parse_frontmatter(raw);
+        assert_eq!(fm_get(&fm, "name"), "demo");
+        assert_eq!(fm_get(&fm, "description"), "一个示例");
+        assert_eq!(body.trim(), "正文");
+    }
+
+    /// frontmatter 之后的内容不该被当成 frontmatter 的一部分
+    #[test]
+    fn body_is_not_part_of_frontmatter() {
+        let raw = "---\nname: n\n---\n\n# 标题\n\n正文里有: 冒号\n";
+        let (fm, body) = parse_frontmatter(raw);
+        assert_eq!(fm_get(&fm, "name"), "n");
+        assert!(body.contains("正文里有: 冒号"), "{body}");
+    }
+
+    /// 块标量的内容不能被压成一行、丢掉
+    #[test]
+    fn patch_keeps_block_scalar_content() {
+        let raw = "---\nname: ctx\ndescription: |\n  Search indexed content.\n  Trigger: /ctx\nuser-invocable: true\n---\n\n# Body\n";
+        let fm = fm_text_of(raw);
+        let patched = patch_frontmatter(&fm, "ctx", None);
+        assert!(patched.contains("  Search indexed content."), "{patched}");
+        assert!(patched.contains("user-invocable: true"), "{patched}");
+    }
+
+    /// 值里有 ": " 的必须加引号，否则 yaml 当嵌套映射
+    #[test]
+    fn patch_quotes_description_with_colon() {
+        let fm = "name: ponytail";
+        let patched = patch_frontmatter(fm, "ponytail", Some("Lazy dev mode: the smallest change"));
+        assert!(
+            patched.contains("description: \"Lazy dev mode: the smallest change\""),
+            "{patched}"
+        );
+    }
+
+    /// 已有的引号不能被剥掉
+    #[test]
+    fn patch_does_not_strip_quotes() {
+        let raw = "---\nname: x\ndescription: \"has: colon\"\n---\n";
+        let patched = patch_frontmatter(&fm_text_of(raw), "x", None);
+        assert!(patched.contains("\"has: colon\""), "{patched}");
+    }
+
+    /// 折叠标量（`>`）也要保住
+    #[test]
+    fn patch_keeps_folded_scalar() {
+        let raw = "---\nname: y\ndescription: >\n  folded text here\n  more text\n---\n";
+        let patched = patch_frontmatter(&fm_text_of(raw), "y", None);
+        assert!(patched.contains("description: >"), "{patched}");
+        assert!(patched.contains("  folded text here"), "{patched}");
+    }
+
+    /// 改描述时替换块的内容，其余保留
+    #[test]
+    fn patch_replaces_block_content_when_description_changes() {
+        let raw = "---\nname: z\ndescription: |\n  old text\nother: keep\n---\n";
+        let patched = patch_frontmatter(&fm_text_of(raw), "z", Some("new text"));
+        assert!(patched.contains("  new text"), "{patched}");
+        assert!(patched.contains("other: keep"), "{patched}");
+        assert!(!patched.contains("old text"), "{patched}");
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_only_when_needed() {
+        assert_eq!(yaml_scalar("plain text"), "plain text");
+        assert_eq!(yaml_scalar("has: colon"), "\"has: colon\"");
+        assert_eq!(yaml_scalar("starts with #"), "\"starts with #\"");
+    }
+
+    /// 端到端：把一个真实的块标量 skill 走一遍渲染，结果必须还是合法 yaml
+    #[test]
+    fn rendered_frontmatter_stays_valid() {
+        let raw = "---\nname: ctx\ndescription: |\n  line one\n  line two\n---\n\nbody\n";
+        let rendered = render_skill_md(raw, "ctx", None, None);
+        let (fm, _) = parse_frontmatter(&rendered);
+        assert!(fm.is_some());
+        // 块标量还在
+        assert!(rendered.contains("description: |"), "{rendered}");
+        assert!(rendered.contains("  line one"), "{rendered}");
     }
 }
