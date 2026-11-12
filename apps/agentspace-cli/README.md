@@ -45,6 +45,11 @@ agentspace
 │   ├── enable / disable / test / connect / status / probe
 │   ├── exposure get|set
 │   └── refresh-token
+├── extension               Pi 扩展（Pi 自带 / npm / 自定义）
+│   ├── list / get / install / remove
+│   ├── create / read / write / template
+│   ├── enable / disable
+│   └── search
 ├── tool                    本机 CLI 工具箱
 │   ├── list / get / check-updates / plan
 │   └── install / upgrade / uninstall
@@ -79,6 +84,7 @@ agentspace agent list --json       # 给 agent 解析的 JSON
 agentspace agent list
 agentspace skill list
 agentspace mcp list
+agentspace extension list
 agentspace tool list
 
 # 建一个智能体并绑能力

@@ -1,6 +1,7 @@
 //! CLI 的各个命令组。
 
 pub mod agent;
+pub mod extension;
 pub mod mcp;
 pub mod mcp_client;
 pub mod proxy;

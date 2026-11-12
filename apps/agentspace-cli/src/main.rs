@@ -5,6 +5,7 @@
 //! agentspace run 知识助手          启动智能体
 //! agentspace skill list            看有哪些 skill
 //! agentspace mcp list              看有哪些 MCP server
+//! agentspace extension list        看有哪些 Pi 扩展
 //! agentspace agent list            看有哪些智能体
 //! agentspace tool list             看本机装了哪些 CLI
 //! ```
@@ -28,6 +29,7 @@
 //! ├── agent                 智能体（我们创建的，跑在 Pi 上）
 //! ├── skill                 Skill 仓库
 //! ├── mcp                   MCP server
+//! ├── extension             Pi 扩展（自带 / npm / 自定义）
 //! ├── tool                  本机 CLI 工具箱
 //! └── proxy                 全局出站代理
 //! ```
@@ -82,6 +84,10 @@ enum Command {
     #[command(subcommand)]
     Mcp(commands::mcp::McpCmd),
 
+    /// Pi 扩展（Pi 自带 / npm / 自定义）
+    #[command(subcommand)]
+    Extension(commands::extension::ExtensionCmd),
+
     /// 本机 CLI 工具箱
     #[command(subcommand)]
     Tool(commands::tool::ToolCmd),
@@ -99,6 +105,7 @@ fn main() -> std::process::ExitCode {
         Command::Agent(cmd) => cmd.run(&paths),
         Command::Skill(cmd) => cmd.run(&paths),
         Command::Mcp(cmd) => cmd.run(&paths),
+        Command::Extension(cmd) => cmd.run(&paths),
         Command::Tool(cmd) => cmd.run(&paths),
         Command::Proxy(cmd) => cmd.run(&paths),
     };

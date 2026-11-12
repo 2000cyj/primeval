@@ -471,9 +471,18 @@ pub fn remove_from_library(
         ExtensionSourceKind::Npm => {
             // 每个扩展一个自己的目录 —— 直接删掉就行
             // （依赖在它自己的 node_modules 里，一并清掉）
-            let dir = library_dir(paths).join("npm").join(flat_dir_name(name.trim()));
+            //
+            // 名字可以给扁平目录名（`@scope-pkg`）也可以给包名（`@scope/pkg`）——
+            // 用户两个都习惯用。
+            let npm_root = library_dir(paths).join("npm");
+            let flat = flat_dir_name(name.trim());
+            let dir = if npm_root.join(&flat).is_dir() {
+                npm_root.join(&flat)
+            } else {
+                find_npm_package_dir(&npm_root, name.trim()).unwrap_or(npm_root.join(&flat))
+            };
             if !dir.exists() {
-                return Ok(());
+                return Err(format!("没找到扩展：{name}"));
             }
             std::fs::remove_dir_all(&dir).map_err(|e| format!("删除失败：{e}"))
         }
@@ -644,13 +653,16 @@ fn find_npm() -> Option<PathBuf> {
 /// 所以停用 = 把文件改名加 `.disabled` 后缀，启用 = 改回来。
 pub fn set_enabled(path: &Path, enabled: bool) -> Result<(), String> {
     if enabled {
-        // 找带 .disabled 后缀的
-        let dir = path.parent().unwrap_or(path);
-        let stem = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let candidate = dir.join(format!("{stem}.disabled"));
+        // 停用时文件名变成了 `xxx.ts.disabled` —— 启用就是去掉这个后缀。
+        // 两种传法都要认：
+        // - 传停用后的路径（`xxx.ts.disabled`）→ 直接去掉后缀
+        // - 传原始路径（`xxx.ts`）→ 找带后缀的那个
+        if path.extension().map(|e| e == "disabled").unwrap_or(false) {
+            let target = path.with_extension("");
+            std::fs::rename(path, &target).map_err(|e| format!("启用失败：{e}"))?;
+            return Ok(());
+        }
+        let candidate = PathBuf::from(format!("{}.disabled", path.display()));
         if candidate.exists() {
             std::fs::rename(&candidate, path).map_err(|e| format!("启用失败：{e}"))?;
         }
@@ -810,6 +822,34 @@ mod scoped_tests {
             resolve_in_node_modules(root, "@dietrichgebert/ponytail"),
             None
         );
+    }
+
+    /// 停用再启用要能改回原文件名。
+    ///
+    /// 停用把 `xxx.ts` 改名成 `xxx.ts.disabled` —— 启用时得找得回来。
+    #[test]
+    fn enable_restores_disabled_file() {
+        let dir = std::env::temp_dir().join("agentspace-core-toggle");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("my-ext.ts");
+        std::fs::write(&file, "export default () => {}").unwrap();
+
+        set_enabled(&file, false).unwrap();
+        assert!(!file.exists());
+        let disabled = dir.join("my-ext.ts.disabled");
+        assert!(disabled.exists(), "停用后应该是 my-ext.ts.disabled");
+
+        // 传原始路径
+        set_enabled(&file, true).unwrap();
+        assert!(file.exists(), "启用后应该改回 my-ext.ts");
+
+        // 传停用后的路径
+        set_enabled(&file, false).unwrap();
+        set_enabled(&disabled, true).unwrap();
+        assert!(file.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
