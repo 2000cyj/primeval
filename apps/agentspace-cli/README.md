@@ -57,6 +57,38 @@ agentspace
     └── get / set / test / scan
 ```
 
+## Pi 扩展
+
+桌面端的「Pi 扩展」页在命令行里也有：
+
+```bash
+agentspace extension list                      # 已装的扩展（Pi 自带 / npm / 自定义）
+agentspace extension install pi-subagents      # 从 npm 装
+agentspace extension search "context"          # 搜市场
+agentspace extension create my-ext             # 新建自定义扩展
+agentspace extension deps my-ext typebox       # 给自定义扩展装依赖
+agentspace extension write my-ext --file a.ts  # 写源码
+agentspace extension remove my-ext             # 卸掉
+```
+
+依赖装在扩展自己的 `node_modules/` 里（node 靠「从扩展文件往上找 node_modules」
+解析），落地到项目时整个目录一起复制，依赖也就跟着走了。
+
+### MCP 桥接扩展
+
+仓库里带了一份参考实现 `assets/agentspace-mcp-bridge.ts` —— 它读项目里的
+`.pi/mcp.json`（`agentspace run` 写的），把 AgentSpace MCP 代理上的上游工具
+注册成 pi 的工具（`mcp__<server>__<tool>`）。
+
+不装 `pi-mcp-adapter` 也能用上 AgentSpace 的 MCP：
+
+```bash
+agentspace extension create agentspace-mcp-bridge --force
+agentspace extension deps agentspace-mcp-bridge @modelcontextprotocol/sdk typebox
+agentspace extension write agentspace-mcp-bridge --file assets/agentspace-mcp-bridge.ts
+agentspace agent update <智能体名> --extension extensions/custom/agentspace-mcp-bridge
+```
+
 ## 给 agent 用
 
 每条命令都支持两种输出：

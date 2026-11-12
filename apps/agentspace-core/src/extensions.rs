@@ -518,6 +518,106 @@ pub fn find_npm_package_dir(npm_root: &Path, package: &str) -> Option<PathBuf> {
     None
 }
 
+/// 给自定义扩展装 npm 依赖。
+///
+/// 自定义扩展就一个 `index.ts` —— 但它可以 import 第三方模块
+/// （`@modelcontextprotocol/sdk` 之类）。node 靠「从扩展文件往上找
+/// node_modules」解析，所以依赖得装在扩展自己的目录里：
+///
+/// ```text
+/// <lib>/custom/<name>/
+///   index.ts
+///   node_modules/<依赖>/…
+/// ```
+///
+/// 落地到项目时整个目录一起复制，依赖也就跟着走了。
+pub fn install_custom_dependencies(
+    paths: &Paths,
+    name: &str,
+    packages: &[String],
+) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("扩展名不能为空".to_string());
+    }
+    if packages.is_empty() {
+        return Err("没给要装的包".to_string());
+    }
+    let npm = match find_npm() {
+        Some(path) => path,
+        None => return Err("找不到 npm —— 装依赖需要 node 环境".to_string()),
+    };
+
+    let dir = library_dir(paths).join("custom").join(trimmed);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+
+    // 记一下装了什么 —— 界面上能看出这个扩展依赖啥
+    let manifest_path = dir.join("package.json");
+    let mut deps: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    if let Ok(raw) = std::fs::read_to_string(&manifest_path) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(existing) = value.get("dependencies").and_then(|v| v.as_object()) {
+                deps = existing.clone();
+            }
+        }
+    }
+
+    let mut args: Vec<String> = vec![
+        "install".to_string(),
+        "--prefix".to_string(),
+        dir.to_string_lossy().to_string(),
+        "--no-save".to_string(),
+        "--silent".to_string(),
+        "--no-audit".to_string(),
+        "--no-fund".to_string(),
+    ];
+    for package in packages {
+        validate_package_name(package.trim())?;
+        args.push(package.trim().to_string());
+    }
+
+    let output = std::process::Command::new(&npm)
+        .args(&args)
+        .output()
+        .map_err(|e| format!("执行 npm 失败：{e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "npm install 失败：{}",
+            if stderr.is_empty() { "未知原因" } else { &stderr }
+        ));
+    }
+
+    // --no-save 不写 package.json —— 自己记一份，界面/CLI 才看得到依赖
+    for package in packages {
+        let version = installed_version(&dir.join("node_modules"), package.trim());
+        deps.insert(
+            package.trim().to_string(),
+            serde_json::Value::String(version.unwrap_or_else(|| "*".to_string())),
+        );
+    }
+    let manifest = serde_json::json!({
+        "name": trimmed,
+        "private": true,
+        "dependencies": deps,
+    });
+    let manifest_text = serde_json::to_string_pretty(&manifest).unwrap_or_default();
+    std::fs::write(&manifest_path, manifest_text).map_err(|e| format!("写 package.json 失败：{e}"))?;
+
+    Ok(())
+}
+
+/// 读一个已装包的版本号。
+fn installed_version(node_modules: &Path, package: &str) -> Option<String> {
+    let dir = resolve_in_node_modules(node_modules, package)?;
+    let raw = std::fs::read_to_string(dir.join("package.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// 读 package.json 里的包名。
 ///
 /// 目录名是扁平化的（`@dietrichgebert-ponytail`），显示时用回原名

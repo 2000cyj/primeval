@@ -41,6 +41,8 @@ pub enum ExtensionCmd {
     Read(ReadArgs),
     /// 写一个自定义扩展的源码
     Write(WriteArgs),
+    /// 给自定义扩展装 npm 依赖
+    Deps(DepsArgs),
     /// 打印新扩展的模板代码
     Template,
     /// 启用一个扩展
@@ -137,6 +139,21 @@ pub struct WriteArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct DepsArgs {
+    /// 扩展名（自定义扩展的名字）
+    name: String,
+    /// 要装的包（可多个）
+    #[arg(required = true)]
+    packages: Vec<String>,
+    /// 输出格式
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+    /// 输出 JSON（等价于 --format json）
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct PathArgs {
     /// 扩展文件的路径（`extension list` 里能看到）
     path: String,
@@ -170,6 +187,7 @@ impl ExtensionCmd {
             ExtensionCmd::Create(args) => create(paths, &args),
             ExtensionCmd::Read(args) => read(paths, &args),
             ExtensionCmd::Write(args) => write(paths, &args),
+            ExtensionCmd::Deps(args) => deps(paths, &args),
             ExtensionCmd::Template => template(),
             ExtensionCmd::Enable(args) => set_enabled(&args, true),
             ExtensionCmd::Disable(args) => set_enabled(&args, false),
@@ -459,6 +477,35 @@ fn write(paths: &Paths, args: &WriteArgs) -> u8 {
         }
         Err(error) => {
             eprintln!("写入失败：{error}");
+            EXIT_FAIL
+        }
+    }
+}
+
+/// 给自定义扩展装 npm 依赖。
+///
+/// 依赖装在扩展自己的 `node_modules/` 里 —— node 靠「从扩展文件往上找
+/// node_modules」解析。落地到项目时整个目录一起复制，依赖也就跟着走了。
+fn deps(paths: &Paths, args: &DepsArgs) -> u8 {
+    match extensions::install_custom_dependencies(paths, &args.name, &args.packages) {
+        Ok(()) => {
+            if output::wants_json(args.format, args.json) {
+                output::json(&serde_json::json!({
+                    "ok": true,
+                    "name": args.name,
+                    "packages": args.packages,
+                }));
+            } else {
+                println!("已给「{}」装上：{}", args.name, args.packages.join("、"));
+            }
+            EXIT_OK
+        }
+        Err(error) => {
+            if output::wants_json(args.format, args.json) {
+                output::json(&serde_json::json!({ "error": error }));
+            } else {
+                eprintln!("装依赖失败：{error}");
+            }
             EXIT_FAIL
         }
     }
