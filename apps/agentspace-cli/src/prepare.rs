@@ -27,12 +27,6 @@ const BLOCK_END: &str = "<!-- END AGENTSPACE-RUNTIME -->";
 /// 托管块与用户内容之间的分隔。
 const BLOCK_SEPARATOR: &str = "\n\n";
 
-/// 标记「这条 MCP 是我们写进去的」。
-///
-/// 放在条目的 `x-agentspace` 字段下 —— 不是标准 MCP 字段，但运行时
-/// 会原样保留未知字段。用它就能认出自家的条目，别人的不误删。
-const MANAGED_MARK: &str = "x-agentspace";
-
 /// 落地记录（默认在运行时的配置目录下）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -269,24 +263,17 @@ pub fn merge_mcp_config(
     }
 
     // 清理：上次写进来的、这次不再绑的
+    //
+    // 名单来自落地记录（`mcp_entries`）—— 那就是「上次确实是我们写的」。
+    // 不在 mcp.json 里加自定义标记字段：运行时的 MCP 适配器不认得未知字段，
+    // 会报 "Ignored settings" 警告。
     for name in remove {
-        if map
-            .get(name)
-            .and_then(|entry| entry.get(MANAGED_MARK))
-            .and_then(|flag| flag.as_bool())
-            .unwrap_or(false)
-        {
-            map.remove(name);
-        }
+        map.remove(name);
     }
 
     // 写入：每个上游一条
     for (name, entry) in entries {
-        let mut value = entry.clone();
-        if let Some(object) = value.as_object_mut() {
-            object.insert(MANAGED_MARK.to_string(), serde_json::json!(true));
-        }
-        map.insert(name.clone(), value);
+        map.insert(name.clone(), entry.clone());
     }
 
     if let Some(parent) = path.parent() {
@@ -653,10 +640,13 @@ mod tests {
         assert_eq!(servers.len(), 2);
         assert!(servers.contains_key("filesystem"));
         assert!(servers.contains_key("别人的"));
-        // 自己写的条目带标记
-        assert_eq!(servers["filesystem"]["x-agentspace"], serde_json::json!(true));
-        // 别人的不带
-        assert!(servers["别人的"].get("x-agentspace").is_none());
+        // 不写运行时不认得的字段 —— 否则会报 "Ignored settings" 警告
+        let known = ["type", "url", "headers", "command", "args", "env", "cwd", "oauth", "exposure", "enabled", "timeout", "description"];
+        for (name, entry) in servers {
+            for key in entry.as_object().unwrap().keys() {
+                assert!(known.contains(&key.as_str()), "{name} 里有运行时不认得的字段：{key}");
+            }
+        }
     }
 
     #[test]

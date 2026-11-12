@@ -441,10 +441,27 @@ pub fn read_custom(paths: &Paths, name: &str) -> Result<String, String> {
     std::fs::read_to_string(&target).map_err(|e| format!("读取失败：{e}"))
 }
 
+/// 写一个自定义扩展的源码。
+///
+/// 自定义扩展就一个 `index.ts` —— pi 直接加载它。返回写到哪了。
+pub fn write_custom(paths: &Paths, name: &str, code: &str) -> Result<PathBuf, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("扩展名不能为空".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        return Err("扩展名不合法".to_string());
+    }
+    let dir = library_dir(paths).join("custom").join(trimmed);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    let target = dir.join("index.ts");
+    std::fs::write(&target, code).map_err(|e| format!("写入失败：{e}"))?;
+    Ok(target)
+}
+
 /// 删掉工具箱里的一个扩展（npm 或自定义）。
 ///
-/// npm 的用 `npm uninstall` —— 顺手把它的依赖也清掉，
-/// 手工删目录会留下一堆孤儿依赖。
+/// npm 的目录连同它自带的 node_modules 一起删 —— 依赖不会留成孤儿。
 pub fn remove_from_library(
     paths: &Paths,
     source: ExtensionSourceKind,
