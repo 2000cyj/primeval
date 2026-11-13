@@ -31,13 +31,20 @@ jobs:
       - uses: actions/checkout@v4
 
       # ── Node / pnpm ────────────────────────────────────────
+      #
+      # 顺序有讲究：**先装 pnpm，再 setup-node**。
+      #
+      # setup-node 的 `cache: pnpm` 会立刻调用 pnpm 去定位 store 目录 ——
+      # pnpm 不在 PATH 上就直接报
+      #「Unable to locate executable file: pnpm」而整个 job 挂掉。
+      # pnpm/action-setup 不带 version 时读 package.json 的 packageManager
+      # 字段（pnpm@10.18.1），版本不会漂。
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-
-      - name: 装 pnpm
-        run: corepack enable
 
       - name: 装依赖
         run: pnpm install --frozen-lockfile
