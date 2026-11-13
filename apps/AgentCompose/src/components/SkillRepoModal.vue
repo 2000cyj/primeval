@@ -24,6 +24,14 @@ const emit = defineEmits<{ 'update:show': [value: boolean]; imported: [] }>()
 
 const message = useMessage()
 
+/**
+ * 弹窗宽度。
+ *
+ * 用 min() 夹一下 —— 窗口再窄也不至于弹窗比窗口还宽。
+ * exe 最小窗口是 1200×700，560 在那儿绰绰有余。
+ */
+const modalWidth = 'min(560px, calc(100vw - 48px))'
+
 /** 记录下来的仓库 */
 const repos = ref<GitRepo[]>([])
 const reposLoading = ref(false)
@@ -151,6 +159,8 @@ watch(
     :show="show"
     preset="card"
     class="repo-modal"
+    :style="{ width: modalWidth, maxHeight: 'calc(100vh - 64px)' }"
+    content-style="max-height: calc(100vh - 170px); overflow-y: auto"
     :title="current ? `从 ${current.sourceUrl} 添加` : '从 GitHub 仓库添加'"
     :bordered="false"
     @update:show="(value: boolean) => emit('update:show', value)"
@@ -262,16 +272,10 @@ watch(
 </template>
 
 <style scoped>
-.repo-modal {
-  width: 560px;
-}
-
 .repo-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 380px;
-  overflow-y: auto;
 }
 
 .repo-item {
@@ -347,8 +351,8 @@ watch(
 }
 
 .skill-list {
-  max-height: 340px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .list-head {
