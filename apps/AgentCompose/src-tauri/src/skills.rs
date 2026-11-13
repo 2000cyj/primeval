@@ -8,7 +8,7 @@
 
 use tauri::AppHandle;
 
-pub use agentspace_core::skills::{RuntimeSkillInfo, SkillDetail, SkillInfo};
+pub use agentspace_core::skills::{GitRepo, RuntimeSkillInfo, SkillDetail, SkillInfo};
 
 use crate::paths;
 
@@ -16,6 +16,12 @@ use crate::paths;
 #[tauri::command]
 pub fn skills_set_enabled(app: AppHandle, name: String, enabled: bool) -> Result<(), String> {
     agentspace_core::skills::skills_set_enabled(&paths::of(&app), name, enabled)
+}
+
+/// 列出所有「从 git 仓库导入过」的仓库。
+#[tauri::command]
+pub fn skills_git_repos(app: AppHandle) -> Result<Vec<GitRepo>, String> {
+    agentspace_core::skills::skills_git_repos(&paths::of(&app))
 }
 
 /// 列出工作区里的 skill。

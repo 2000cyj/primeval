@@ -12,6 +12,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Plus, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
+import { Github } from 'lucide-vue-next'
 import { Copy, Download, FolderInput, Globe, Monitor, Pencil } from 'lucide-vue-next'
 import { type Skill } from '@/data/skills'
 import { useCreatedAgents } from '@/data/createdAgents'
@@ -28,6 +29,7 @@ import SkillDetailDrawer from '@/components/SkillDetailDrawer.vue'
 import SkillCreateModal, { type CreateMethod } from '@/components/SkillCreateModal.vue'
 import SkillEditModal from '@/components/SkillEditModal.vue'
 import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
+import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
 
 const message = useMessage()
@@ -224,6 +226,8 @@ const editTarget = ref<string | null>(null)
 /** 创建副本弹窗 */
 const showDuplicate = ref(false)
 const duplicateTarget = ref<string | null>(null)
+/** 从 GitHub 仓库添加的弹窗 */
+const showRepo = ref(false)
 
 /** 新导入的 skill 在列表里的配色（按名字散列，保证同一个 skill 颜色稳定） */
 const palette = [
@@ -439,6 +443,14 @@ const onDuplicated = (info: SkillInfo) => {
           </template>
           更新<span v-if="selected.length">（{{ selected.length }}）</span>
         </NButton>
+        <NButton size="small" title="从以前导入过的 GitHub 仓库添加" @click="showRepo = true">
+          <template #icon>
+            <NIcon :size="14">
+              <Github />
+            </NIcon>
+          </template>
+          从仓库添加
+        </NButton>
         <FilterMenu v-model="filters" :groups="filterGroups" />
         <NInput
           v-model:value="query"
@@ -603,6 +615,8 @@ const onDuplicated = (info: SkillInfo) => {
       @close="showDuplicate = false"
       @created="onDuplicated"
     />
+
+    <SkillRepoModal v-model:show="showRepo" @imported="loadWorkspaceSkills" />
 
     <NModal
       :show="deleteTarget !== null"

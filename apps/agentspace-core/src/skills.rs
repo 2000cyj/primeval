@@ -747,6 +747,94 @@ fn write_meta(dir: &Path, meta: &serde_json::Value) -> Result<(), String> {
     .map_err(|e| format!("写入 skill 信息失败：{e}"))
 }
 
+/// 一个 git 源仓库 —— 有 skill 是从它导入的。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepo {
+    /// 仓库地址（`owner/repo` 或完整 URL）。
+    pub source_url: String,
+    /// ref（分支 / tag）。空 = 默认分支。
+    pub source_ref: Option<String>,
+    /// 从这个仓库导入的 skill 名。
+    pub skills: Vec<String>,
+}
+
+/// 列出所有「从 git 仓库导入过」的仓库。
+///
+/// 导入时来源就记在 skill 的 sidecar 里（`origin: {type: "git", …}`），
+/// 这里按「仓库 + ref」归拢 —— 同一个仓库导过多次算一条。
+///
+/// 界面上用它做「从 GitHub 仓库添加」的快捷入口：
+/// 不用再输一遍地址，选一下就能把那个仓库里的 skill 导进来。
+pub fn skills_git_repos(paths: &Paths) -> Result<Vec<GitRepo>, String> {
+    let root = paths.skills_root();
+    let Ok(entries) = fs::read_dir(&root) else {
+        return Ok(Vec::new());
+    };
+
+    // 先按 (仓库, ref) 分组
+    let mut groups: Vec<GitRepo> = Vec::new();
+
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() || !dir.join("SKILL.md").is_file() {
+            continue;
+        }
+        let meta = read_meta(&dir);
+        let Some(origin) = meta.get("origin") else {
+            continue;
+        };
+        if origin.get("type").and_then(|v| v.as_str()) != Some("git") {
+            continue;
+        }
+        let Some(source_url) = origin
+            .get("source_url")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+        else {
+            continue;
+        };
+        let source_ref = origin
+            .get("source_ref")
+            .and_then(|v| v.as_str())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        let name = {
+            let raw = fs::read_to_string(dir.join("SKILL.md")).unwrap_or_default();
+            let (frontmatter, _) = parse_frontmatter(&raw);
+            let declared = fm_get(&frontmatter, "name");
+            if declared.is_empty() {
+                dir.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            } else {
+                declared
+            }
+        };
+
+        let key = (source_url.clone(), source_ref.clone());
+        match groups.iter_mut().find(|repo| {
+            (repo.source_url.clone(), repo.source_ref.clone()) == key
+        }) {
+            Some(repo) => repo.skills.push(name),
+            None => {
+                groups.push(GitRepo {
+                    source_url,
+                    source_ref,
+                    skills: vec![name],
+                });
+            }
+        }
+    }
+
+    for repo in &mut groups {
+        repo.skills.sort();
+    }
+    Ok(groups)
+}
+
 /// 启用 / 停用一个 skill。
 pub fn skills_set_enabled(paths: &Paths, name: String, enabled: bool) -> Result<(), String> {    let dir = paths.skills_root().join(sanitize_skill_name(&name));
     if !dir.is_dir() {

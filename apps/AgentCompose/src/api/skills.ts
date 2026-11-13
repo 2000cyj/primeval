@@ -98,6 +98,20 @@ export interface RepoBranch {
   name: string
 }
 
+/**
+ * 一个「从 git 仓库导入过」的仓库。
+ *
+ * 导入时来源就记在 skill 的 sidecar 里，这里按仓库 + ref 归拢。
+ */
+export interface GitRepo {
+  /** 仓库地址 */
+  sourceUrl: string
+  /** ref（分支 / tag） */
+  sourceRef: string | null
+  /** 从这个仓库导入的 skill 名 */
+  skills: string[]
+}
+
 export const SKILL_COMMANDS = {
   list: 'skills_list',
   createManual: 'skills_create_manual',
@@ -112,6 +126,7 @@ export const SKILL_COMMANDS = {
   update: 'skills_update',
   duplicate: 'skills_duplicate',
   pickSource: 'skills_pick_source',
+  gitRepos: 'skills_git_repos',
   parseRepoUrl: 'skills_parse_repo_url',
   repoBranches: 'skills_repo_branches',
   repoDiscover: 'skills_repo_discover',
@@ -297,5 +312,18 @@ export async function importRepoSkills(
     return await invoke<SkillInfo[]>(SKILL_COMMANDS.repoImport, { url, branch, paths })
   } catch (error) {
     throw fail('从仓库导入 skill', error)
+  }
+}
+
+/**
+ * 列出所有「从 git 仓库导入过」的仓库。
+ *
+ * 界面上用它做快捷入口 —— 不用再输一遍地址。
+ */
+export async function listGitRepos(): Promise<GitRepo[]> {
+  try {
+    return await invoke<GitRepo[]>(SKILL_COMMANDS.gitRepos)
+  } catch (error) {
+    throw fail('读取仓库列表', error)
   }
 }

@@ -1054,6 +1054,7 @@ pub fn run() {
             agents::agents_install,
             agents::agents_uninstall,
             skills::skills_list,
+            skills::skills_git_repos,
             skills::skills_create_manual,
             skills::skills_import_url,
             skills::skills_import_local,

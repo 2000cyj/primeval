@@ -35,6 +35,8 @@ pub enum SkillCmd {
     ImportFromPi(ImportFromPiArgs),
     /// 从 GitHub 仓库导入
     Github(GithubArgs),
+    /// 列出从 git 仓库导入过的仓库
+    Repos(ReposArgs),
     /// 管理 skill 里的文件
     #[command(subcommand)]
     Files(FileCmd),
@@ -59,6 +61,16 @@ pub struct GithubArgs {
     /// 输出格式
     #[arg(long, value_enum, default_value = "text")]
     format: Format,
+}
+
+#[derive(Args, Debug)]
+pub struct ReposArgs {
+    /// 输出格式
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+    /// 输出 JSON（等价于 --format json）
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args, Debug)]
@@ -196,6 +208,7 @@ impl SkillCmd {
             SkillCmd::Import(args) => import(paths, args),
             SkillCmd::ImportFromPi(args) => import_from_pi(paths, args),
             SkillCmd::Github(args) => from_github(paths, args),
+            SkillCmd::Repos(args) => repos(paths, args),
             SkillCmd::Files(cmd) => files(paths, cmd),
         }
     }
@@ -570,6 +583,44 @@ fn import_from_pi(paths: &Paths, args: ImportFromPiArgs) -> u8 {
 /// 从 GitHub 仓库导入 skill。
 ///
 /// 流程跟 cc-switch 的「仓库管理」一样：填地址 → 选分支 → 列出 skill → 导入。
+/// 列出从 git 仓库导入过的仓库。
+///
+/// 导入时来源就记在 skill 的 sidecar 里（`origin: {type: "git", …}`），
+/// 这里按「仓库 + ref」归拢 —— 同一个仓库导过多次算一条。
+fn repos(paths: &Paths, args: ReposArgs) -> u8 {
+    let items = match skills::skills_git_repos(paths) {
+        Ok(items) => items,
+        Err(error) => {
+            eprintln!("读仓库列表失败：{error}");
+            return 1;
+        }
+    };
+    if output::wants_json(args.format, args.json) {
+        output::json(&items);
+        return 0;
+    }
+    if items.is_empty() {
+        println!("还没从 git 仓库导入过 skill。");
+        return 0;
+    }
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            vec![
+                item.source_url.clone(),
+                item.source_ref.clone().unwrap_or_else(|| "(默认分支)".to_string()),
+                item.skills.len().to_string(),
+                item.skills.join("、"),
+            ]
+        })
+        .collect();
+    output::table(&["仓库", "ref", "数量", "已导入的 skill"], &rows);
+    println!();
+    println!("共 {} 个仓库。", items.len());
+    println!("用 `agentspace skill github <仓库> --import` 可以再导一次。");
+    0
+}
+
 fn from_github(paths: &Paths, args: GithubArgs) -> u8 {
     let repo = match github::parse_repo_url(&args.repo) {
         Some(repo) => repo,
