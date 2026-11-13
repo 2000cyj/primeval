@@ -3,7 +3,7 @@
 //! 对应桌面端的「MCP」页。
 //!
 //! **操作走 sidecar 的 admin HTTP API** —— 桌面端和 CLI 是同一个 API 的两个
-//! 客户端（跟 multica 的 CLI / Web 调同一套 API 一个道理）。
+//! 客户端（桌面端和 CLI 调同一套 API，一个道理）。
 //!
 //! server 的定义、曝光配置、令牌都归 sidecar 管，CLI 不自己碰那些文件。
 

@@ -1109,7 +1109,7 @@ pub fn run() {
             history::cli_op_history_clear,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running AgentCompose");
+        .expect("error while running AgentSpace");
 }
 
 #[cfg(test)]

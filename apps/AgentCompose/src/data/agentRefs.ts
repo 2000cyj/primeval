@@ -12,9 +12,3 @@
 
 /** MCP server 的引用 */
 export const mcpServerRef = (id: string): string => `mcp/servers.json#${id}`
-
-/** 从引用里取出 MCP server 的 id */
-export const mcpServerIdFromRef = (ref: string): string => ref.split('#')[1] ?? ''
-
-/** 这个引用是不是指向某个 MCP server */
-export const isMcpRef = (ref: string): boolean => ref.startsWith('mcp/servers.json#')

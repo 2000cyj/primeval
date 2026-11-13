@@ -2,9 +2,9 @@
 //!
 //! # 为什么需要
 //!
-//! 已经有项目在用 yaml 声明自己的 MCP server（比如 orca 工作区的
-//! `packages/mcp-bridge/mcp-bridge-info.yaml`），里面写了每个 server 的
-//! 传输方式、地址、命令、环境变量映射。
+//! 有项目在用 yaml 声明自己的 MCP server（一份写明每个 server 的
+//! 传输方式、地址、命令、环境变量映射的清单文件），比在界面上一条条
+//! 填省事。
 //!
 //! 让用户把这些 server 一个个用 `mcp create` 敲一遍很折磨 —— 字段容易敲错，
 //! 而且以后源文件改了还得重来一遍。

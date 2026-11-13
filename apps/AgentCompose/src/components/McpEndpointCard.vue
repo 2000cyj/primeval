@@ -36,23 +36,23 @@ const snippets = computed(() => {
     claude: {
       label: 'Claude Code',
       filename: '.mcp.json',
-      content: stringify({ mcpServers: { 'agent-compose': { type: 'http', url } } }),
+      content: stringify({ mcpServers: { agentspace: { type: 'http', url } } }),
     },
     cursor: {
       label: 'Cursor',
       filename: '.cursor/mcp.json',
-      content: stringify({ mcpServers: { 'agent-compose': { url } } }),
+      content: stringify({ mcpServers: { agentspace: { url } } }),
     },
     codex: {
       label: 'Codex',
       filename: '~/.codex/config.toml',
-      content: `[mcp_servers.agent-compose]\nurl = "${url}"\n`,
+      content: `[mcp_servers.agentspace]\nurl = "${url}"\n`,
     },
     json: {
       label: '通用 JSON',
       filename: 'mcp.json',
       content: stringify({
-        name: 'agent-compose',
+        name: 'agentspace',
         transport: 'http',
         url,
         authorization: `Bearer ${props.token}`,
@@ -82,7 +82,7 @@ const copy = async (text: string, label: string): Promise<void> => {
     <header class="card-head">
       <div class="head-text">
         <span class="card-title">接入信息</span>
-        <span class="card-sub">agent 通过这个地址连上 AgentCompose 的 MCP 代理</span>
+        <span class="card-sub">agent 通过这个地址连上 AgentSpace 的 MCP 代理</span>
       </div>
     </header>
 

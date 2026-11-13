@@ -143,7 +143,7 @@ const toggle = (value: boolean) => {
               </div>
               <div class="meta-row">
                 <dt>能力类型</dt>
-                <dd>Agent Skill</dd>
+                <dd>Skill</dd>
               </div>
               <div class="meta-row">
                 <dt>来源</dt>

@@ -208,7 +208,7 @@ const methods = [
   {
     key: 'runtime' as const,
     title: '从运行时复制',
-    desc: '把本地运行时里已装好的 skill 提升到工作区。',
+    desc: '把本地运行时里已装好的 skill 提升到 Skill 仓库。',
     icon: Copy,
   },
   {
@@ -640,7 +640,7 @@ watch(
               <span class="runtime-name">
                 {{ item.name }}
                 <span class="runtime-tag">{{ item.runtime }}</span>
-                <span v-if="item.installed" class="runtime-tag installed">已在工作区</span>
+                <span v-if="item.installed" class="runtime-tag installed">已在 Skill 仓库</span>
               </span>
               <span v-if="item.description" class="runtime-desc">{{ item.description }}</span>
             </span>
@@ -733,7 +733,7 @@ watch(
             <Copy />
           </NIcon>
         </template>
-        复制到工作区<span v-if="selectedPaths.length">（{{ selectedPaths.length }}）</span>
+        复制到 Skill 仓库<span v-if="selectedPaths.length">（{{ selectedPaths.length }}）</span>
       </NButton>
     </div>
 

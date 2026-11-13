@@ -9,7 +9,7 @@
 //! 删一个字段也要记得删两处。迟早漂移。
 //!
 //! 这个 crate 把「数据长什么样 + 怎么读写」收成一份，两个 crate 都依赖它。
-//! 跟 multica 的做法一样：`server/cmd/multica`（CLI）和 `server/cmd/server`
+//! 和桌面端是同一个路子：`agentspace-cli`（CLI）和 `AgentCompose`（桌面端）
 //! （HTTP 服务）在同一个 Go module 里，共享 `server/internal/`。
 //!
 //! **不依赖 Tauri** —— 桌面端和 CLI 都要能引它，Tauri 只能待在桌面端那一侧。
@@ -17,7 +17,8 @@
 pub mod agent;
 pub mod bridge;
 pub mod extensions;
-pub mod git_source;
+/// git 源的解析与克隆 —— 只在 crate 内用（github.rs 调它）。
+pub(crate) mod git_source;
 pub mod github;
 pub mod marketplace;
 pub mod paths;
@@ -26,5 +27,5 @@ pub mod toolbox;
 pub mod proxy;
 pub mod skills;
 
-pub use agent::{AgentMeta, CreatedAgent, DEFAULT_RUNTIME};
+pub use agent::{CreatedAgent, DEFAULT_RUNTIME};
 pub use paths::Paths;

@@ -148,7 +148,7 @@ cd 我的项目 && agentspace run 知识助手
 ## 开发
 
 ```bash
-node scripts/build-cli.mjs          # 在 apps/AgentCompose 下构建
+pnpm --filter @remote/agentspace-cli build   # 构建 agentspace 二进制
 cargo test --bin agentspace         # 在 apps/agentspace-cli 下测试
 ```
 

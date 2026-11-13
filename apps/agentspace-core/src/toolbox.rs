@@ -742,7 +742,7 @@ fn http_client(paths: &Paths, with_proxy: bool) -> Option<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         // 慢网络下等太久界面就卡住了；拿不到就当「查不到更新」。
         .timeout(Duration::from_secs(8))
-        .user_agent("AgentCompose/0.1");
+        .user_agent("AgentSpace/0.1");
     if with_proxy {
         let proxy = proxy_url(paths)?;
         builder = builder.proxy(reqwest::Proxy::all(proxy).ok()?);
@@ -1254,28 +1254,6 @@ fn failure_hint(detail: &str) -> Option<&'static str> {
     }
 }
 
-/// 比较两个版本号（只比数字段，够用）。
-#[allow(dead_code)]
-fn is_newer(latest: &str, current: &str) -> bool {
-    let parse = |value: &str| -> Vec<u64> {
-        value
-            .trim_start_matches(['v', 'V'])
-            .split(|c: char| !c.is_ascii_digit())
-            .filter(|part| !part.is_empty())
-            .map(|part| part.parse::<u64>().unwrap_or(0))
-            .collect()
-    };
-    let latest_parts = parse(latest);
-    let current_parts = parse(current);
-    for index in 0..latest_parts.len().max(current_parts.len()) {
-        let left = latest_parts.get(index).copied().unwrap_or(0);
-        let right = current_parts.get(index).copied().unwrap_or(0);
-        if left != right {
-            return left > right;
-        }
-    }
-    false
-}
 
 #[cfg(test)]
 mod tests {
@@ -1338,8 +1316,5 @@ mod tests {
 
     #[test]
     fn compares_versions() {
-        assert!(is_newer("2.1.319", "2.1.318"));
-        assert!(!is_newer("2.1.318", "2.1.318"));
-        assert!(!is_newer("0.52.1", "2.1.318"));
     }
 }

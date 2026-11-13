@@ -1,11 +1,12 @@
 /**
  * Skill 仓库的 Tauri command 封装。
  *
- * 四种添加方式（参照 multica 的实现）都落到 Rust 侧：
+ * 五种添加方式（手动创建 / 本地导入 / URL 导入 / 运行时复制 / GitHub 仓库）都落到 Rust 侧：
  * - 手动创建：写一份只有 frontmatter 的 SKILL.md；
  * - 本地导入：含 SKILL.md 的目录，或 .zip / .skill 压缩包；
  * - URL 导入：拉取已发布的 skill；
- * - 运行时复制：把本机运行时里已装好的 skill 提升到工作区。
+ * - GitHub 仓库：选仓库里的若干 skill 导入；
+ * - 运行时复制：把本机运行时里已装好的 skill 提升到仓库；
  *
  * command 名一律取自 SKILL_COMMANDS，不在此处硬编码字符串。
  */
@@ -14,7 +15,7 @@ import { invoke } from '@tauri-apps/api/core'
 /** skill 的来源 */
 export type SkillSource = 'manual' | 'url' | 'local' | 'runtime' | 'duplicate' | 'git'
 
-/** 工作区里的一个 skill */
+/** Skill 仓库里的一个 skill */
 export interface SkillInfo {
   name: string
   description: string
@@ -39,7 +40,7 @@ export interface SkillInfo {
   fileCount: number
 }
 
-/** 运行时里已装好、可以提升到工作区的 skill */
+/** 运行时里已装好、可以提升到 Skill 仓库的 skill */
 export interface RuntimeSkillInfo {
   name: string
   description: string
@@ -47,7 +48,7 @@ export interface RuntimeSkillInfo {
   path: string
   /** 运行时名称，如「Claude Code」 */
   runtime: string
-  /** 工作区里是否已经有同名 skill */
+  /** Skill 仓库里是否已经有同名 skill */
   installed: boolean
 }
 
@@ -139,7 +140,7 @@ function fail(action: string, error: unknown): Error {
   return new Error(`${action}失败：${detail}`, { cause: error })
 }
 
-/** 列出工作区里的 skill */
+/** 列出 Skill 仓库里的 skill */
 export async function listSkills(): Promise<SkillInfo[]> {
   try {
     return await invoke<SkillInfo[]>(SKILL_COMMANDS.list)
@@ -184,7 +185,7 @@ export async function listRuntimeSkills(): Promise<RuntimeSkillInfo[]> {
   }
 }
 
-/** 把运行时里的 skill 复制到工作区 */
+/** 把运行时里的 skill 复制到 Skill 仓库 */
 export async function importRuntimeSkill(path: string): Promise<SkillInfo> {
   try {
     return await invoke<SkillInfo>(SKILL_COMMANDS.importRuntime, { path })
@@ -193,7 +194,7 @@ export async function importRuntimeSkill(path: string): Promise<SkillInfo> {
   }
 }
 
-/** 删除工作区里的 skill */
+/** 删除 Skill 仓库里的 skill */
 export async function removeSkill(name: string): Promise<void> {
   try {
     await invoke(SKILL_COMMANDS.remove, { name })

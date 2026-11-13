@@ -12,16 +12,16 @@
 //!
 //! # 设计
 //!
-//! 抄 multica 的路子：**一套数据，两个客户端**。
+//! 一套数据，两个客户端。
 //!
 //! - 桌面端（`apps/AgentCompose`）和这个 CLI 是两个进程、两个 crate，
 //!   但操作的是同一份数据（`~/.agent-compose/`）；
 //! - 数据的结构与读写逻辑放在共享 crate `apps/agentspace-core` 里，
 //!   两边都依赖它 —— 不会有「桌面端认的字段 CLI 不认」；
 //! - MCP 的操作走 sidecar 的 admin HTTP API —— 桌面端和 CLI 是同一个 API
-//!   的两个客户端（跟 multica 的 CLI / Web 调同一套 API 一个道理）。
+//!   的两个客户端（桌面端和 CLI 调同一套 API，一个道理）。
 //!
-//! 命令树按 multica 的风格分：
+//! 命令树按「名词 → 动作」分：
 //!
 //! ```text
 //! agentspace

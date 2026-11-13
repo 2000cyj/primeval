@@ -185,7 +185,7 @@ describe('SkillCreateModal', () => {
     expect(document.body.textContent).toContain('pdf-tools')
 
     await click('.n-checkbox')
-    await clickByText('button', '复制到工作区')
+    await clickByText('button', '复制到 Skill 仓库')
 
     expect(calledCommand('skills_import_runtime')?.[1]).toEqual({ path: runtimeSkill.path })
     expect(wrapper.emitted('created')?.[0]).toEqual([skillInfo])

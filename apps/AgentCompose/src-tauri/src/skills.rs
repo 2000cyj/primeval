@@ -24,7 +24,7 @@ pub fn skills_git_repos(app: AppHandle) -> Result<Vec<GitRepo>, String> {
     agentspace_core::skills::skills_git_repos(&paths::of(&app))
 }
 
-/// 列出工作区里的 skill。
+/// 列出 Skill 仓库里的 skill。
 #[tauri::command]
 pub fn skills_list(app: AppHandle) -> Result<Vec<SkillInfo>, String> {
     agentspace_core::skills::skills_list(&paths::of(&app))

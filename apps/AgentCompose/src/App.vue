@@ -74,14 +74,6 @@ const themeOverrides: GlobalThemeOverrides = {
     hoverColor: '#f3f4f6',
     scrollbarColor: '#d1d5db',
   },
-  DataTable: {
-    thColor: '#fafafa',
-    thTextColor: '#6b7280',
-    tdColorHover: '#f9fafb',
-    borderColor: '#efeff1',
-    thPadding: '8px 12px',
-    tdPadding: '10px 12px',
-  },
   Button: {
     fontWeight: '500',
     borderRadiusMedium: '6px',

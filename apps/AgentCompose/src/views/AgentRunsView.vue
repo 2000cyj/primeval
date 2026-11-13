@@ -11,7 +11,7 @@ const emit = defineEmits<{ create: []; edit: [id: string] }>()
 const message = useMessage()
 const query = ref('')
 
-/** 已创建的智能体（会话内；「新建智能体」里建的就是它们） */
+/** 已创建的智能体（从磁盘读回；「新建智能体」里建的就是它们） */
 const { createdAgents, remove } = useCreatedAgents()
 
 /** 智能体跑在 Pi 上，所以图标就用 Pi 的 */

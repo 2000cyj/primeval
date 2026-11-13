@@ -35,7 +35,7 @@ fn run_agent(paths: &Paths, name: &str, agent_args: &[String]) -> Result<u8, Str
             .collect();
         let mut message = format!("找不到智能体：{name}");
         if available.is_empty() {
-            message.push_str("\n（还没有任何智能体 —— 在 AgentCompose 里新建一个）");
+            message.push_str("\n（还没有任何智能体 —— 在 AgentSpace 桌面端新建一个）");
         } else {
             message.push_str("\n可用的智能体：");
             for item in available {

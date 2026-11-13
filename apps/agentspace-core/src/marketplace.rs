@@ -140,7 +140,7 @@ pub async fn search(query: &str, limit: usize, offset: usize) -> Result<SearchRe
 
     let response = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
-        .user_agent("AgentCompose/1.0")
+        .user_agent("AgentSpace/1.0")
         .build()
         .map_err(|e| e.to_string())?;
     let response = response

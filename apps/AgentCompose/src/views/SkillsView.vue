@@ -36,7 +36,7 @@ const message = useMessage()
 const query = ref('')
 
 /**
- * 列表只认工作区里真实落盘的 skill —— 不再混入演示数据。
+ * 列表只认Skill 仓库里真实落盘的 skill —— 不再混入演示数据。
  * 读不到就报真实原因，不用假数据充数。
  */
 const skillList = ref<Skill[]>([])
@@ -311,7 +311,7 @@ const sourceIcon = (source: SkillSource): Component => {
   return icons[source]
 }
 
-/** 读取工作区里已落盘的 skill */
+/** 读取 Skill 仓库里已落盘的 skill */
 const loadWorkspaceSkills = async () => {
   loading.value = true
   loadError.value = ''
@@ -419,7 +419,7 @@ const onDuplicated = (info: SkillInfo) => {
       <div>
         <h1 class="page-title">Skills</h1>
         <p class="page-sub">
-          <template v-if="loading">正在读取工作区…</template>
+          <template v-if="loading">正在读取 Skill 仓库…</template>
           <template v-else>
             {{ visibleSkills.length }} 个能力包
             <template v-if="visibleSkills.length !== skillList.length">
@@ -565,15 +565,13 @@ const onDuplicated = (info: SkillInfo) => {
           </div>
         </div>
 
-        <p v-if="loadError" class="load-error" role="alert">
-          读取工作区 skill 失败：{{ loadError }}
-        </p>
+        <p v-if="loadError" class="load-error" role="alert">读取 Skill 仓库失败：{{ loadError }}</p>
 
         <p v-if="!visibleSkills.length" class="empty">
-          <template v-if="loading">正在读取工作区…</template>
+          <template v-if="loading">正在读取 Skill 仓库…</template>
           <template v-else-if="loadError">读取失败，没有可展示的 skill。</template>
           <template v-else-if="query.trim()">没有匹配的 Skill</template>
-          <template v-else>工作区里还没有 skill，点右上角「添加 Skill」创建一个。</template>
+          <template v-else>Skill 仓库里还没有 skill，点右上角「添加 Skill」创建一个。</template>
         </p>
       </div>
     </div>

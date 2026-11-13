@@ -252,7 +252,7 @@ fn list(paths: &Paths, args: ListArgs) -> u8 {
         return 0;
     }
     if agents.is_empty() {
-        println!("还没有智能体 —— 到 AgentCompose 里新建一个，或者用 `agentspace agent create`。");
+        println!("还没有智能体 —— 到 AgentSpace 桌面端新建一个，或者用 `agentspace agent create`。");
         return 0;
     }
     let rows: Vec<Vec<String>> = agents

@@ -10,7 +10,7 @@ import { listSkills, type SkillInfo } from '@/api/skills'
  * 与工作台的「绑定能力」弹窗效果一致，但两者是各自独立的组件，
  * 不共用同一份实现——这里的交互（默认全选、勾选即生效）服务于新建流程。
  *
- * 数据来自 skills 页的真实数据（工作区里已添加的 skills），不是演示数据。
+ * 数据来自 skills 页的真实数据（Skill 仓库里已添加的 skills），不是演示数据。
  */
 const props = defineProps<{
   show: boolean

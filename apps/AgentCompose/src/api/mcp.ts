@@ -9,13 +9,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
   MCP_COMMANDS,
-  defaultExposure,
-  toolKey,
   type McpExposure,
-  type McpProfile,
   type McpRuntimeStatus,
   type McpServerDef,
-  type McpToolInfo,
   type McpUpstreamStatus,
 } from '@remote/agent-compose-mcp/types'
 
@@ -136,24 +132,6 @@ export async function setExposure(exposure: McpExposure): Promise<void> {
   }
 }
 
-/** 读取命名组合（profile）列表 */
-export async function listProfiles(): Promise<McpProfile[]> {
-  try {
-    return await invoke<McpProfile[]>(MCP_COMMANDS.listProfiles)
-  } catch (error) {
-    throw fail('读取组合列表', error)
-  }
-}
-
-/** 保存命名组合（profile）列表 */
-export async function saveProfiles(profiles: McpProfile[]): Promise<void> {
-  try {
-    await invoke(MCP_COMMANDS.saveProfiles, { profiles })
-  } catch (error) {
-    throw fail('保存组合列表', error)
-  }
-}
-
 /** 刷新访问令牌：让运行中的 sidecar 立刻用上当前的 token */
 export async function refreshToken(): Promise<string> {
   try {
@@ -193,24 +171,6 @@ export async function searchRegistry(
 }
 
 /**
- * 发起 oauth 授权，返回需要用户打开的授权地址。
- *
- * 写操作语义：拿不到授权地址时直接抛错，否则用户会看到一个打不开的
- * 链接，却以为授权已经发起。
- */
-export async function authorizeServer(
-  id: string,
-): Promise<{ authorizeUrl: string; state: string }> {
-  try {
-    return await invoke<{ authorizeUrl: string; state: string }>(MCP_COMMANDS.authorizeServer, {
-      id,
-    })
-  } catch (error) {
-    throw fail('发起授权', error)
-  }
-}
-
-/**
  * 用系统默认浏览器打开网址。
  *
  * 授权流程需要用户在浏览器里人工登录与同意，桌面端不能自己弹浏览器，
@@ -235,13 +195,4 @@ export function registryServerDef(
   return entry.def ?? null
 }
 
-/** 目录条目里是否带可用的工具白名单键 */
-export function registryToolKeys(
-  entry: import('@remote/agent-compose-mcp/types').McpRegistryEntry,
-  tools: McpToolInfo[],
-): string[] {
-  return tools.map((tool) => toolKey(entry.name, tool.name))
-}
-
 /** 默认暴露配置（界面初始化用，避免各处分叉） */
-export { defaultExposure }

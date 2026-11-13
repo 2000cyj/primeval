@@ -1,13 +1,14 @@
-//! Skill 仓库：工作区内的 Skill 以「目录 + SKILL.md」的形式落盘。
+//! Skill 仓库：Skill 仓库里的 Skill 以「目录 + SKILL.md」的形式落盘。
 //!
-//! 参照 multica 的四种添加方式实现：
+//! 五种添加方式：
 //! - 手动创建：写一份只有 frontmatter 的 SKILL.md；
 //! - 本地导入：选择含 SKILL.md 的目录，或 `.zip` / `.skill` 压缩包；
 //! - URL 导入：拉取已发布的 skill（支持 GitHub / Skills.sh / 直接 md 链接）；
 //! - 运行时复制：把本机运行时（Claude Code / Codex / 通用 Agent）里已装好的
-//!   skill 提升到工作区。
+//!   skill 提升到仓库；
+//! - GitHub 仓库：选仓库里的若干 skill 导入。
 //!
-//! 工作区根目录：`~/.agent-compose/skills/<skill 名>/`
+//! Skill 仓库根目录：`~/.agent-compose/skills/<skill 名>/`
 
 use crate::paths::Paths;
 use std::collections::BTreeMap;
@@ -19,7 +20,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::json;
 
-/// 单个文件上限（对齐 multica 的 maxImportFileSize）。
+/// 单个文件上限（导入时的体积上限）。
 const MAX_SKILL_FILE_BYTES: u64 = 1 << 20;
 /// 附属文件总量上限（对齐 maxImportTotalSize）。
 const MAX_SKILL_BUNDLE_BYTES: u64 = 8 << 20;
@@ -37,7 +38,7 @@ const MAX_SKILL_DESCRIPTION_CHARS: usize = 1024;
 /// skill 目录里的 sidecar：记录来源等信息，不影响 SKILL.md。
 const SOURCE_FILE: &str = ".agent-compose.json";
 
-/// 工作区里的一�� skill。
+/// Skill 仓库里的一个 skill。
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillInfo {
@@ -62,7 +63,7 @@ pub struct SkillInfo {
     pub file_count: usize,
 }
 
-/// 运行时里已装好、可以提升到工作区的 skill。
+/// 运行时里已装好、可以提升到 Skill 仓库的 skill。
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSkillInfo {
@@ -72,12 +73,12 @@ pub struct RuntimeSkillInfo {
     pub path: String,
     /// 运行时名称，如「Claude Code」。
     pub runtime: String,
-    /// 工作区里是否已经有同名 skill。
+    /// Skill 仓库里是否已经有同名 skill。
     pub installed: bool,
 }
 
-/// 写一组文件进工作区（给同 crate 的其它模块用）。
-pub fn write_skill_public(
+/// 写一组文件进 Skill 仓库（给同 crate 的其它模块用）。
+pub(crate) fn write_skill_public(
     paths: &Paths,
     name: &str,
     description: &str,
@@ -88,17 +89,17 @@ pub fn write_skill_public(
 }
 
 /// 记来源出处（给同 crate 的其它模块用）。
-pub fn set_origin_public(paths: &Paths, name: &str, origin: Option<serde_json::Value>) {
+pub(crate) fn set_origin_public(paths: &Paths, name: &str, origin: Option<serde_json::Value>) {
     set_origin(paths, name, origin);
 }
 
 /// git 源的出处（给同 crate 的其它模块用）。
-pub fn origin_git_public(repo: &str, reference: Option<&str>) -> serde_json::Value {
+pub(crate) fn origin_git_public(repo: &str, reference: Option<&str>) -> serde_json::Value {
     origin_git(repo, reference)
 }
 
 /// 目录名清洗（给同 crate 的其它模块用）。
-pub fn sanitize_skill_name_public(raw: &str) -> String {
+pub(crate) fn sanitize_skill_name_public(raw: &str) -> String {
     sanitize_skill_name(raw)
 }
 
@@ -262,17 +263,17 @@ fn scalar_to_string(value: &serde_yaml::Value) -> Option<String> {
 }
 
 /// 解析 frontmatter（给同 crate 的其它模块用）。
-pub fn parse_frontmatter_public(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
+pub(crate) fn parse_frontmatter_public(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
     parse_frontmatter(raw)
 }
 
 /// 取 frontmatter 里的字符串字段（给同 crate 的其它模块用）。
-pub fn fm_get_public(frontmatter: &Option<BTreeMap<String, String>>, key: &str) -> String {
+pub(crate) fn fm_get_public(frontmatter: &Option<BTreeMap<String, String>>, key: &str) -> String {
     fm_get(frontmatter, key)
 }
 
 /// 收集一个 skill 目录下的所有文件（给同 crate 的其它模块用）。
-pub fn collect_skill_files_public(dir: &Path) -> Result<Vec<SkillFile>, String> {
+pub(crate) fn collect_skill_files_public(dir: &Path) -> Result<Vec<SkillFile>, String> {
     collect_dir_files(dir)
 }
 
@@ -362,7 +363,7 @@ fn is_skill_md(rel: &str) -> bool {
 
 // ---------------------------------------------------------------- 落盘
 
-/// 把一组文件写进工作区，返回写入后的 skill 信息。
+/// 把一组文件写进 Skill 仓库，返回写入后的 skill 信息。
 fn write_skill(
     paths: &Paths,
     name: &str,
@@ -845,7 +846,7 @@ pub fn skills_set_enabled(paths: &Paths, name: String, enabled: bool) -> Result<
     write_meta(&dir, &meta)
 }
 
-/// 列出工作区里的 skill。
+/// 列出Skill 仓库里的 skill。
 pub fn skills_list(paths: &Paths) -> Result<Vec<SkillInfo>, String> {
 
     let root = paths.skills_root();
@@ -962,7 +963,7 @@ async fn fetch_skill_from_url(paths: &Paths, url: &str) -> Result<FetchedSkill, 
     let client = crate::proxy::apply_to(
         reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent("AgentCompose/0.1"),
+            .user_agent("AgentSpace/0.1"),
         paths,
     )
     .build()
@@ -1214,7 +1215,7 @@ pub fn skills_list_runtime(paths: &Paths) -> Result<Vec<RuntimeSkillInfo>, Strin
     Ok(out)
 }
 
-/// 把运行时里的 skill 复制到工作区。
+/// 把运行时里的 skill 复制到 Skill 仓库。
 pub fn skills_import_runtime(paths: &Paths, path: String) -> Result<SkillInfo, String> {
     let source = PathBuf::from(path.trim());
     if !source.is_dir() {
@@ -1247,7 +1248,7 @@ pub fn skills_import_runtime(paths: &Paths, path: String) -> Result<SkillInfo, S
     Ok(info)
 }
 
-/// 删除工作区里的 skill。
+/// 删除Skill 仓库里的 skill。
 pub fn skills_remove(paths: &Paths, name: String) -> Result<(), String> {
     let dir = paths.skills_root().join(sanitize_skill_name(&name));
     if !dir.exists() {
@@ -1806,7 +1807,7 @@ pub fn skills_duplicate(paths: &Paths, name: String, new_name: String) -> Result
     })
 }
 
-/// 用新的文件集覆盖工作区里已有的 skill。
+/// 用新的文件集覆盖 Skill 仓库里已有的 skill。
 ///
 /// 目录名与启用状态保持不变；SKILL.md 的 frontmatter 统一成本地名字 + 新描述。
 fn overwrite_skill_files(

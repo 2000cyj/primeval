@@ -21,7 +21,7 @@ use agentspace_core::Paths;
 use crate::mcp;
 use crate::runtime::Runtime;
 
-/// 托管块的起止标记（抄 multica 的做法：块外的内容永远不动）。
+/// 托管块的起止标记（用块圈住自己写的内容，块外的内容永远不动）。
 const BLOCK_BEGIN: &str = "<!-- BEGIN AGENTSPACE-RUNTIME (auto-managed; do not edit) -->";
 const BLOCK_END: &str = "<!-- END AGENTSPACE-RUNTIME -->";
 /// 托管块与用户内容之间的分隔。

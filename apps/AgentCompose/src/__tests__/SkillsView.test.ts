@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import SkillsView from '../views/SkillsView.vue'
 
 /**
- * 页面数据全部来自 tauri command（工作区里真实落盘的 skill），不再有 mock 兜底。
+ * 页面数据全部来自 tauri command（Skill 仓库里真实落盘的 skill），不再有 mock 兜底。
  * 因此这里 mock 掉 invoke，模拟读得到 / 读不到两种情况。
  */
 const invokeMock = vi.hoisted(() => vi.fn())
@@ -80,7 +80,7 @@ afterEach(() => {
 })
 
 describe('SkillsView', () => {
-  it('渲染工作区里真实存在的 skill', async () => {
+  it('渲染 Skill 仓库里真实存在的 skill', async () => {
     invokeMock.mockImplementation((command: string) =>
       command === 'skills_list' ? Promise.resolve(storedSkills) : Promise.resolve(null),
     )
@@ -91,14 +91,14 @@ describe('SkillsView', () => {
     expect(wrapper.text()).toContain('代码解释器')
   })
 
-  it('工作区为空时展示空态，不拿假数据充数', async () => {
+  it('Skill 仓库为空时展示空态，不拿假数据充数', async () => {
     invokeMock.mockImplementation((command: string) =>
       command === 'skills_list' ? Promise.resolve([]) : Promise.resolve(null),
     )
     const wrapper = await mountView()
 
     expect(rows(wrapper)).toHaveLength(0)
-    expect(wrapper.get('.empty').text()).toContain('工作区里还没有 skill')
+    expect(wrapper.get('.empty').text()).toContain('Skill 仓库里还没有 skill')
   })
 
   it('读取失败时展示真实原因，也不展示假数据', async () => {

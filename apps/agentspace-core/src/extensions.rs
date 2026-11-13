@@ -632,11 +632,6 @@ pub fn read_package_name(dir: &Path) -> Option<String> {
     Some(name.to_string())
 }
 
-/// 一个扩展目录对应的包名（读它的 package.json）。
-pub fn package_name_of(dir: &Path) -> Option<String> {
-    read_package_name(dir)
-}
-
 /// 读 package.json 里的 dependencies。
 fn read_dependencies(dir: &Path) -> Vec<String> {
     let Ok(raw) = std::fs::read_to_string(dir.join("package.json")) else {

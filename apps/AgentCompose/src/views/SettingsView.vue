@@ -94,7 +94,7 @@ const checkLatestVersion = async (): Promise<void> => {
   }
 }
 
-/** 开始更新（下载地址也还没接，先提示） */
+/** 开始更新：把下载地址复制到剪贴板 */
 const startUpdate = (): void => {
   if (!downloadUrl.value) {
     message.info(`开始更新到 ${latestVersion.value}`)

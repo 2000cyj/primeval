@@ -6,7 +6,10 @@
 //! ~/.agent-compose/
 //!   agents/<id>/            智能体定义（agent.json + AGENTS.md）
 //!   skills/<目录名>/         skill 仓库
+//!   extensions/npm/<名>/     工具箱里的 npm 扩展（连同它自己的 node_modules）
+//!   extensions/custom/<名>/  工具箱里的自定义扩展
 //!   mcp/                    MCP 代理的运行时目录
+//!   git/<host>/<owner>/<仓库>  git 源的本地克隆（刷新时重拉）
 //!   bin/                    随应用分发的可执行文件（agentspace / sidecar）
 //! ```
 //!
@@ -69,11 +72,6 @@ impl Paths {
     pub fn mcp_dir(&self) -> PathBuf {
         self.root().join("mcp")
     }
-
-    /// `~/.agent-compose/bin`（随应用分发的可执行文件）
-    pub fn bin_dir(&self) -> PathBuf {
-        self.root().join("bin")
-    }
 }
 
 #[cfg(test)]
@@ -95,10 +93,6 @@ mod tests {
         assert_eq!(
             paths.mcp_dir(),
             Path::new("/home/test/.agent-compose/mcp")
-        );
-        assert_eq!(
-            paths.bin_dir(),
-            Path::new("/home/test/.agent-compose/bin")
         );
     }
 }
