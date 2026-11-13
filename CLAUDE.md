@@ -22,13 +22,13 @@ not claim a behaviour was confirmed on screen.
 ## Status
 
 Early-stage pnpm monorepo. The build, typecheck, test, lint, and formatting
-toolchain is wired up. `apps/agent-management` is a single desktop app that
-merges the Electron shell and the Vue 3 renderer into one package; its
-renderer screens are still mock-data placeholders. `apps/AgentCompose` is a
-Tauri + Vue 3 app whose Rust shell is still empty and whose renderer is a
-mock-data Skills screen. The shared packages contain
-placeholder or source-only implementations. When adding a package's first real
-code, add the matching scripts and update this file.
+toolchain is wired up. `apps/AgentCompose` is the desktop app: Tauri + Rust
+shell + Vue 3 renderer, managing agents, skills, MCP servers and Pi
+extensions. `apps/agentspace-core` is the shared Rust crate both the desktop
+app and the `agentspace` CLI use, so the two clients always agree on the
+data layout. The shared packages contain placeholder or source-only
+implementations. When adding a package's first real code, add the matching
+scripts and update this file.
 
 ## Package Manager
 
@@ -38,7 +38,7 @@ pnpm only. `engines` + `engine-strict=true` (in `.npmrc`) block npm/yarn, and
 ```bash
 pnpm install              # install all workspace deps
 pnpm -r list --depth -1   # list workspace packages
-pnpm --filter <name> <cmd>  # run a script in one package, e.g. --filter @remote/cli build
+pnpm --filter <name> <cmd>  # run a script in one package, e.g. --filter @remote/agent-compose dev
 pnpm -r <cmd>             # run a script across all packages that define it
 ```
 
@@ -46,57 +46,20 @@ pnpm -r <cmd>             # run a script across all packages that define it
 
 Workspace globs (`pnpm-workspace.yaml`): `apps/*` and `packages/*`.
 
-| Package                    | Dir                     | Role                                                            |
-| -------------------------- | ----------------------- | --------------------------------------------------------------- |
-| `@remote/agent-management` | `apps/agent-management` | Desktop app (private): Electron shell + Vue 3 renderer in one   |
-| `@remote/agent-data-grid`  | `apps/agent-data-grid`  | Data-grid desktop app (private): Tauri + Rust engine + React UI |
-| `@remote/agent-compose`    | `apps/AgentCompose`     | Agent Skills desktop app (private): Tauri + Rust shell + Vue 3  |
-| `@remote/components`       | `packages/components`   | Shared UI components; depends on `@remote/utils`                |
-| `@remote/cli`              | `packages/cli`          | CLI tool (`bin: remote-cli`); depends on `@remote/utils`        |
-| `@remote/utils`            | `packages/utils`        | Leaf shared utilities; no internal deps                         |
+| Package                     | Dir                          | Role                                                       |
+| --------------------------- | ---------------------------- | ---------------------------------------------------------- |
+| `@remote/agent-compose`     | `apps/AgentCompose`          | Desktop app (private): Tauri + Rust shell + Vue 3 renderer |
+| `@remote/agent-compose-mcp` | `packages/agent-compose-mcp` | MCP sidecar + shared TS types (private)                    |
+| `@remote/utils`             | `packages/utils`             | Leaf shared utilities; no internal deps                    |
+
+The Rust side lives outside pnpm: `apps/agentspace-core` is the shared crate
+(`agentspace_core`), and `apps/agentspace-cli` builds the `agentspace`
+command line on top of it. The desktop app depends on the same crate, so
+both clients read and write the same files under `~/.agent-compose/`.
 
 Internal deps use the `workspace:*` protocol, so pnpm symlinks local packages
-instead of fetching from a registry. Dependency direction is one-way:
-`agent-management → components → utils` and `cli → utils`. Keep `utils`
-dependency-free of other workspace packages to avoid cycles.
-
-`@remote/agent-management` is one self-contained package: the Electron main
-process lives in `src/main`, the preload bridge in `src/preload`, the IPC
-contract in `src/shared`, and the Vue 3 renderer in `src/renderer` (its own
-`index.html` + `src/`). electron-vite renderer root = `src/renderer`, and
-`@` aliases to `src/renderer/src`. The root package has no `dev` script;
-`turbo run dev` picks up every package that defines one, so the desktop app
-is started explicitly:
-
-```bash
-pnpm --filter @remote/agent-management dev       # desktop dev server on 5174 + Electron window (HMR)
-pnpm --filter @remote/agent-management dev:web   # renderer only, web dev server on 5173 (no Electron)
-pnpm --filter @remote/agent-management build      # out/* + release/win-unpacked (electron-builder --dir)
-pnpm --filter @remote/agent-management build:bundle  # only out/main, out/preload, out/renderer
-pnpm --filter @remote/agent-management start      # run the built output
-pnpm --filter @remote/agent-management typecheck  # tsc (main/preload) + vue-tsc (renderer)
-pnpm --filter @remote/agent-management test       # main/preload unit tests (node environment)
-```
-
-Ports differ on purpose: `dev:web` uses Vite's default 5173, the desktop
-renderer dev server uses 5174 (`agent-data-grid` uses 5175, `AgentCompose` uses
-5176), so they can run at the same time.
-
-`@remote/agent-data-grid` is a **Tauri** app: the shell and the database
-engine are Rust, the renderer is React 19. Layout inside the package:
-`crates/ide-core`, `crates/ide-ssh` and `crates/ide-db` are vendored from
-[OpenIDEA](https://github.com/l0ng-ai/openidea) (Apache-2.0) — the real
-database engine (sqlx + tiberius + bb8, hand-written dialect introspection) —
-and `src-tauri/src/commands/db.rs` exposes 28 typed commands through
-`tauri-specta`; `pnpm gen:bindings` regenerates `src/bindings.ts`.
-The renderer (`src/`, package root `index.html`) uses the vendored OpenIDEA UI
-kit in `src/ui` (components + IntelliJ expui icons) and platform layer in
-`src/platform`; theme tokens come from `src/styles/tokens.css` with app
-aliases in `styles/app-tokens.css`. `apps/agent-data-grid/SPEC.md` is the UI
-contract and `apps/agent-data-grid/THIRD_PARTY_LICENSES.md` records the
-vendored licences. Vendored `ui/`, `platform/`, `features/database/` and the
-generated `bindings.ts` are excluded from prettier/eslint (upstream uses
-oxfmt).
+instead of fetching from a registry. Keep `utils` dependency-free of other
+workspace packages to avoid cycles.
 
 `@remote/agent-compose` is a **Tauri** app too: `src-tauri/` holds a minimal
 Rust shell (no commands yet), `src/` holds the Vue 3 renderer, and

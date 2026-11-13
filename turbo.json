@@ -16,23 +16,14 @@
       "cache": false,
       "persistent": true
     },
-    "@remote/agent-management#build": {
-      "dependsOn": ["^build"],
-      "outputs": ["out/**", "release/**"]
-    },
-    "@remote/agent-management#typecheck": {
-      "dependsOn": ["^build"]
-    },
-    "@remote/agent-data-grid#build": {
-      "dependsOn": ["^build"],
-      "outputs": ["out/**", "release/**"]
-    },
-    "@remote/agent-data-grid#typecheck": {
-      "dependsOn": ["^build"]
-    },
     "@remote/agent-compose#build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", "src-tauri/bin/**"],
+      "cache": false
+    },
+    "@remote/agentspace-cli#build": {
+      "dependsOn": ["^build"],
+      "outputs": [],
       "cache": false
     },
     "lint": {},

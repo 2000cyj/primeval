@@ -14,20 +14,10 @@ catalog:
   '@vue/test-utils': ^2.4.11
   jsdom: ^29.1.1
 
-  # Vue 3 + Element Plus 前端栈（预留给后续 Vue 应用复用）
+  # Vue 3 前端栈
   vue: ^3.5.40
   '@vitejs/plugin-vue': ^6.0.8
   '@vitejs/plugin-vue-jsx': ^5.1.5
-  pinia: ^3.0.4
-  'vue-router': ^4.6.4
-  element-plus: ^2.14.2
-  '@element-plus/icons-vue': ^2.3.2
-  '@vueuse/core': ^14.1.0
-  axios: ^1.13.2
-
-# pnpm 10 不再读 package.json 里的 pnpm.overrides,统一在 pnpm-workspace.yaml 顶层声明
-overrides:
-  quill: 2.0.2
 
 # pnpm 10 默认 ignored build scripts,显式声明只允许 esbuild 跑 install script(vite 依赖 esbuild 的 native binary)
 # 注:Electron 45 起已移除 postinstall,改为首次 require('electron') 时懒下载二进制,无需加入白名单

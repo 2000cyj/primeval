@@ -20,12 +20,7 @@ Thumbs.db
 dist/
 coverage/
 # 桌面端构建产物
-apps/agent-management/out/
-apps/agent-management/release/
 # rust(cargo)构建目录
-apps/agent-data-grid/target/
-apps/agent-data-grid/crates/*/target/
-apps/agent-data-grid/src-tauri/target/
 apps/AgentCompose/src-tauri/target/
 apps/agentspace-cli/target/
 apps/agentspace-core/target/

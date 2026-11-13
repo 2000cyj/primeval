@@ -75,7 +75,7 @@ function findInstalledCopy() {
     const { dir, depth } = stack.pop()
     if (seen.has(dir)) continue
     seen.add(dir)
-    let entries = []
+    let entries
     try {
       entries = readdirSync(dir, { withFileTypes: true })
     } catch {

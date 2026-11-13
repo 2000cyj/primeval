@@ -50,20 +50,17 @@ corepack enable && corepack prepare pnpm@10.18.1 --activate   # 激活指定版�
 ```
 remote-monorepo/
 ├── apps/
-│   ├── agent-management/       # @remote/agent-management(private) 桌面端:Electron 壳 + Vue 3 渲染层合一
-│   ├── agent-data-grid/        # @remote/agent-data-grid(private) 数据表格桌面端(Tauri + Rust + React)
-│   └── AgentCompose/           # @remote/agent-compose(private) Agent Skills 桌面端(Tauri + Rust 壳 + Vue 3)
+│   ├── AgentCompose/           # @remote/agent-compose(private) AgentSpace 桌面端(Tauri + Rust 壳 + Vue 3)
+│   ├── agentspace-core/        # agentspace_core    共享 Rust crate(桌面端与 CLI 共用一套落盘逻辑)
+│   └── agentspace-cli/         # agentspace-cli     agentspace 命令行
 ├── packages/
+│   ├── agent-compose-mcp/      # @remote/agent-compose-mcp(private) MCP sidecar + 共享 TS 类型
 │   ├── utils/                  # @remote/utils      叶子工具包
-│   ├── components/             # @remote/components 共享 UI 组件
-│   ├── cli/                    # @remote/cli        CLI 工具(bin: remote-cli)
 │   └── tsconfig.base.json      # 库包共享的严格 tsconfig
 ├── .changeset/                 # 版本与发包变更记录
 │   ├── config.json
 │   └── README.md
 ├── .husky/                     # Git 钩子(pre-commit / commit-msg)
-├── apps/agent-management/tsconfig.json          # 主进程/preload 类型检查
-├── apps/agent-management/tsconfig.renderer.json # 渲染层 Vue3 + TS 特化 tsconfig
 ├── turbo.json                  # turbo 任务图
 ├── vitest.config.ts            # 根统一 Vitest 配置
 ├── pnpm-workspace.yaml         # workspace + catalog 集中版本
@@ -91,14 +88,15 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 
 `utils` 是**叶子包**,不得依赖任何其它 workspace 包。内部依赖统一使用 `workspace:*` 协议,pnpm 软链本地源码而非从 registry 拉取。
 
-| Package                    | 目录                    | 可见性  | 角色                                             |
-| -------------------------- | ----------------------- | ------- | ------------------------------------------------ |
-| `@remote/agent-management` | `apps/agent-management` | private | 桌面端(Electron 壳 + Vue 3 渲染层)               |
-| `@remote/agent-data-grid`  | `apps/agent-data-grid`  | private | 数据表格桌面端(Tauri + Rust 引擎 + React 渲染层) |
-| `@remote/agent-compose`    | `apps/AgentCompose`     | private | Agent Skills 桌面端(Tauri + Rust + Vue 3)        |
-| `@remote/components`       | `packages/components`   | public  | 共享 UI 组件                                     |
-| `@remote/cli`              | `packages/cli`          | public  | CLI 工具                                         |
-| `@remote/utils`            | `packages/utils`        | public  | 叶子工具函数                                     |
+| Package                     | 目录                         | 可见性  | 角色                                       |
+| --------------------------- | ---------------------------- | ------- | ------------------------------------------ |
+| `@remote/agent-compose`     | `apps/AgentCompose`          | private | AgentSpace 桌面端(Tauri + Rust 壳 + Vue 3) |
+| `@remote/agent-compose-mcp` | `packages/agent-compose-mcp` | private | MCP sidecar + 共享 TS 类型                 |
+| `@remote/utils`             | `packages/utils`             | public  | 叶子工具函数                               |
+
+Rust 侧在 pnpm workspace 之外:`apps/agentspace-core` 是共享 crate
+(`agentspace_core`),`apps/agentspace-cli` 在它之上构建 `agentspace` 命令行。
+桌面端依赖同一个 crate —— 两个客户端操作的是 `~/.agent-compose/` 下的同一份数据。
 
 ---
 
@@ -107,7 +105,6 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 ```bash
 pnpm install                  # 装依赖并初始化 husky
 pnpm -r list --depth -1       # 查看所有 workspace 包
-pnpm --filter @remote/agent-management dev:web  # 只起渲染层 Web dev server(5173,不带 Electron 壳)
 pnpm build                    # turbo 拓扑构建所有包
 pnpm typecheck                # turbo 类型检查(含 .vue)
 pnpm test                     # vitest 跑全仓测试
@@ -119,28 +116,13 @@ pnpm commit                   # cz-git 中文交互式提交
 指定包执行:
 
 ```bash
-pnpm --filter @remote/cli build       # 仅在某个包执行
-pnpm --filter @remote/components dev  # 注意 dev 通常需要 cd 到该包或用 turbo filter
-
-# 桌面端(Electron):壳与渲染层同包(apps/agent-management),dev server 用独立端口 5174
-pnpm --filter @remote/agent-management dev     # 起 Vite dev server(5174)+ 原生窗口,改 .vue 热更新
-pnpm --filter @remote/agent-management dev:web # 只起渲染层 Web dev server(5173),不开 Electron
-pnpm --filter @remote/agent-management build   # out/* + electron-builder 出 release/win-unpacked(未签名)
-pnpm --filter @remote/agent-management build:bundle # 只构建 out/main、out/preload、out/renderer
-pnpm --filter @remote/agent-management package:dir  # 只跑 electron-builder --dir(需先 build:bundle)
-pnpm --filter @remote/agent-management start   # 用已构建产物直接启动 Electron
-pnpm --filter @remote/agent-management test    # 主进程/preload 单测(node 环境)
-
-# 数据表格桌面端(apps/agent-data-grid):tauri + rust 引擎 + react 渲染层
-pnpm --filter @remote/agent-data-grid dev        # tauri dev(vite 5175 + 原生窗口)
-pnpm --filter @remote/agent-data-grid dev:web    # 只起 vite dev server(5175),不起壳
-pnpm --filter @remote/agent-data-grid build      # tauri build(前端 dist + rust 可执行文件)
-pnpm --filter @remote/agent-data-grid gen:bindings  # cargo test 重新生成 src/bindings.ts
-
-# Agent Skills 桌面端(apps/AgentCompose):tauri + rust 壳 + vue 3 渲染层
 pnpm --filter @remote/agent-compose dev        # tauri dev(vite 5176 + 原生窗口)
 pnpm --filter @remote/agent-compose dev:web    # 只起 vite dev server(5176),不起壳
 pnpm --filter @remote/agent-compose build      # tauri build(前端 dist + rust 可执行文件)
+
+# Rust 侧不在 pnpm workspace 里,直接用 cargo
+cargo test --manifest-path apps/agentspace-core/Cargo.toml
+cargo build --release --manifest-path apps/agentspace-cli/Cargo.toml
 ```
 
 > `apps/AgentCompose` 的 tauri 命令走 `scripts/tauri.mjs`:它会把 `~/.cargo/bin` 与
@@ -149,9 +131,7 @@ pnpm --filter @remote/agent-compose build      # tauri build(前端 dist + rust 
 > `dlltool.exe`,而 `raw-dylib` crate 需要 rustc 现场生成 import library)。探针会打印
 > 最终选中的策略。
 
-> 首次运行桌面壳需联网下载 Electron 二进制(约 158MB),Electron 45 已无 postinstall,改为首次 `require('electron')` 时懒下载;内网环境需配置 `ELECTRON_MIRROR`。
-
-> 根目录未定义 `dev` 脚本;`turbo run dev` 会把所有带 `dev` 脚本的包排进任务图(含 `@remote/agent-management`),只起渲染层请用 `pnpm --filter @remote/agent-management dev:web`。
+> 根目录未定义 `dev` 脚本;`turbo run dev` 会把所有带 `dev` 脚本的包排进任务图,只起渲染层请用 `pnpm --filter @remote/agent-compose dev:web`。
 
 > `dev` 类长进程任务已配置 `cache: false, persistent: true`,turbo 不会缓存也不会超时强杀。
 
@@ -163,7 +143,7 @@ pnpm --filter @remote/agent-compose build      # tauri build(前端 dist + rust 
 
 - `build` / `typecheck` / `test` 任务:`dependsOn: ["^build"]`,意味着**某个库包变更时,下游所有依赖它的包会重跑**
 - `build` 任务:`outputs: ["dist/**"]`,产物纳入本地缓存(`.turbo/`,已 gitignore)
-- `@remote/agent-management#build` 声明 `dependsOn: ["^build"]` + `outputs: ["out/**", "release/**"]`:桌面端的渲染层就在同包 `apps/agent-management/src/renderer` 里,消费的是**源码**,必须先跑上游 `build` 才能把渲染层改动传导进缓存键,否则产物会陈旧
+- `@remote/agent-compose#build` 声明 `outputs: ["dist/**", "src-tauri/bin/**"]` 且 `cache: false`:产物含两个随包分发的可执行文件(CLI 与 MCP sidecar),每次都要真构建
 - `dev` 任务:`cache: false, persistent: true`,常驻进程不缓存
 - `format` / `commit` / `lint:spelling` 等交互或不稳定输出:`cache: false`
 
@@ -214,19 +194,16 @@ tsconfig.json (根:最基础的编译选项)
    │
    ├── packages/tsconfig.base.json (库包共享:严格管控)
    │      ├── packages/utils/tsconfig.json
-   │      ├── packages/components/tsconfig.json
-   │      └── packages/cli/tsconfig.json
+   │      └── packages/agent-compose-mcp/tsconfig.json
    │
-   └── apps/agent-management/tsconfig.json          (桌面端主进程/preload)
-   └── apps/agent-management/tsconfig.renderer.json (渲染层:Vue3 + TS 特化)
+   └── apps/AgentCompose/tsconfig.json (渲染层:Vue3 + TS 特化)
 ```
 
-| 层级                                                      | 关键选项                                                                                                                                              | 用途                                 |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| **根** `tsconfig.json`                                    | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                                                                    | 全仓共享的最基本编译环境             |
-| **库包** `packages/tsconfig.base.json`                    | 叠加 `strict`、`noUnusedLocals/Parameters`、`noImplicitReturns`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`declaration`、`sourceMap` | 对外发布的库需更严格的类型与产物声明 |
-| **渲染层** `apps/agent-management/tsconfig.renderer.json` | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit`                                                     | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
-| **主进程** `apps/agent-management/tsconfig.json`          | 继承根配置,追加 `types: ["node"]`(无 DOM)、`strict` 系列开关、`noEmit`                                                                                | 主进程/preload 跑在 Node,禁 DOM 类型 |
+| 层级                                         | 关键选项                                                                                                                                              | 用途                                 |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **根** `tsconfig.json`                       | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                                                                    | 全仓共享的最基本编译环境             |
+| **库包** `packages/tsconfig.base.json`       | 叠加 `strict`、`noUnusedLocals/Parameters`、`noImplicitReturns`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`declaration`、`sourceMap` | 对外发布的库需更严格的类型与产物声明 |
+| **渲染层** `apps/AgentCompose/tsconfig.json` | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit`                                                     | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
 
 各 package 的 `tsconfig.json` 仅声明本包路径相关选项(`outDir` / `rootDir` / `include`),通过 `extends` 复用上层。
 
@@ -272,7 +249,7 @@ export default defineConfig({
 
 ### 渲染层:Vite
 
-`apps/agent-management/vite.config.ts`(纯 Web 调试入口,root 指向 `src/renderer`):
+`apps/AgentCompose/vite.config.ts`(纯 Web 调试入口):
 
 ```ts
 export default defineConfig({
@@ -283,7 +260,7 @@ export default defineConfig({
 })
 ```
 
-`apps/agent-management` 的 `typecheck` 脚本 = `tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p tsconfig.renderer.json`,主进程与渲染层分开做类型检查。
+`apps/AgentCompose` 的 `typecheck` 脚本 = `vue-tsc --noEmit -p tsconfig.json`。
 
 ---
 
@@ -348,7 +325,7 @@ export default defineConfig({
 - `minor`:新增向后兼容功能
 - `patch`:bug 修复
 
-`@remote/agent-management` 是 private 应用,在 `config.json` 的 `ignore` 中排除,**不会被打版本也不会发包**。`updateInternalDependencies: "patch"` 表示上游依赖变更时下游自动 patch 升级。
+`@remote/agent-compose` 与 `@remote/agent-compose-mcp` 是 private 应用,**不会被打版本也不会发包**。`updateInternalDependencies: "patch"` 表示上游依赖变更时下游自动 patch 升级。
 
 ---
 
@@ -361,10 +338,9 @@ export default defineConfig({
 3. **库包(`packages/**`)**—— 最严格:
    - `no-explicit-any` / `explicit-module-boundary-types` / `no-non-null-assertion` / `consistent-type-imports` → `error`
    - `no-unused-vars` → `error`(`_` 前缀除外)
-4. **应用(`apps/agent-management/**`)**—— 适度放宽:
+4. **应用(`apps/AgentCompose/**`)**—— 适度放宽:
    - `vue/multi-word-component-names` / `vue/component-api-style` / `vue/define-props-declaration` / `vue/require-default-prop` → `error`
    - `no-explicit-any` → `warn`(应用层允许但警告)
-   - `apps/agent-management/src/renderer/src/App.vue` 单独豁免 `multi-word-component-names`(根组件惯例)
 5. **Prettier 兜底**:`eslint-config-prettier` 放在最后,关闭与 Prettier 冲突的格式化类规则。
 
 ---
@@ -426,26 +402,24 @@ pnpm commit   # 启动 cz-git 中文 prompt
 
 ## 十五、命令速查
 
-| 命令                                             | 作用                                                     |
-| ------------------------------------------------ | -------------------------------------------------------- |
-| `pnpm install`                                   | 装依赖并初始化 husky 钩子                                |
-| `pnpm --filter @remote/agent-management dev:web` | 只启动渲染层 Web dev server(5173,不带 Electron 壳)       |
-| `pnpm build`                                     | turbo 拓扑构建所有包                                     |
-| `pnpm typecheck`                                 | turbo 类型检查                                           |
-| `pnpm test` / `pnpm test:watch`                  | vitest 全仓测试 / watch                                  |
-| `pnpm lint` / `pnpm lint:fix`                    | ESLint 检查 / 自动修复                                   |
-| `pnpm format` / `pnpm format:check`              | Prettier 格式化 / 仅检查                                 |
-| `pnpm lint:spelling`                             | cspell 拼写检查                                          |
-| `pnpm commit`                                    | cz-git 交互式提交                                        |
-| `pnpm commit:lint`                               | 对已有提交信息跑 commitlint                              |
-| `pnpm changeset`                                 | 新建 changeset                                           |
-| `pnpm release:version`                           | 打版本号 + 生成 CHANGELOG                                |
-| `pnpm release:publish`                           | 拓扑发布到 npm                                           |
-| `pnpm --filter <pkg> <cmd>`                      | 在指定包执行                                             |
-| `pnpm --filter @remote/agent-management dev`     | 启动 Electron 桌面端(渲染层同包,端口 5174)               |
-| `pnpm --filter @remote/agent-management build`   | 构建 out/* 并打出 `release/win-unpacked`(win x64 未签名) |
-| `pnpm --filter @remote/agent-compose dev`        | 启动 AgentCompose 桌面端(Tauri 壳 + vite 5176)           |
-| `pnpm --filter @remote/agent-data-grid dev`      | 启动数据表格桌面端(Tauri 壳 + vite 5175)                 |
+| 命令                                          | 作用                                            |
+| --------------------------------------------- | ----------------------------------------------- |
+| `pnpm install`                                | 装依赖并初始化 husky 钩子                       |
+| `pnpm --filter @remote/agent-compose dev:web` | 只启动渲染层 Web dev server(5176,不起 Tauri 壳) |
+| `pnpm build`                                  | turbo 拓扑构建所有包                            |
+| `pnpm typecheck`                              | turbo 类型检查                                  |
+| `pnpm test` / `pnpm test:watch`               | vitest 全仓测试 / watch                         |
+| `pnpm lint` / `pnpm lint:fix`                 | ESLint 检查 / 自动修复                          |
+| `pnpm format` / `pnpm format:check`           | Prettier 格式化 / 仅检查                        |
+| `pnpm lint:spelling`                          | cspell 拼写检查                                 |
+| `pnpm commit`                                 | cz-git 交互式提交                               |
+| `pnpm commit:lint`                            | 对已有提交信息跑 commitlint                     |
+| `pnpm changeset`                              | 新建 changeset                                  |
+| `pnpm release:version`                        | 打版本号 + 生成 CHANGELOG                       |
+| `pnpm release:publish`                        | 拓扑发布到 npm                                  |
+| `pnpm --filter <pkg> <cmd>`                   | 在指定包执行                                    |
+| `pnpm --filter @remote/agent-compose dev`     | 启动 AgentSpace 桌面端(Tauri 壳 + vite 5176)    |
+| `pnpm --filter @remote/agent-compose build`   | 构建桌面端(前端 dist + rust 可执行文件)         |
 
 > ⚠️ 不提供 `pnpm version` / `pnpm publish`——这些名被 pnpm 内置子命令占据,改用 `release:version` / `release:publish`。
 
@@ -454,7 +428,7 @@ pnpm commit   # 启动 cz-git 中文 prompt
 ## 十六、约定
 
 1. **只用 pnpm**:`engines` + `.npmrc` 已阻断 npm/yarn。
-2. **依赖单向**:`utils` 不依赖任何 workspace 包,新包沿 `app → components → utils` 方向声明。
+2. **依赖单向**:`utils` 不依赖任何 workspace 包,新包沿 `app → packages → utils` 方向声明。
 3. **内部依赖用 `workspace:*`**:pnpm 软链本地源码。
 4. **库包优先严格**:`packages/**` 公共 API 禁 `any`、需显式边界类型;应用层可逐步收敛。
 5. **提交走 `pnpm commit`**:避免 `commit-msg` 钩子拦截。
