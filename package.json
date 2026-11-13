@@ -21,27 +21,14 @@
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "changeset": "changeset",
-    "release:version": "changeset version",
-    "release:publish": "changeset publish"
+    "test:watch": "vitest"
   },
   "config": {
     "commitizen": {
       "path": "node_modules/cz-git"
     }
   },
-  "lint-staged": {
-    "*.{ts,tsx,js,vue}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{json,md,yaml,yml}": [
-      "prettier --write"
-    ]
-  },
   "devDependencies": {
-    "@changesets/cli": "^2.31.1",
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@cspell/dict-lorem-ipsum": "^4.0.5",

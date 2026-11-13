@@ -34,7 +34,7 @@
 
 ## 手工测试步骤
 
-1. MCP 页 →「新增 MCP server」
+1. MCP 页 →「新增 server」(或「从目录添加」直接选官方目录里的 server)
 2. 名称随便填，id 填小写（如 `notion`）
 3. 传输方式：**http**
 4. url：填上表里的端点

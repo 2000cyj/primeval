@@ -34,9 +34,9 @@ cd packages/agent-compose-mcp
 node --experimental-strip-types spike/run-all.ts
 ```
 
-> ⚠️ **端口占用**：spike 用 `17801-17803` / `7811-7815` / `7821-7822`，
-> **刻意避开 `7801`** —— 那是真实 proxy app 的端口（并行任务会占用它）。
-> 占用会报 `Error: listen EADDRINUSE: address already in use 127.0.0.1:7801`。
+> **端口占用**：proxy 的端口是**动态分配**的（读 `~/.agent-compose/mcp/port`），
+> spike 自己另挑一段（`17801-17803` / `7811-7815` / `7821-7822`）避开即可。
+> 占用会报 `Error: listen EADDRINUSE: address already in use 127.0.0.1:<端口>`。
 
 ---
 
@@ -44,7 +44,7 @@ node --experimental-strip-types spike/run-all.ts
 
 | #   | 问题                     | 结论                                                                                                                                                                                                                                                                                                    |
 | --- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | server 侧 HTTP 接入      | ✅ `createMcpHandler` 可用，但它是 **Web Standard `fetch(request) => Response`** 形状，**不直接吃 `node:http` 的 `(req, res)`**。需要自己写一个 ~30 行的桥（`spike/node-http-bridge.ts`）。官方 `@modelcontextprotocol/node`（提供 `toNodeHandler`）**本仓库未安装**。                                  |
+| 1   | server 侧 HTTP 接入      | ✅ `createMcpHandler` 可用，但它是 **Web Standard `fetch(request) => Response`** 形状，**不直接吃 `node:http` 的 `(req, res)`**。生产实现已经改用官方 `@modelcontextprotocol/node` 的 `toNodeHandler`（见 `src/server.ts`）—— 不用自己写桥。                                                            |
 | 2   | stateless vs stateful    | ✅ **stateless 完全可用**。`createMcpHandler` 默认就是 **per-request / stateless**：普通 MCP 客户端（默认 `versionNegotiation: 'legacy'`，走 2025 handshake）在**没有任何 session id** 的情况下完整跑通 `initialize → tools/list → tools/call`。`mcp-session-id` 响应头为 `null`。**不需要 stateful。** |
 | 3   | client 侧连上游          | ✅ `Client` + `StdioClientTransport` 可用。真实方法名：`client.listTools(params?, options?)` / `client.callTool(params, options?)`，`params` 形状 `{ name, arguments? }`。                                                                                                                              |
 | 4   | 鉴权与 Origin 校验       | ✅ 全部可用且签名明确：`requireBearerAuth` 返回一个 **fetch 门禁**；`verifyBearerToken` 是底层；`bearerAuthChallengeResponse` 把 `OAuthError` 映射成 401/403。`validateOriginHeader` / `validateHostHeader` 返回 **判别联合**（`ok: true/false`），不是抛异常。                                         |
@@ -191,9 +191,9 @@ const handler = createMcpHandler(() => {
 })
 
 createServer(async (req, res) => {
-  const response = await handler.fetch(toWebRequest(req, `http://127.0.0.1:7801${req.url}`))
+  const response = await handler.fetch(toWebRequest(req, `http://127.0.0.1:<端口>${req.url}`))
   await writeWebResponse(res, response)
-}).listen(7801, '127.0.0.1')
+}).listen(<端口>, '127.0.0.1')
 ```
 
 ### `POST /mcp` 发 `initialize` 的实测结果
@@ -330,7 +330,7 @@ real Client: connect OK | sessionId=9944a5c3-e108-42a5-b145-d9b7ac6c845e
 2. 手工 stateless wiring（`sessionIdGenerator: undefined`）表现完全一致。
 3. `createMcpHandler` 甚至允许 **`tools/list` 不先 `initialize`** 就返回 `200`。
 
-**因此 proxy 的下游（对 agent 暴露 `http://127.0.0.1:7801/mcp`）不需要 stateful。**
+**因此 proxy 的下游（对 agent 暴露 `http://127.0.0.1:<端口>/mcp`）不需要 stateful。**
 用 `createMcpHandler` 即可 —— 它同时还支持 2026-07-28 modern era（见 §7）。
 
 ### 什么时候才需要 stateful
@@ -1075,7 +1075,7 @@ declare function classifyInboundRequest(request: InboundHttpRequest): InboundCla
 
 | #   | 坑                                                        | 说明                                                                                   |
 | --- | --------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| 10  | `createMcpHandler` **不吃** `(req, res)`                  | 自己写 `toWebRequest` / `writeWebResponse` 桥（`@modelcontextprotocol/node` 未安装）   |
+| 10  | `createMcpHandler` **不吃** `(req, res)`                  | 自己写 `toWebRequest` / `writeWebResponse` 桥（生产实现已改用 `toNodeHandler`）        |
 | 11  | `requireBearerAuth` 返回 `AuthInfo \| Response`           | 必须 `instanceof Response` 判别                                                        |
 | 12  | `AuthInfo.expiresAt` 缺失 → token 被拒                    | 必填                                                                                   |
 | 13  | `Origin: null` 被拒（`invalid_origin_header`）            | 只放行明确列出的 hostname                                                              |
@@ -1102,7 +1102,7 @@ declare function classifyInboundRequest(request: InboundHttpRequest): InboundCla
    ```
    （每次请求新建 instance 是 `createMcpHandler` 的设计 —— factory 本来就是 per-request 的。）
 2. **node:http 桥**：用 `spike/node-http-bridge.ts`，或引入 `@modelcontextprotocol/node` 的
-   `toNodeHandler`（**需要新增依赖，本仓库未安装**）。
+   `toNodeHandler`（**已安装并已在用**）。
 3. **上游（client 侧）**：`Client` + `StdioClientTransport`（stdio 上游）或
    `Client` + `StreamableHTTPClientTransport`（HTTP 上游）。
    `client.listTools()` / `client.callTool({ name, arguments })`。

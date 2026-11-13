@@ -21,14 +21,16 @@ not claim a behaviour was confirmed on screen.
 
 ## Status
 
-Early-stage pnpm monorepo. The build, typecheck, test, lint, and formatting
-toolchain is wired up. `apps/AgentCompose` is the desktop app: Tauri + Rust
-shell + Vue 3 renderer, managing agents, skills, MCP servers and Pi
-extensions. `apps/agentspace-core` is the shared Rust crate both the desktop
-app and the `agentspace` CLI use, so the two clients always agree on the
-data layout. The shared packages contain placeholder or source-only
-implementations. When adding a package's first real code, add the matching
-scripts and update this file.
+**AgentSpace 是一个 AI 工具箱** —— 把智能体、Skills、MCP server、Pi 扩展收在
+一处管,再用 `agentspace` 命令行把它们铺到任意项目里跑起来。
+
+`apps/AgentCompose` is the desktop app: Tauri + Rust shell + Vue 3 renderer,
+managing agents, skills, MCP servers and Pi extensions. `apps/agentspace-core`
+is the shared Rust crate both the desktop app and the `agentspace` CLI use, so
+the two clients always agree on the data layout under `~/.agent-compose/`.
+`packages/agent-compose-mcp` is the MCP sidecar (it is a client to upstream
+MCP servers and a server to the agent). The build, typecheck, test, lint and
+formatting toolchain is wired up end to end.
 
 ## Package Manager
 
@@ -59,8 +61,9 @@ both clients read and write the same files under `~/.agent-compose/`.
 Internal deps use the `workspace:*` protocol, so pnpm symlinks local packages
 instead of fetching from a registry.
 
-`@remote/agent-compose` is a **Tauri** app too: `src-tauri/` holds a minimal
-Rust shell (no commands yet), `src/` holds the Vue 3 renderer, and
+`@remote/agent-compose` is a **Tauri** app: `src-tauri/src/` holds the Rust
+backend (agents / skills / extensions / mcp / proxy / history / github modules
+and their `#[tauri::command]`s), `src/` holds the Vue 3 renderer, and
 `src-tauri/tauri.conf.json` wires `devUrl` to `http://localhost:5176` with
 `frontendDist: ../dist`. Its scripts go through `scripts/tauri.mjs`, a launcher
 that (a) puts `~/.cargo/bin` and the GNU toolchain's `self-contained` binutils
@@ -90,20 +93,10 @@ pnpm --filter @remote/agent-compose dev:web   # 只起 vite dev server(5176),不
 pnpm --filter @remote/agent-compose build     # tauri build(前端 dist + rust 可执行文件)
 ```
 
-TypeScript is split in two: `tsconfig.json` (main/preload/shared + build
-configs, Node types, no DOM) and `tsconfig.renderer.json` (Vue 3 renderer,
-DOM types, `@/*` path alias).
+TypeScript has a single config: `apps/AgentCompose/tsconfig.json` (Vue 3
+renderer, DOM types, `@/*` path alias). The Rust side is not TypeScript.
 
-Security baseline is fixed: `contextIsolation: true`, `sandbox: true`,
-`nodeIntegration: false`, `webSecurity: true`, production CSP with no inline
-scripts or `eval`, and exactly one read-only IPC probe (`app:getVersion`)
-exposed through `contextBridge` as `window.desktop`. Main process is ESM;
-preload is built as CommonJS (`out/preload/index.cjs`) because sandboxed
-preloads cannot be ESM. "Dev mode" is decided by the presence of
-`ELECTRON_RENDERER_URL` (not `app.isPackaged`), and the IPC sender /
-navigation allowlist is a single policy shared by both: dev trusts only the
-dev server origin, non-dev trusts only the actual renderer entry file.
-`ALLOWED_CHANNELS` in `src/shared/channels.ts` is the runtime whitelist gate
-for IPC channels. Do not add Electron/Node code to `packages/*` or to the
-renderer (`src/renderer`); renderer code reaches the shell only through the
-`window.desktop` bridge.
+The renderer never touches Node directly — it reaches the shell only through
+Tauri commands (`invoke(...)`), declared in `src-tauri/src/*.rs` and
+registered in `src-tauri/src/lib.rs`. Do not add Node/Electron code to
+`packages/*` or to the renderer.

@@ -55,7 +55,7 @@ Gitee 与 GitHub 都对 commit message 内容语言无限制,**只校验格式**
 | type       | 小写、必填                  | `Build:` ❌ `build:` ✅      |
 | 冒号后空格 | `<type>: <subject>`         | `feat:xxx` ❌ `feat: xxx` ✅ |
 | 主题长度   | ≤ 100 字符(commitlint 默认) | 超长 ❌                      |
-| scope 可选 | `(<scope>)`                 | `feat(utils): add foo` ✅    |
+| scope 可选 | `(<scope>)`                 | `feat(mcp): add tool` ✅     |
 
 **推荐的多行 message 写法**(Bash):
 

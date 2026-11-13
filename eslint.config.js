@@ -164,7 +164,6 @@ export default tseslint.config(
   {
     files: [
       'apps/**/vite.config.ts',
-      'apps/**/electron.vite.config.ts',
       'apps/**/scripts/**/*.{js,mjs,ts}',
       'apps/**/vite/**/*.ts',
       'scripts/**/*.{js,mjs}',

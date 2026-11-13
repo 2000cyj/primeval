@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Agent Skills 管理桌面端：Vue 3 + Tauri",
+  "description": "AgentSpace 桌面端：管理智能体、Skills、MCP server 与 Pi 扩展（Vue 3 + Tauri）",
   "scripts": {
     "dev": "node scripts/tauri.mjs dev",
     "dev:web": "vite",
@@ -18,7 +18,6 @@
   "dependencies": {
     "@remote/agent-compose-mcp": "workspace:*",
     "@tauri-apps/api": "^2",
-    "echarts": "^6.1.0",
     "lucide-vue-next": "^0.468.0",
     "naive-ui": "^2.45.3",
     "vue": "catalog:"

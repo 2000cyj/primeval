@@ -9,9 +9,6 @@
     "typecheck": {
       "dependsOn": ["^build"]
     },
-    "test": {
-      "dependsOn": ["^build"]
-    },
     "dev": {
       "cache": false,
       "persistent": true
@@ -24,21 +21,6 @@
     "@remote/agentspace-cli#build": {
       "dependsOn": ["^build"],
       "outputs": [],
-      "cache": false
-    },
-    "lint": {},
-    "lint:fix": {},
-    "format": {
-      "cache": false
-    },
-    "format:check": {},
-    "lint:spelling": {
-      "cache": false
-    },
-    "commit": {
-      "cache": false
-    },
-    "commit:lint": {
       "cache": false
     }
   }

@@ -46,7 +46,7 @@ git status              # 看清变更全貌
 | `docs:`     | 文档/注释/README                    | `docs: 更新 README.md 反映完整工具链`                   |
 | `chore:`    | 不影响功能的杂项                    | `chore: 升级 typescript 至 5.9`                         |
 | `fix:`      | bug 修复                            | `fix: 修复构建产物 main 入口错误`                       |
-| `refactor:` | 重构(无新功能)                      | `refactor: 重构 utils 包目录结构`                       |
+| `refactor:` | 重构(无新功能)                      | `refactor: 重构 agent-compose-mcp 目录结构`             |
 
 **每条 commit 的文件清单要可独立 review**。一个 commit 内如果同时改 "业务逻辑 + 工具配置 + 文档",说明切得太粗。
 
@@ -178,7 +178,7 @@ turbo 负责拓扑执行 + 本地构建缓存,二次构建全缓存命中仅 ~30
 
 pnpm catalog 集中管理多包共用工具版本,后续升级改一处即可
 - pnpm-workspace.yaml 新增 catalog 块,声明 typescript/tsup/vue/vite/
-  @vitejs/plugin-vue/vue-tsc/vitest/@vue/test-utils/jsdom 共 9 个工具
+  @vitejs/plugin-vue/vue-tsc/vitest/@vue/test-utils/jsdom 共 8 个工具
 - 各 package.json 改用 catalog: 引用,不再重复写版本号
 ```
 
@@ -190,7 +190,7 @@ pnpm catalog 集中管理多包共用工具版本,后续升级改一处即可
 4. **大文件 / 二进制文件**:如果不该进仓库(如 `*.tar.zst`),必须 `.gitignore` + `git rm --cached`。
 5. **changeset 工作流**:`.changeset/*.md`(具体的 changeset 内容)不提交(因为 `release:version` 会自动删);但 `.changeset/config.json` 和 `.changeset/README.md` **要提交**(配置/文档)。
 6. **commit message 长度限制**:commitlint 有 header-max-length(默认 100)限制,正文不限,但 type 必须小写、必填。
-7. **subject-case 必须小写**:本仓库 commitlint 配置了 `subject-case`,subject 中**禁止 sentence-case / start-case / pascal-case / upper-case**。`docs: CLAUDE.md ...`、`chore(eslint): ...` 都会被拒;`docs: claude.md ...` 才过。**subject 里出现的文件/工具名(CLAUDE.md、ESLint、Vue)也得小写或避开**(实在避不开就用 `claude.md`、`eslint`、`vue` 这样的全小写)。正文(body)语言不限制。
+7. **subject-case 必须小写**:本仓库未启用 `subject-case` 规则(但保持全小写以免歧义),subject 中**禁止 sentence-case / start-case / pascal-case / upper-case**。`docs: CLAUDE.md ...`、`chore(eslint): ...` 都会被拒;`docs: claude.md ...` 才过。**subject 里出现的文件/工具名(CLAUDE.md、ESLint、Vue)也得小写或避开**(实在避不开就用 `claude.md`、`eslint`、`vue` 这样的全小写)。正文(body)语言不限制。
 8. **body-max-line-length 100**:正文每行不能超 100 字符。中文字符在 UTF-8 下占 3 字节但 commitlint 按字符数算,中文 1 字符算 1,所以一行中文约可写 ~33 字(留余量就按 30 字换行)。**写正文时心里默念"超 30 个中文字就换行"**。
 9. **嵌套子仓库(embedded git repo)**:如果某个 `apps/*` 或 `packages/*` 子目录自带 `.git`，它不是普通 workspace package。父仓库 `git status` 会显示整个目录未追踪，`git add` 时 git 会把它当 gitlink 提示 `adding embedded git repository`——这种状态下文件不会被追踪。**处理方式**:确认它确实独立后，在根 `.gitignore` 屏蔽该目录，由子仓库自己提交到自己的远端；不要把它 add 进父仓库。
 10. **`git status --short` vs `git diff --stat` 可能不一致**:`git status --short` 显示 6 个文件 modified,但 `git diff --stat` 可能只显示 3 个真实改动(其它 3 个的变更被某种机制 revert 了或本来就是空 diff)。**提交前一定要用 `git diff --cached --stat` 确认 staging 区到底是什么**,不要信 `--short` 的初始数字。
