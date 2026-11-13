@@ -84,6 +84,26 @@ pub fn decide_overwrite(landed: Option<u64>, current: u64) -> Overwrite {
     }
 }
 
+/// 落地时的覆盖策略。
+///
+/// 策略只管一件事：**项目里已经有东西了，要不要先问一句**。
+///
+/// | 命令 | 策略 | 询问在哪 |
+/// | --- | --- | --- |
+/// | `run` | 版本变了才问 | `land_with` 内部 |
+/// | `install` | 目录里有就问 | 调用前（`confirm_install`） |
+/// | `update` | 直接覆盖，不问 | 调用前（`confirm_install`） |
+///
+/// 「要不要问」由调用方在调用前决定 —— 有些问题（当前目录装的是另一个
+/// 智能体）只有调用方知道该怎么问。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LandPolicy {
+    /// 版本对不上才问（`run` 的行为）
+    AskOnVersionChange,
+    /// 直接覆盖，不问（`install` / `update` —— 询问已在调用前完成）
+    Always,
+}
+
 /// 读落地记录（没有就是没落过地）。
 pub fn read_state(path: &Path) -> Option<LandedState> {
     let raw = fs::read_to_string(path).ok()?;
@@ -293,22 +313,42 @@ pub fn land(
     cwd: &Path,
     paths: &Paths,
 ) -> LandedState {
+    land_with(runtime, agent, cwd, paths, LandPolicy::AskOnVersionChange)
+}
+
+/// 按指定策略落地。
+///
+/// 策略只管一件事：**项目里已经有东西了，要不要先问一句**。
+/// 问的时机、文案由 [`land_with`] 决定，具体问什么由调用方在调用前处理
+/// （比如「落地的是另一个智能体」这种，得调用方自己判断）。
+pub fn land_with(
+    runtime: &dyn Runtime,
+    agent: &CreatedAgent,
+    cwd: &Path,
+    paths: &Paths,
+    policy: LandPolicy,
+) -> LandedState {
     let state_path = runtime.state_file(cwd);
     let previous = read_state(&state_path);
     let landed_version = previous.as_ref().map(|item| item.version);
 
-    // 版本对不上 → 问一次要不要覆盖
-    let overwrite = match decide_overwrite(landed_version, agent.version) {
-        Overwrite::Yes => true,
-        Overwrite::Ask => {
-            println!(
-                "项目里的配置是 v{}，智能体「{}」现在是 v{}。",
-                landed_version.unwrap_or(0),
-                agent.name.trim(),
-                agent.version
-            );
-            ask_yes_no("是否用新版本覆盖项目里的配置？")
-        }
+    // 要不要覆盖
+    let overwrite = match policy {
+        // 直接覆盖，不问
+        LandPolicy::Always => true,
+        // 版本变了才问（run 的行为）
+        LandPolicy::AskOnVersionChange => match decide_overwrite(landed_version, agent.version) {
+            Overwrite::Yes => true,
+            Overwrite::Ask => {
+                println!(
+                    "项目里的配置是 v{}，智能体「{}」现在是 v{}。",
+                    landed_version.unwrap_or(0),
+                    agent.name.trim(),
+                    agent.version
+                );
+                ask_yes_no("是否用新版本覆盖项目里的配置？")
+            }
+        },
     };
 
     if !overwrite {
@@ -520,6 +560,23 @@ pub fn ask_yes_no(question: &str) -> bool {
 mod tests {
     use super::*;
     use crate::runtime::PiRuntime;
+
+    /// 落地策略：版本变了才问（run）vs 直接覆盖（install/update）
+    #[test]
+    fn land_policy_covers_version_question() {
+        // 没落过地 → 两种策略都直接覆盖
+        assert_eq!(decide_overwrite(None, 3), Overwrite::Yes);
+        // 版本一样 → 直接覆盖
+        assert_eq!(decide_overwrite(Some(3), 3), Overwrite::Yes);
+        // 版本变了 → run 要问
+        assert_eq!(decide_overwrite(Some(2), 3), Overwrite::Ask);
+    }
+
+    /// Always 策略不问版本 —— 用户明说了要更新。
+    #[test]
+    fn always_policy_skips_version_question() {
+        assert_ne!(LandPolicy::Always, LandPolicy::AskOnVersionChange);
+    }
 
     #[test]
     fn managed_block_new_file_writes_only_block() {

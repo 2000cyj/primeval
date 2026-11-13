@@ -32,6 +32,8 @@ apps/agentspace-core/       ← 共享实现（数据长什么样 + 怎么读写
 ```
 agentspace
 ├── run <名称>              准备目录并启动智能体（当前只支持 Pi）
+├── install <名称>          把智能体装进当前目录（不启动）
+├── update <名称>          更新当前目录里的智能体（不启动）
 ├── agent                   智能体（我们创建的）
 │   ├── list / get / create / update / delete / copy
 │   ├── skills list|add|remove

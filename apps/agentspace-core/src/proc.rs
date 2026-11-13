@@ -23,8 +23,6 @@
 use std::ffi::OsStr;
 use std::process::Command;
 
-#[cfg(windows)]
-use std::path::{Path, PathBuf};
 
 /// Windows 的 `CREATE_NO_WINDOW`。
 ///
@@ -56,6 +54,8 @@ pub fn command_with_args(program: impl AsRef<OsStr>, args: &[&str]) -> Command {
 mod tests {
     use super::*;
     use std::io::Write;
+    #[cfg(windows)]
+    use std::path::{Path, PathBuf};
 
     /// 写一个 .cmd 脚本，返回它的路径。
     #[cfg(windows)]

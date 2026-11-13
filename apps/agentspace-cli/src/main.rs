@@ -3,6 +3,7 @@
 //! ```text
 //! cd 我的项目
 //! agentspace run 知识助手          启动智能体
+//! agentspace install 知识助手      把智能体装进当前目录
 //! agentspace skill list            看有哪些 skill
 //! agentspace mcp list              看有哪些 MCP server
 //! agentspace extension list        看有哪些 Pi 扩展
@@ -26,6 +27,8 @@
 //! ```text
 //! agentspace
 //! ├── run <名称>            启动智能体
+//! ├── install <名称>        把智能体装进当前目录（不启动）
+//! ├── update <名称>        更新当前目录里的智能体（不启动）
 //! ├── agent                 智能体（我们创建的，跑在 Pi 上）
 //! ├── skill                 Skill 仓库
 //! ├── mcp                   MCP server
@@ -72,6 +75,18 @@ enum Command {
         args: Vec<String>,
     },
 
+    /// 装一个智能体到当前目录（不启动）
+    Install {
+        /// 智能体名称
+        name: String,
+    },
+
+    /// 更新当前目录里的智能体（不启动）
+    Update {
+        /// 智能体名称
+        name: String,
+    },
+
     /// 智能体（我们创建的，跑在 Pi 上）
     #[command(subcommand)]
     Agent(commands::agent::AgentCmd),
@@ -102,6 +117,8 @@ fn main() -> std::process::ExitCode {
     let paths = Paths::from_env();
     let code = match cli.command {
         Command::Run { name, args } => commands::run::run(&paths, &name, &args),
+        Command::Install { name } => commands::install::install(&paths, &name),
+        Command::Update { name } => commands::install::update(&paths, &name),
         Command::Agent(cmd) => cmd.run(&paths),
         Command::Skill(cmd) => cmd.run(&paths),
         Command::Mcp(cmd) => cmd.run(&paths),
