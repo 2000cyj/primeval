@@ -1,0 +1,215 @@
+name: Release
+
+# 打 tag 触发发布：
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# tag 的版本号会写进 tauri.conf.json，产物名跟着走：
+#   AgentSpace_1.0.0_x64_en-US.msi
+#   AgentSpace_1.0.0_x64-setup.exe
+#   AgentSpace_1.0.0_x64_portable.zip
+on:
+  push:
+    tags:
+      - 'v*'
+  # 手动触发：只跑构建，把产物挂到 Actions 页面上（不发 Release）。
+  # 用来验证「CI 上能不能构建出来」。
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # 产物目录（tauri 的 bundle 输出）
+  BUNDLE_DIR: apps/AgentCompose/src-tauri/target/release/bundle
+
+jobs:
+  build:
+    name: 构建 Windows 安装包
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Node / pnpm ────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 装 pnpm
+        run: corepack enable
+
+      - name: 装依赖
+        run: pnpm install --frozen-lockfile
+
+      # ── Bun（构建 MCP sidecar 用）────────────────────────────
+      - name: 装 bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # ── Rust ────────────────────────────────────────────────
+      #
+      # 用 MSVC 工具链（runner 自带）。不需要本机那套 MSYS2 MinGW-w64 ——
+      # 那是本机 rustup 的 GNU 工具链 spawn 不了自带 dlltool.exe 的绕法
+      # （见 apps/AgentCompose/scripts/tauri.mjs 顶部的说明）。
+      # CI 上没有那个问题，探针的 default 策略就够。
+      - name: 装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            apps/agentspace-core -> target
+            apps/agentspace-cli -> target
+            apps/AgentCompose/src-tauri -> target
+
+      # ── 版本号：从 tag 取，写进 tauri.conf.json ─────────────
+      - name: 写入版本号
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^v\d+\.\d+\.\d+') {
+            Write-Host "不是版本 tag（$tag），用 tauri.conf.json 里现有的版本号"
+            exit 0
+          }
+          $version = $tag.TrimStart('v')
+          $conf = 'apps/AgentCompose/src-tauri/tauri.conf.json'
+          $json = Get-Content $conf -Raw | ConvertFrom-Json
+          $json.version = $version
+          $json | ConvertTo-Json -Depth 10 | Set-Content $conf -Encoding utf8
+          Write-Host "版本号设为 $version"
+
+      # ── 构建随包分发的两个可执行文件 ───────────────────────
+      #
+      # tauri.conf.json 的 bundle.resources 引用了它们 ——
+      # 不先构建，tauri build 会因为找不到文件而失败。
+      - name: 构建 agentspace CLI
+        run: node apps/AgentCompose/scripts/build-cli.mjs
+
+      - name: 构建 MCP sidecar
+        run: node apps/AgentCompose/scripts/build-sidecar.mjs
+
+      - name: 确认产物齐全
+        shell: pwsh
+        run: |
+          $bin = 'apps/AgentCompose/src-tauri/bin'
+          foreach ($f in @('agentspace.exe', 'agent-compose-mcp.exe')) {
+            if (-not (Test-Path "$bin/$f")) {
+              Write-Error "缺 $f"
+              exit 1
+            }
+            Write-Host "OK $f"
+          }
+
+      # ── 构建安装包 ─────────────────────────────────────────
+      #
+      # 只做 msi + nsis（配置里写的是 "all"，会连带构建 deb/rpm/appimage，
+      # 那些需要额外的工具链，Windows 上也不需要）。
+      #
+      # 用 `pnpm run` 而不是 `pnpm <script>`：后者会把 `--bundles` 当成
+      # pnpm 自己的选项（报 Unknown option: 'bundles'）。
+      - name: 构建安装包
+        env:
+          # CI 上工具链是干净的 MSVC，不用跑探针
+          AGENT_COMPOSE_SKIP_PROBE: '1'
+        run: pnpm --filter @remote/agent-compose run tauri build --bundles msi,nsis
+
+      # ── 打便携版 zip（免安装）──────────────────────────────
+      #
+      # Tauri 的 resources 在 Windows 上解到 exe 同级目录并保持相对路径，
+      # 所以 bin/ 要跟 exe 平级 —— 跟安装版里的布局一致。
+      - name: 打便携版 zip
+        shell: pwsh
+        run: |
+          $version = (Get-Content 'apps/AgentCompose/src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+          $stage = Join-Path $env:RUNNER_TEMP 'portable'
+          New-Item -ItemType Directory -Force -Path "$stage/bin" | Out-Null
+          Copy-Item 'apps/AgentCompose/src-tauri/target/release/agent-compose.exe' "$stage/AgentSpace.exe"
+          Copy-Item 'apps/AgentCompose/src-tauri/bin/*' "$stage/bin"
+          $zip = Join-Path $env:RUNNER_TEMP "AgentSpace_${version}_x64_portable.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip
+          New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
+          Copy-Item $zip 'dist/'
+          Write-Host "生成 dist/AgentSpace_${version}_x64_portable.zip"
+
+      # ── 汇总上传 ───────────────────────────────────────────
+      - name: 汇总产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
+          Copy-Item "${{ env.BUNDLE_DIR }}/msi/*.msi" 'dist/'
+          Copy-Item "${{ env.BUNDLE_DIR }}/nsis/*.exe" 'dist/'
+          Get-ChildItem 'dist' | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length/1MB)) MB" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentspace-windows
+          path: dist/
+          if-no-files-found: error
+
+  # ── 发布 ───────────────────────────────────────────────────
+  #
+  # 只在 tag push 时跑。手动触发只跑上面的 build（产物去 Actions 页面下载）。
+  release:
+    name: 发布 GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentspace-windows
+          path: dist
+
+      - name: 生成发布说明
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $body = @"
+          ## AgentSpace $tag
+
+          Windows 安装包（x64）。
+
+          | 格式 | 说明 |
+          | --- | --- |
+          | `AgentSpace_*_x64_en-US.msi` | MSI 安装包，双击一路下一步 |
+          | `AgentSpace_*_x64-setup.exe` | NSIS 安装包，双击一路下一步 |
+          | `AgentSpace_*_x64_portable.zip` | 便携版，解压即用，不写注册表 |
+
+          装的是 AgentSpace 桌面端 —— 智能体、Skills、MCP server、Pi 扩展
+          收在一处管。命令行 ``agentspace`` 会一起装上。
+
+          ### 安装
+
+          - **MSI / EXE**：双击安装。装完在开始菜单里找 AgentSpace。
+          - **便携版**：解压后直接跑 `AgentSpace.exe`。
+
+          ### 命令行
+
+          ```bash
+          agentspace run <智能体名>   # 按智能体定义准备目录并拉起 Pi
+          agentspace skill list      # 看有哪些 skill
+          agentspace mcp list        # 看有哪些 MCP server
+          agentspace extension list  # 看有哪些 Pi 扩展
+          ```
+
+          > 安装包未签名，Windows SmartScreen 可能拦一下 ——
+          > 「更多信息 → 仍要运行」。
+          "@
+          Set-Content -Path 'dist/release-notes.md' -Value $body -Encoding utf8
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.msi
+            dist/*.exe
+            dist/*.zip
+            dist/release-notes.md
+          draft: false
+          prerelease: false
+          generate_release_notes: true
