@@ -4,7 +4,6 @@ name: Release
 #   git tag v1.0.0 && git push origin v1.0.0
 #
 # tag 的版本号会写进 tauri.conf.json，产物名跟着走：
-#   AgentSpace_1.0.0_x64_en-US.msi
 #   AgentSpace_1.0.0_x64-setup.exe
 #   AgentSpace_1.0.0_x64_portable.zip
 on:
@@ -113,16 +112,13 @@ jobs:
 
       # ── 构建安装包 ─────────────────────────────────────────
       #
-      # 只做 msi + nsis（配置里写的是 "all"，会连带构建 deb/rpm/appimage，
-      # 那些需要额外的工具链，Windows 上也不需要）。
-      #
-      # 用 `pnpm run` 而不是 `pnpm <script>`：后者会把 `--bundles` 当成
-      # pnpm 自己的选项（报 Unknown option: 'bundles'）。
+      # 只做 nsis（配置里写的是 "all"，会连带构建 msi/deb/rpm/appimage ——
+      # msi 要额外下 wix 工具链，deb/rpm 要额外工具链，Windows 上也不需要）。
       - name: 构建安装包
         env:
           # CI 上工具链是干净的 MSVC，不用跑探针
           AGENT_COMPOSE_SKIP_PROBE: '1'
-        run: pnpm --filter @remote/agent-compose run tauri build --bundles msi,nsis
+        run: pnpm --filter @remote/agent-compose run tauri build --bundles nsis
 
       # ── 打便携版 zip（免安装）──────────────────────────────
       #
@@ -147,7 +143,6 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-          Copy-Item "${{ env.BUNDLE_DIR }}/msi/*.msi" 'dist/'
           Copy-Item "${{ env.BUNDLE_DIR }}/nsis/*.exe" 'dist/'
           Get-ChildItem 'dist' | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length/1MB)) MB" }
 
@@ -183,7 +178,6 @@ jobs:
 
           | 格式 | 说明 |
           | --- | --- |
-          | `AgentSpace_*_x64_en-US.msi` | MSI 安装包，双击一路下一步 |
           | `AgentSpace_*_x64-setup.exe` | NSIS 安装包，双击一路下一步 |
           | `AgentSpace_*_x64_portable.zip` | 便携版，解压即用，不写注册表 |
 
@@ -192,7 +186,7 @@ jobs:
 
           ### 安装
 
-          - **MSI / EXE**：双击安装。装完在开始菜单里找 AgentSpace。
+          - **EXE**：双击安装。装完在开始菜单里找 AgentSpace。
           - **便携版**：解压后直接跑 `AgentSpace.exe`。
 
           ### 命令行
@@ -217,7 +211,6 @@ jobs:
           # 标题带产品名，别只显示 tag
           name: 'AgentSpace ${{ github.ref_name }}'
           files: |
-            dist/*.msi
             dist/*.exe
             dist/*.zip
           draft: false
