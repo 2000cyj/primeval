@@ -7,6 +7,8 @@ export type Skill = {
   category: string
   /** 数据来源：手动创建 / 从本地导入 / 从 URL 导入 / 从运行时复制 / 创建副本 */
   source?: string
+  /** 来源的原始值（manual / git / url / …）—— 筛选按它匹配，不按显示文案 */
+  sourceKey?: string
   /** 使用该 Skill 的智能体名称（来自「智能体」页的真实绑定） */
   agentNames: string[]
   updated: string

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, type Component } from 'vue'
 import {
   NButton,
   NCheckbox,
@@ -12,6 +12,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { Plus, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
+import { Copy, Download, FolderInput, Globe, Monitor, Pencil } from 'lucide-vue-next'
 import { type Skill } from '@/data/skills'
 import { useCreatedAgents } from '@/data/createdAgents'
 import {
@@ -20,12 +21,14 @@ import {
   removeSkill,
   setSkillEnabled,
   type SkillInfo,
+  type SkillSource,
 } from '@/api/skills'
 import SkillRowMenu, { type SkillMenuAction } from '@/components/SkillRowMenu.vue'
 import SkillDetailDrawer from '@/components/SkillDetailDrawer.vue'
 import SkillCreateModal, { type CreateMethod } from '@/components/SkillCreateModal.vue'
 import SkillEditModal from '@/components/SkillEditModal.vue'
 import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
+import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
 
 const message = useMessage()
 const query = ref('')
@@ -43,12 +46,83 @@ const selected = ref<string[]>([])
 /** 正在刷新 */
 const refreshing = ref(false)
 
+/**
+ * 筛选条件。
+ *
+ * 维度键 → 选中的值。同一维度内多选是「或」，维度之间是「且」。
+ */
+const filters = ref<Record<string, string[]>>({})
+
+/** 筛掉不符合条件的 skill */
+const matchFilters = (skill: Skill): boolean => {
+  const status = filters.value.status ?? []
+  if (status.length) {
+    const key = skill.enabled ? 'enabled' : 'disabled'
+    if (!status.includes(key)) return false
+  }
+  const source = filters.value.source ?? []
+  if (source.length && !source.includes(skill.sourceKey ?? 'manual')) return false
+  const agent = filters.value.agent ?? []
+  if (agent.length && !skill.agentNames.some((name) => agent.includes(name))) {
+    return false
+  }
+  return true
+}
+
 const visibleSkills = computed(() => {
   const keyword = query.value.trim().toLowerCase()
-  if (!keyword) return skillList.value
-  return skillList.value.filter((skill) =>
-    `${skill.name}${skill.description}`.toLowerCase().includes(keyword),
-  )
+  return skillList.value.filter((skill) => {
+    if (!matchFilters(skill)) return false
+    if (!keyword) return true
+    return `${skill.name}${skill.description}`.toLowerCase().includes(keyword)
+  })
+})
+
+/**
+ * 筛选菜单的选项（带计数）。
+ *
+ * 计数是**该维度下命中多少条** —— 不是当前筛选后的数量，
+ * 这样用户能看出还有多少条没被选进来。
+ */
+const filterGroups = computed<FilterGroup[]>(() => {
+  const all = skillList.value
+
+  const statusOptions: FilterOption[] = [
+    { value: 'enabled', label: '启用', count: all.filter((s) => s.enabled).length },
+    { value: 'disabled', label: '停用', count: all.filter((s) => !s.enabled).length },
+  ]
+
+  // 来源：只列出真有的，按数量从多到少
+  const sourceCount = new Map<string, number>()
+  for (const skill of all) {
+    const key = skill.sourceKey ?? 'manual'
+    sourceCount.set(key, (sourceCount.get(key) ?? 0) + 1)
+  }
+  const sourceOptions: FilterOption[] = [...sourceCount.entries()]
+    .map(([value, count]) => ({
+      value,
+      label: sourceLabel(value as SkillSource),
+      count,
+      icon: sourceIcon(value as SkillSource),
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  // 被谁使用：只列出真有人用的
+  const agentCount = new Map<string, number>()
+  for (const skill of all) {
+    for (const name of skill.agentNames) {
+      agentCount.set(name, (agentCount.get(name) ?? 0) + 1)
+    }
+  }
+  const agentOptions: FilterOption[] = [...agentCount.entries()]
+    .map(([value, count]) => ({ value, label: value, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  return [
+    { key: 'status', label: '使用状态', options: statusOptions },
+    { key: 'source', label: '数据来源', options: sourceOptions },
+    { key: 'agent', label: '被谁使用', options: agentOptions },
+  ]
 })
 
 /** 当前页是否全选（只看筛选后可见的行） */
@@ -181,6 +255,8 @@ const toDisplaySkill = (info: SkillInfo): Skill => {
     // 真实 skill 没有「分类」概念，用来源代替。
     category: sourceLabel(info.source),
     source: sourceLabel(info.source),
+    // 筛选按原始值匹配，不按显示文案
+    sourceKey: info.source,
     description: info.description || '（暂无描述）',
     // 使用者 = 绑定了这个 skill 的智能体名称（按相对路径引用匹配）
     agentNames: agentNamesFor(info.relativePath),
@@ -205,6 +281,19 @@ const sourceLabel = (source: SkillInfo['source']): string => {
     git: 'GitHub 仓库',
   }
   return labels[source] ?? source
+}
+
+/** 来源的小图标（筛选菜单里用） */
+const sourceIcon = (source: SkillSource): Component => {
+  const icons: Record<string, Component> = {
+    manual: Pencil,
+    local: FolderInput,
+    url: Globe,
+    runtime: Monitor,
+    duplicate: Copy,
+    git: Download,
+  }
+  return icons[source]
 }
 
 /** 读取工作区里已落盘的 skill */
@@ -316,7 +405,13 @@ const onDuplicated = (info: SkillInfo) => {
         <h1 class="page-title">Skills</h1>
         <p class="page-sub">
           <template v-if="loading">正在读取工作区…</template>
-          <template v-else>{{ skillList.length }} 个能力包，可被 agents 引用</template>
+          <template v-else>
+            {{ visibleSkills.length }} 个能力包
+            <template v-if="visibleSkills.length !== skillList.length">
+              （共 {{ skillList.length }} 个）
+            </template>
+            ，可被 agents 引用
+          </template>
         </p>
       </div>
       <NSpace :size="8">
@@ -333,6 +428,7 @@ const onDuplicated = (info: SkillInfo) => {
           </template>
           更新<span v-if="selected.length">（{{ selected.length }}）</span>
         </NButton>
+        <FilterMenu v-model="filters" :groups="filterGroups" />
         <NInput
           v-model:value="query"
           class="search"
