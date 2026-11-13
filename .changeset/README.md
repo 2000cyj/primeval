@@ -42,4 +42,4 @@
   - `major`:破坏性变更
   - `minor`:新增向后兼容的功能
   - `patch`:bug 修复
-- 当前唯一可发版包是 `@remote/utils`,独立管理版本;其余包都是 private 应用,不发版
+- 当前所有包都是 private 应用,不发版 —— changesets 机制先留着,以后有公开包再用

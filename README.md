@@ -54,9 +54,7 @@ remote-monorepo/
 │   ├── agentspace-core/        # agentspace_core    共享 Rust crate(桌面端与 CLI 共用一套落盘逻辑)
 │   └── agentspace-cli/         # agentspace-cli     agentspace 命令行
 ├── packages/
-│   ├── agent-compose-mcp/      # @remote/agent-compose-mcp(private) MCP sidecar + 共享 TS 类型
-│   ├── utils/                  # @remote/utils      叶子工具包
-│   └── tsconfig.base.json      # 库包共享的严格 tsconfig
+│   └── agent-compose-mcp/      # @remote/agent-compose-mcp(private) MCP sidecar + 共享 TS 类型
 ├── .changeset/                 # 版本与发包变更记录
 │   ├── config.json
 │   └── README.md
@@ -92,7 +90,6 @@ desktop ──► app-vue(构建期依赖,复用其源码作为渲染层)
 | --------------------------- | ---------------------------- | ------- | ------------------------------------------ |
 | `@remote/agent-compose`     | `apps/AgentCompose`          | private | AgentSpace 桌面端(Tauri + Rust 壳 + Vue 3) |
 | `@remote/agent-compose-mcp` | `packages/agent-compose-mcp` | private | MCP sidecar + 共享 TS 类型                 |
-| `@remote/utils`             | `packages/utils`             | public  | 叶子工具函数                               |
 
 Rust 侧在 pnpm workspace 之外:`apps/agentspace-core` 是共享 crate
 (`agentspace_core`),`apps/agentspace-cli` 在它之上构建 `agentspace` 命令行。
@@ -192,18 +189,15 @@ catalog:
 ```
 tsconfig.json (根:最基础的编译选项)
    │
-   ├── packages/tsconfig.base.json (库包共享:严格管控)
-   │      ├── packages/utils/tsconfig.json
-   │      └── packages/agent-compose-mcp/tsconfig.json
+   ├── packages/agent-compose-mcp/tsconfig.json
    │
    └── apps/AgentCompose/tsconfig.json (渲染层:Vue3 + TS 特化)
 ```
 
-| 层级                                         | 关键选项                                                                                                                                              | 用途                                 |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| **根** `tsconfig.json`                       | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                                                                    | 全仓共享的最基本编译环境             |
-| **库包** `packages/tsconfig.base.json`       | 叠加 `strict`、`noUnusedLocals/Parameters`、`noImplicitReturns`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`declaration`、`sourceMap` | 对外发布的库需更严格的类型与产物声明 |
-| **渲染层** `apps/AgentCompose/tsconfig.json` | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit`                                                     | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
+| 层级                                         | 关键选项                                                                                          | 用途                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **根** `tsconfig.json`                       | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                | 全仓共享的最基本编译环境             |
+| **渲染层** `apps/AgentCompose/tsconfig.json` | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit` | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
 
 各 package 的 `tsconfig.json` 仅声明本包路径相关选项(`outDir` / `rootDir` / `include`),通过 `extends` 复用上层。
 

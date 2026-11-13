@@ -48,45 +48,6 @@ export default tseslint.config(
     },
   },
 
-  // 从 admin app 迁入的兼容层工具（yudao / 若依 源码搬运）：大量 any、非空断言、
-  // 无显式返回类型是原样保留的历史写法，逐步收敛前先放宽，避免为搬运而重写。
-  {
-    files: ['packages/utils/src/**/*.ts'],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/explicit-module-boundary-types': 'off',
-      '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/consistent-type-imports': 'off',
-      // 校验正则原样搬自若依，字符类里的 \[ 冗余转义无害，不为搬运而改写正则
-      'no-useless-escape': 'off',
-    },
-  },
-
-  // 共享 Vue 组件包（packages/components）：.vue 里的 <script lang="ts"> 需交给 ts 解析器，
-  // 否则 packages/**/*.ts 块把它当纯 TS 解析，遇到 <script setup> 语法会 Parsing error。
-  {
-    files: ['packages/components/**/*.vue'],
-    languageOptions: {
-      parserOptions: {
-        parser: tseslint.parser,
-      },
-      globals: {
-        window: 'readonly',
-        document: 'readonly',
-        setTimeout: 'readonly',
-        HTMLElement: 'readonly',
-      },
-    },
-    rules: {
-      // 组件目录入口 index.vue / 单概念组件名（Dialog/Echart 等）在库里是约定，不构成冲突 → 警告
-      'vue/multi-word-component-names': 'warn',
-      // 迁入组件运行时声明 props、any 兜底沿用 app 写法，逐步收敛前放宽
-      'vue/define-props-declaration': 'warn',
-      'vue/require-default-prop': 'warn',
-      '@typescript-eslint/no-explicit-any': 'warn',
-    },
-  },
-
   // Vue3 应用（apps/* Vue 项目）规则：适配 Vue3 + TS 组合式 API + unplugin-auto-import
   // unplugin-auto-import 把 ref/reactive/useRoute/ElButton 等全部注入为全局，
   // vue-eslint-parser 不感知这些全局名，所以这里补齐浏览器+Vue+Node 全局 + 关掉 no-undef；

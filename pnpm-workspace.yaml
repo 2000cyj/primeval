@@ -7,7 +7,6 @@ packages:
 catalog:
   # 构建/类型基础
   typescript: ^5.9.3
-  tsup: ^8.5.1
   vite: ^8.1.5
   vue-tsc: ^3.3.7
   vitest: ^4.1.10
@@ -17,7 +16,6 @@ catalog:
   # Vue 3 前端栈
   vue: ^3.5.40
   '@vitejs/plugin-vue': ^6.0.8
-  '@vitejs/plugin-vue-jsx': ^5.1.5
 
 # pnpm 10 默认 ignored build scripts,显式声明只允许 esbuild 跑 install script(vite 依赖 esbuild 的 native binary)
 # 注:Electron 45 起已移除 postinstall,改为首次 require('electron') 时懒下载二进制,无需加入白名单

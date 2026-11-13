@@ -50,7 +50,6 @@ Workspace globs (`pnpm-workspace.yaml`): `apps/*` and `packages/*`.
 | --------------------------- | ---------------------------- | ---------------------------------------------------------- |
 | `@remote/agent-compose`     | `apps/AgentCompose`          | Desktop app (private): Tauri + Rust shell + Vue 3 renderer |
 | `@remote/agent-compose-mcp` | `packages/agent-compose-mcp` | MCP sidecar + shared TS types (private)                    |
-| `@remote/utils`             | `packages/utils`             | Leaf shared utilities; no internal deps                    |
 
 The Rust side lives outside pnpm: `apps/agentspace-core` is the shared crate
 (`agentspace_core`), and `apps/agentspace-cli` builds the `agentspace`
@@ -58,8 +57,7 @@ command line on top of it. The desktop app depends on the same crate, so
 both clients read and write the same files under `~/.agent-compose/`.
 
 Internal deps use the `workspace:*` protocol, so pnpm symlinks local packages
-instead of fetching from a registry. Keep `utils` dependency-free of other
-workspace packages to avoid cycles.
+instead of fetching from a registry.
 
 `@remote/agent-compose` is a **Tauri** app too: `src-tauri/` holds a minimal
 Rust shell (no commands yet), `src/` holds the Vue 3 renderer, and
