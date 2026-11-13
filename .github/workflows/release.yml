@@ -212,11 +212,16 @@ jobs:
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
+          # 自定义文案当正文（安装步骤、命令行用法、SmartScreen 提示）
+          body_path: dist/release-notes.md
+          # 标题带产品名，别只显示 tag
+          name: 'AgentSpace ${{ github.ref_name }}'
           files: |
             dist/*.msi
             dist/*.exe
             dist/*.zip
-            dist/release-notes.md
           draft: false
           prerelease: false
+          # GitHub 自动根据 commit 生成「更新了什么」，追加在正文后面
+          # （conventional commits 的 feat/fix 会被自动分类）
           generate_release_notes: true
