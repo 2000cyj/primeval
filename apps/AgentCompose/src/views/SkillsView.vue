@@ -53,6 +53,9 @@ const refreshing = ref(false)
  */
 const filters = ref<Record<string, string[]>>({})
 
+/** 「没有被任何智能体使用」这个筛选项的标记值 */
+const NO_AGENT = '__none__'
+
 /** 筛掉不符合条件的 skill */
 const matchFilters = (skill: Skill): boolean => {
   const status = filters.value.status ?? []
@@ -63,8 +66,11 @@ const matchFilters = (skill: Skill): boolean => {
   const source = filters.value.source ?? []
   if (source.length && !source.includes(skill.sourceKey ?? 'manual')) return false
   const agent = filters.value.agent ?? []
-  if (agent.length && !skill.agentNames.some((name) => agent.includes(name))) {
-    return false
+  if (agent.length) {
+    const hit = agent.includes(NO_AGENT)
+      ? skill.agentNames.length === 0
+      : skill.agentNames.some((name) => agent.includes(name))
+    if (!hit) return false
   }
   return true
 }
@@ -117,6 +123,11 @@ const filterGroups = computed<FilterGroup[]>(() => {
   const agentOptions: FilterOption[] = [...agentCount.entries()]
     .map(([value, count]) => ({ value, label: value, count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+  // 没人用的也要能筛出来 —— 放在最后
+  const orphanCount = all.filter((skill) => skill.agentNames.length === 0).length
+  if (orphanCount > 0) {
+    agentOptions.push({ value: NO_AGENT, label: '暂无使用者', count: orphanCount })
+  }
 
   return [
     { key: 'status', label: '使用状态', options: statusOptions },
