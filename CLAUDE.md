@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## How to verify a change
+
+**Only verify the code.** Do not run the test suites, do not take screenshots,
+do not drive the UI (no Playwright / no `orca computer` / no window
+automation), and do not launch the desktop app to click through it.
+
+What "verifying the code" means here:
+
+- `pnpm --filter <name> typecheck` (or `vue-tsc --noEmit`)
+- `pnpm --filter <name> lint` (ESLint)
+- `cargo check` / `cargo build` for Rust crates
+- reading the diff back
+
+The user checks the running app themselves. A change that typechecks and lints
+clean is done — reporting "I verified it works" on that basis is fine, but do
+not claim a behaviour was confirmed on screen.
+
 ## Status
 
 Early-stage pnpm monorepo. The build, typecheck, test, lint, and formatting

@@ -28,6 +28,7 @@ import PiGlyph from '@/components/PiGlyph.vue'
 import {
   extensionTemplate,
   listExtensions,
+  openExternal,
   readExtension,
   repoLink,
   removeExtension,
@@ -56,8 +57,17 @@ const isExtensionsRoute = (): boolean => window.location.hash.replace('#', '') =
  * 挂在 hashchange 上，而不是组件的 onMounted ——
  * 组件挂载只发生一次，之后每次点侧边栏菜单进来都是同一个组件实例，
  * 挂载钩子不会再触发。菜单切换才是「用户想看市场」的时机。
+ *
+ * `lastHash` 记着上一次的路由：**hash 真的变了才查**。
+ * 不记的话，挂载时（onMounted）和紧接着的 hashchange 会各查一次 ——
+ * 浏览器的 hashchange 是异步派发的，即便 hash 的值没变也会来一趟。
  */
+let lastHash = ''
+
 const onRouteChange = (): void => {
+  const now = window.location.hash
+  if (now === lastHash) return
+  lastHash = now
   if (isExtensionsRoute()) void search(false)
 }
 
@@ -202,6 +212,21 @@ const installedNames = computed(() => {
 
 const isInstalled = (name: string): boolean => installedNames.value.has(name)
 
+/**
+ * 打开包的仓库页。
+ *
+ * 走 Tauri 命令让系统浏览器打开 —— 桌面端的 webview 会拦掉普通链接，
+ * 点 `<a target="_blank">` 什么反应都没有。
+ */
+const openRepo = async (item: MarketplacePackage): Promise<void> => {
+  if (!item.repository) return
+  try {
+    await openExternal(repoLink(item.repository))
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : String(error))
+  }
+}
+
 const install = async (item: MarketplacePackage): Promise<void> => {
   installing.value = item.name
   try {
@@ -270,6 +295,8 @@ onMounted(async () => {
   setExtensionDoneHandler(loadInstalled)
   window.addEventListener('hashchange', onRouteChange)
   // 直接打开 #extensions 也要查
+  // 先把 lastHash 记成当前值 —— 后面 hashchange 带着同一个值来时不重复查
+  lastHash = window.location.hash
   if (isExtensionsRoute()) void search(false)
 })
 
@@ -413,19 +440,18 @@ onUnmounted(() => {
                   <template v-if="item.author"> · {{ item.author }}</template>
                 </span>
                 <span class="pkg-actions">
-                  <a
+                  <button
                     v-if="item.repository"
+                    type="button"
                     class="pkg-link"
-                    :href="repoLink(item.repository)"
-                    target="_blank"
-                    rel="noreferrer"
                     :title="`${item.name} 的仓库`"
-                    :aria-label="`${item.name} 的仓库（在新标签页打开）`"
+                    :aria-label="`${item.name} 的仓库（用系统浏览器打开）`"
+                    @click="openRepo(item)"
                   >
                     <NIcon :size="12">
                       <ArrowUpRight />
                     </NIcon>
-                  </a>
+                  </button>
                   <NButton v-if="isInstalled(item.name)" size="tiny" secondary disabled>
                     已安装
                   </NButton>
@@ -789,8 +815,12 @@ onUnmounted(() => {
   place-items: center;
   width: 22px;
   height: 22px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--c-text-4);
+  cursor: pointer;
 }
 
 .pkg-link:hover {

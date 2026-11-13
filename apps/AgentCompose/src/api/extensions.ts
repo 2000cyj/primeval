@@ -90,6 +90,22 @@ export const EXTENSION_COMMANDS = {
   removeLibrary: 'extensions_remove_library',
 } as const
 
+/**
+ * 用系统默认浏览器打开一个网址。
+ *
+ * 不能直接用 `<a target="_blank">` —— 桌面端的 webview 会把导航拦下来，
+ * 点击什么反应都没有。得走 Tauri 命令让系统浏览器打开。
+ *
+ * 命令实现只允许 http/https（见 src-tauri/src/lib.rs 的 mcp_open_url）。
+ */
+export async function openExternal(url: string): Promise<void> {
+  try {
+    await invoke('mcp_open_url', { url })
+  } catch (error) {
+    throw fail('打开浏览器', error)
+  }
+}
+
 /** 统一的错误包装：保留原始原因，便于界面直接展示 */
 function fail(action: string, error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error)
