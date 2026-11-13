@@ -23,6 +23,7 @@ pub mod github;
 pub mod marketplace;
 pub mod paths;
 pub mod pi_settings;
+pub mod proc;
 pub mod toolbox;
 pub mod proxy;
 pub mod skills;

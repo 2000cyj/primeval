@@ -10,8 +10,9 @@
 //!   App Execution Alias / 协议处理器。
 
 use crate::paths::Paths;
+use crate::proc;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -444,7 +445,9 @@ fn is_app_execution_alias(_path: &Path) -> bool {
 
 /// 跑一次 `--version`，拿 stdout/stderr 里的版本号。
 fn run_version(path: &Path) -> Result<Option<String>, String> {
-    let mut child = Command::new(path)
+    // 用 proc::command 而不是 Command::new ——
+    // Windows 上跑 .cmd 会走 cmd.exe /c，不隐藏窗口就每个 CLI 闪一个黑框。
+    let mut child = proc::command(path)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1046,7 +1049,7 @@ pub async fn toolbox_package_versions(
         .to_string();
     let npm = manager_in_path("npm").unwrap_or_else(|| "npm".to_string());
     let npm_name = npm.clone();
-    let output = Command::new(&npm)
+    let output = proc::command(&npm)
         .args(["view", &package, "versions", "--json"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1089,7 +1092,7 @@ async fn run_package_command(plan: &PackagePlan, verb: &str) -> Result<(), Strin
     let program_name = program.clone();
     let args = plan.args.clone();
     let output = {
-        Command::new(&program)
+        proc::command(&program)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

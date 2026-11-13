@@ -8,7 +8,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use crate::paths::mcp_runtime_dir;
@@ -158,7 +158,7 @@ fn config_is_newer_than_proxy() -> bool {
 ///
 /// `sidecar.json` 里的 pid 可能是旧的（实例换过），所以以端口的实际占用者为准。
 fn pid_listening_on(port: u16) -> Option<u64> {
-    let output = Command::new("netstat").args(["-ano"]).output().ok()?;
+    let output = agentspace_core::proc::command("netstat").args(["-ano"]).output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let needle = format!("127.0.0.1:{port}");
     for line in text.lines() {
@@ -186,13 +186,13 @@ fn stop_running_proxy(port: u16) {
         return;
     };
     if cfg!(windows) {
-        let _ = Command::new("taskkill")
+        let _ = agentspace_core::proc::command("taskkill")
             .args(["/F", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
     } else {
-        let _ = Command::new("kill")
+        let _ = agentspace_core::proc::command("kill")
             .args(["-9", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -227,7 +227,7 @@ pub fn ensure_running() -> Result<Endpoint, String> {
     // （`cmd /c start`、`PowerShell Start-Process` 实测都还会继承。）
     #[cfg(windows)]
     {
-        let mut cmd = Command::new("explorer.exe");
+        let mut cmd = agentspace_core::proc::command("explorer.exe");
         cmd.arg(&launch.program);
         cmd.args(&launch.args);
         cmd.stdin(Stdio::null())
@@ -238,7 +238,7 @@ pub fn ensure_running() -> Result<Endpoint, String> {
 
     #[cfg(not(windows))]
     {
-        let mut cmd = Command::new(&launch.program);
+        let mut cmd = agentspace_core::proc::command(&launch.program);
         cmd.args(&launch.args);
         // 输出落盘：跟桌面端一个做法
         let log_path = mcp_runtime_dir().join("sidecar.log");

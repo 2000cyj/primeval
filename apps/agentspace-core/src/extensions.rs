@@ -348,7 +348,7 @@ pub fn install_from_npm(
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| format!("创建临时目录失败：{e}"))?;
 
-    let output = std::process::Command::new(&npm)
+    let output = crate::proc::command(&npm)
         .args([
             "install",
             trimmed,
@@ -576,7 +576,7 @@ pub fn install_custom_dependencies(
         args.push(package.trim().to_string());
     }
 
-    let output = std::process::Command::new(&npm)
+    let output = crate::proc::command(&npm)
         .args(&args)
         .output()
         .map_err(|e| format!("执行 npm 失败：{e}"))?;

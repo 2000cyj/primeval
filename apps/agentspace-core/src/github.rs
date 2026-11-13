@@ -96,7 +96,7 @@ pub struct DiscoveredSkill {
 /// 走 `git ls-remote --heads` —— 不用 clone，也不用 GitHub API。
 pub fn list_branches(repo: &RepoRef) -> Result<Vec<String>, String> {
     let url = format!("https://github.com/{}.git", repo.slug());
-    let output = std::process::Command::new("git")
+    let output = crate::proc::command("git")
         .args(["ls-remote", "--heads", &url])
         .output()
         .map_err(|e| format!("执行 git 失败：{e}"))?;
@@ -171,7 +171,7 @@ fn clone_repo(paths: &Paths, repo: &RepoRef, branch: &str) -> Result<PathBuf, St
 
 /// 跑一条 git 命令。
 fn run_git(cwd: &Path, args: &[&str]) -> Result<(), String> {
-    let output = std::process::Command::new("git")
+    let output = crate::proc::command("git")
         .args(args)
         .current_dir(cwd)
         .output()
@@ -191,7 +191,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<(), String> {
 
 /// 当前在哪个分支。
 fn current_branch(dir: &Path) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+    let output = crate::proc::command("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(dir)
         .output()

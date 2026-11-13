@@ -15,7 +15,7 @@
 //! 记的是 `git:github.com/owner/repo@ref`，刷新时能重新拉。
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
 
 /// git 源：`git:github.com/owner/repo@ref` 或 `git:https://...@ref`。
 #[derive(Clone, Debug)]
@@ -144,7 +144,7 @@ pub fn clone_url(repo: &str) -> String {
 
 /// 跑一条 git 命令。
 fn run_git(cwd: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("git")
+    let output = crate::proc::command("git")
         .args(args)
         .current_dir(cwd)
         .output()

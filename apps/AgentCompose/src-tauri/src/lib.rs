@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -100,7 +100,7 @@ fn current_source_stamp() -> u64 {
 fn process_alive(pid: u32) -> bool {
     #[cfg(windows)]
     {
-        let mut cmd = Command::new("tasklist");
+        let mut cmd = agentspace_core::proc::command("tasklist");
         cmd.arg("/FI")
             .arg(format!("PID eq {pid}"))
             .arg("/NH")
@@ -126,7 +126,7 @@ fn process_alive(pid: u32) -> bool {
 fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let _ = agentspace_core::proc::command("taskkill")
             .arg("/PID")
             .arg(pid.to_string())
             .arg("/F")
@@ -137,7 +137,7 @@ fn kill_process(pid: u32) {
     }
     #[cfg(not(windows))]
     {
-        let _ = Command::new("kill")
+        let _ = agentspace_core::proc::command("kill")
             .arg("-9")
             .arg(pid.to_string())
             .stdin(Stdio::null())
@@ -247,7 +247,7 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
         // 开发形态：跑仓库里的源码。
         // 源码优先于打包好的二进制 —— 二进制是构建时的快照，改了源码它不会变，
         // 跑起来还是旧逻辑（token、接口都可能对不上）。
-        let mut cmd = Command::new("node");
+        let mut cmd = agentspace_core::proc::command("node");
         cmd.arg("--experimental-strip-types");
         // 开发时监听 sidecar 源码：它是独立进程，不重启就还用着旧代码
         if std::env::var("AGENT_COMPOSE_MCP_WATCH").is_ok() {
@@ -266,7 +266,7 @@ fn spawn_sidecar(app: &AppHandle) -> Result<(), String> {
     } else {
         // 发布形态：只有打包好的可执行文件
         let binary = binary.expect("上面已经确认过它存在");
-        let mut cmd = Command::new(&binary);
+        let mut cmd = agentspace_core::proc::command(&binary);
         cmd.current_dir(binary.parent().unwrap_or_else(|| Path::new(".")));
         cmd
     };
@@ -710,7 +710,7 @@ fn mcp_open_url(url: String) -> Result<(), String> {
         //
         // rundll32 直接 spawn（不经 cmd），Rust 会按 MSVC 规则给参数加引号，
         // 整个 URL 原样交给系统。
-        let mut cmd = Command::new("rundll32");
+        let mut cmd = agentspace_core::proc::command("rundll32");
         cmd.arg("url.dll,FileProtocolHandler")
             .arg(&url)
             .stdin(Stdio::null())
@@ -722,7 +722,7 @@ fn mcp_open_url(url: String) -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
-        Command::new("xdg-open")
+        agentspace_core::proc::command("xdg-open")
             .arg(&url)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -948,7 +948,7 @@ fn add_to_user_path(dir: &Path) {
     {
         // 读 HKCU\Environment 的 Path 整条值。
         // 不用 `reg query ... /v Path`：带斜杠的参数在某些 shell 里会被当成路径改写。
-        let output = Command::new("reg").args(["query", r"HKCU\Environment"]).output();
+        let output = agentspace_core::proc::command("reg").args(["query", r"HKCU\Environment"]).output();
         let existing = output
             .ok()
             .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -965,7 +965,7 @@ fn add_to_user_path(dir: &Path) {
         } else {
             format!("{};{}", existing.trim_end_matches(';'), dir_text)
         };
-        let _ = Command::new("reg")
+        let _ = agentspace_core::proc::command("reg")
             .args([
                 "add",
                 r"HKCU\Environment",

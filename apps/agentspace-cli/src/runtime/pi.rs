@@ -14,7 +14,7 @@
 //! 普通 `pi` 也能拿到智能体指令和 MCP 工具。
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use super::{ExtensionAsset, Runtime};
 use crate::trust;
@@ -204,7 +204,9 @@ impl Runtime for PiRuntime {
 
     fn launch(&self, cwd: &Path, args: &[String]) -> Option<i32> {
         let binary = self.find_binary()?;
-        let mut cmd = Command::new(&binary);
+        // 走 proc::command —— pi 在 Windows 上是 pi.cmd，Rust 会用 cmd.exe /c
+        // 包一层。不加 CREATE_NO_WINDOW 的话会弹出一个多余的 cmd 窗口。
+        let mut cmd = agentspace_core::proc::command(&binary);
         cmd.args(self.launch_args(cwd));
         cmd.args(args);
         cmd.current_dir(cwd);
