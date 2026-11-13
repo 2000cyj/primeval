@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Blocks, Cpu, Network, Server, Settings } from 'lucide-vue-next'
 import { agentScan } from '@/api/agents'
 import PiGlyph from '@/components/PiGlyph.vue'
+import ToolboxIcon from '@/components/ToolboxIcon.vue'
 
 export type ViewKey =
   | 'skills'
@@ -33,7 +34,7 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
   <aside class="rail">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">
-        <Blocks :size="14" />
+        <ToolboxIcon :size="22" />
       </span>
       <span class="brand-name">AgentSpace</span>
     </div>
@@ -94,11 +95,9 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 .brand-mark {
   display: grid;
   place-items: center;
+  flex: none;
   width: 22px;
   height: 22px;
-  border-radius: var(--radius-sm);
-  color: #fff;
-  background: var(--c-accent);
 }
 
 .brand-name {
