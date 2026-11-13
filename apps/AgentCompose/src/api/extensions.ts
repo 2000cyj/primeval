@@ -192,3 +192,20 @@ export async function removeExtensionFromLibrary(
     throw fail('删除扩展', error)
   }
 }
+
+/**
+ * npm 的 repository 字段长得五花八门：
+ * `git+https://github.com/o/r.git`、`git://github.com/o/r.git`、
+ * `git@github.com:o/r.git`、`https://github.com/o/r` 都有。
+ *
+ * 直接拿来当链接会变成「下载 .git 文件」而不是打开仓库页 ——
+ * 所以把协议前缀和 .git 后缀都归一化掉。
+ */
+export function repoLink(repository: string): string {
+  return repository
+    .trim()
+    .replace(/^git\+/, '')
+    .replace(/^git:\/\//, 'https://')
+    .replace(/^git@([^:]+):/, 'https://$1/')
+    .replace(/\.git$/, '')
+}

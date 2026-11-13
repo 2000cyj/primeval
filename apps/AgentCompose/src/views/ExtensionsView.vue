@@ -29,6 +29,7 @@ import {
   extensionTemplate,
   listExtensions,
   readExtension,
+  repoLink,
   removeExtension,
   saveExtension,
   searchMarketplace,
@@ -165,6 +166,11 @@ const installing = ref('')
 const PAGE_SIZE = 40
 
 const search = async (append: boolean): Promise<void> => {
+  // 已经在查了就别再查一遍。
+  //
+  // 进页面时两个入口可能连着触发：onMounted 看一眼当前路由，
+  // hashchange 又通知一次「你到 Pi 扩展页了」—— 不挡的话市场会被查两遍。
+  if (marketLoading.value && !append) return
   marketLoading.value = true
   try {
     const offset = append ? packages.value.length : 0
@@ -410,9 +416,11 @@ onUnmounted(() => {
                   <a
                     v-if="item.repository"
                     class="pkg-link"
-                    :href="item.repository.replace(/^git\\+/, '')"
+                    :href="repoLink(item.repository)"
                     target="_blank"
                     rel="noreferrer"
+                    :title="`${item.name} 的仓库`"
+                    :aria-label="`${item.name} 的仓库（在新标签页打开）`"
                   >
                     <NIcon :size="12">
                       <ArrowUpRight />
