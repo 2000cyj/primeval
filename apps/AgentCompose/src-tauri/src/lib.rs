@@ -13,6 +13,7 @@ mod history;
 mod paths;
 mod proxy;
 mod skills;
+mod updater;
 
 /// MCP sidecar 的数据目录。
 ///
@@ -1107,6 +1108,7 @@ pub fn run() {
             history::cli_op_history_upsert,
             history::cli_op_history_remove,
             history::cli_op_history_clear,
+            updater::check_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AgentSpace");

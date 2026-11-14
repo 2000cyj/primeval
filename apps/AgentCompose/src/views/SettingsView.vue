@@ -12,6 +12,8 @@ import {
 } from '@/api/proxy'
 import { getCliStatus, type CliStatus } from '@/api/cli'
 import { getVersion } from '@tauri-apps/api/app'
+import { checkAppUpdate, type AppUpdateInfo } from '@/api/updater'
+import { openExternal } from '@/api/extensions'
 
 const message = useMessage()
 
@@ -26,65 +28,50 @@ const FALLBACK_VERSION = '1.0.0'
 const currentVersion = ref(FALLBACK_VERSION)
 
 /**
- * 版本检测地址（留空 —— 后续实现）。
+ * 版本检测。
  *
- * 填上之后，「检查最新版本」会去请求它，拿回形如
- * `{ "version": "1.2.0", "url": "https://…/AgentSpace_1.2.0_x64.msi" }` 的 JSON。
+ * 后端去问 GitHub 的 latest release，拿回版本号、发布说明和附件地址，
+ * 跟当前版本比完告诉我们有没有新版。详见 `src-tauri/src/updater.rs`。
  *
- * 留空时按钮点了只会提示「还没配置检测地址」，不会发请求。
+ * 检测逻辑在 Rust 侧 —— 版本号怎么比、哪个附件是安装包，那边说了算。
  */
-const UPDATE_CHECK_URL = ''
-
-/** 检查结果：'idle' 未检查 / 'checking' 检查中 / 'latest' 已是最新 / 'update' 有新版本 */
 type UpdateState = 'idle' | 'checking' | 'latest' | 'update'
 
 const updateState = ref<UpdateState>('idle')
-/** 检测到的新版本号 */
-const latestVersion = ref('')
-/** 新版本的下载地址 */
-const downloadUrl = ref('')
+/** 检测结果 */
+const updateInfo = ref<AppUpdateInfo | null>(null)
 
 const hasUpdate = computed(() => updateState.value === 'update')
 const isLatest = computed(() => updateState.value === 'latest')
+/** 最新版本号（没查到就空着） */
+const latestVersion = computed(() => updateInfo.value?.latestVersion ?? '')
+/** 新版本发布说明 */
+const updateNotes = computed(() => updateInfo.value?.notes ?? '')
+/** 新版本发布日期 */
+const updatePublishedAt = computed(() => updateInfo.value?.publishedAt ?? '')
 
-/** 比较两个版本号：a 比 b 新就返回 true */
-const isNewer = (a: string, b: string): boolean => {
-  const parse = (value: string): number[] =>
-    value
-      .split(/[.\-+]/)
-      .map((part) => Number.parseInt(part, 10))
-      .map((part) => (Number.isNaN(part) ? 0 : part))
-  const left = parse(a)
-  const right = parse(b)
-  const length = Math.max(left.length, right.length)
-  for (let index = 0; index < length; index += 1) {
-    const x = left[index] ?? 0
-    const y = right[index] ?? 0
-    if (x !== y) return x > y
+/** 发布说明是不是展开的 */
+const notesExpanded = ref(false)
+
+/** 打开 Release 页面看完整发布说明 */
+const openReleaseNotes = async (): Promise<void> => {
+  const url = updateInfo.value?.releaseUrl
+  if (!url) return
+  try {
+    await openExternal(url)
+  } catch (error) {
+    message.error(`打不开发布说明：${error instanceof Error ? error.message : String(error)}`)
   }
-  return false
 }
 
 /** 检查最新版本 */
 const checkLatestVersion = async (): Promise<void> => {
-  if (!UPDATE_CHECK_URL) {
-    message.info('还没配置版本检测地址')
-    return
-  }
   updateState.value = 'checking'
   try {
-    const response = await fetch(UPDATE_CHECK_URL)
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-    const payload = (await response.json()) as { version?: string; url?: string }
-    const found = payload.version?.trim() ?? ''
-    if (!found) {
-      throw new Error('检测结果里没有版本号')
-    }
-    latestVersion.value = found
-    downloadUrl.value = payload.url?.trim() ?? ''
-    updateState.value = isNewer(found, currentVersion.value) ? 'update' : 'latest'
+    const info = await checkAppUpdate()
+    updateInfo.value = info
+    currentVersion.value = info.currentVersion || currentVersion.value
+    updateState.value = info.hasUpdate ? 'update' : 'latest'
     if (updateState.value === 'latest') {
       message.success(`当前已是最新版本 ${currentVersion.value}`)
     }
@@ -94,14 +81,20 @@ const checkLatestVersion = async (): Promise<void> => {
   }
 }
 
-/** 开始更新：把下载地址复制到剪贴板 */
-const startUpdate = (): void => {
-  if (!downloadUrl.value) {
-    message.info(`开始更新到 ${latestVersion.value}`)
-    return
+/** 开始更新：打开安装包下载页 */
+const startUpdate = async (): Promise<void> => {
+  const info = updateInfo.value
+  if (!info) return
+  // 有直链就下直链；没有（走的是发布页那种来源）就打开 release 页面，
+  // 让用户自己挑附件。
+  const direct = info.downloadUrl
+  const target = direct || info.releaseUrl
+  try {
+    await openExternal(target)
+    message.info(direct ? '已开始下载安装包' : '已打开发布页，请下载后安装')
+  } catch (error) {
+    message.error(`打不开下载地址：${error instanceof Error ? error.message : String(error)}`)
   }
-  void navigator.clipboard?.writeText(downloadUrl.value)
-  message.success('下载地址已复制')
 }
 
 // ── 全局出站代理 ──
@@ -312,9 +305,27 @@ onMounted(load)
         </NButton>
       </div>
 
-      <div v-if="hasUpdate" class="row row-note">
-        <span class="note-text">检测到新版本</span>
-        <span class="note-version tnum">{{ latestVersion }}</span>
+      <!-- 有新版本：说清楚是什么版本、什么时候发的、改了什么 -->
+      <div v-if="hasUpdate" class="update-block">
+        <div class="row row-note">
+          <span class="note-text">检测到新版本</span>
+          <span class="note-version tnum">{{ latestVersion }}</span>
+          <span v-if="updatePublishedAt" class="note-date">发布于 {{ updatePublishedAt }}</span>
+          <NButton text size="tiny" @click="openReleaseNotes">查看发布说明</NButton>
+        </div>
+
+        <div v-if="updateNotes" class="notes" :class="{ expanded: notesExpanded }">
+          <pre class="notes-body">{{ updateNotes }}</pre>
+          <NButton
+            v-if="updateNotes.length > 200"
+            text
+            size="tiny"
+            class="notes-toggle"
+            @click="notesExpanded = !notesExpanded"
+          >
+            {{ notesExpanded ? '收起' : '展开全部' }}
+          </NButton>
+        </div>
       </div>
     </div>
 
@@ -549,6 +560,45 @@ onMounted(load)
 .note-version {
   font-size: 12px;
   font-weight: 600;
+}
+
+.note-date {
+  font-size: 12px;
+  color: var(--c-text-4);
+}
+
+/* 新版本的发布说明 —— 默认只露三行 */
+.update-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border);
+}
+
+.notes {
+  position: relative;
+}
+
+.notes-body {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 96px;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--c-surface-2);
+  border-radius: 6px;
+}
+
+.notes.expanded .notes-body {
+  max-height: none;
+}
+
+.notes-toggle {
+  margin-top: 4px;
 }
 
 /* ── 网络 ── */

@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NButton, NIcon, NPopover, NTooltip, useMessage } from 'naive-ui'
+import { computed, ref } from 'vue'
+import { NButton, NIcon, NPopover, NTooltip } from 'naive-ui'
 import { Bell, CircleAlert, CircleCheck, CircleHelp, Loader2, X } from 'lucide-vue-next'
 import { useNotifications } from '@/composables/useNotifications'
-
-const message = useMessage()
+import HelpModal from '@/components/HelpModal.vue'
 
 const { notices, runningCount, dismiss, clear } = useNotifications()
+
+/** 帮助弹窗开没开 */
+const helpOpen = ref(false)
 
 /** 角标上的数字：没有就不显示 */
 const badge = computed(() => (notices.value.length > 99 ? '99+' : String(notices.value.length)))
@@ -29,7 +31,7 @@ const timeText = (timestamp: number): string => {
   <header class="topbar">
     <NTooltip trigger="hover">
       <template #trigger>
-        <NButton quaternary circle size="small" aria-label="帮助" @click="message.info('帮助中心')">
+        <NButton quaternary circle size="small" aria-label="帮助" @click="helpOpen = true">
           <NIcon :size="16">
             <CircleHelp />
           </NIcon>
@@ -106,6 +108,8 @@ const timeText = (timestamp: number): string => {
       </template>
       通知
     </NTooltip>
+
+    <HelpModal v-model:show="helpOpen" />
   </header>
 </template>
 

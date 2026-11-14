@@ -203,6 +203,44 @@ jobs:
           "@
           Set-Content -Path 'dist/release-notes.md' -Value $body -Encoding utf8
 
+      # ── 版本清单 ───────────────────────────────────────────
+      #
+      # 桌面端的「检查最新版本」读的就是这个文件。
+      #
+      # 为什么不用 GitHub API：未认证请求 60 次/小时，而且**按 IP 算** ——
+      # 共享网络里很容易被打满，检测功能会时好时坏。挂在 release 上的
+      # 静态文件走 CDN，没有这个限制。
+      - name: 生成版本清单
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $version = $tag.TrimStart('v')
+          $setup = Get-ChildItem 'dist' -Filter '*_x64-setup.exe' | Select-Object -First 1
+          $portable = Get-ChildItem 'dist' -Filter '*_x64_portable.zip' | Select-Object -First 1
+          if (-not $setup) { Write-Error '找不到安装包'; exit 1 }
+
+          $base = "https://github.com/2000cyj/primeval/releases/download/$tag"
+          # 注意：Get-Content -Raw 的结果带 PSObject 适配器属性（PSPath 等），
+          # 直接扔进 ConvertTo-Json 会把那些属性一起序列化，notes 变成一个
+          # 几百 KB 的对象而不是字符串 —— 客户端解析会直接失败。
+          # 用 [string] 强转成纯字符串。
+          #
+          # 读取要显式指定 UTF8：Windows PowerShell 5.1 默认按 ANSI 读，
+          # 中文会被读坏。写入用 UTF8Encoding($false) —— 5.1 的
+          # `-Encoding utf8` 会写 BOM，JSON 解析器不认 BOM。
+          $notes = [string](Get-Content 'dist/release-notes.md' -Raw -Encoding UTF8)
+          $manifest = [ordered]@{
+            version      = $version
+            notes        = $notes
+            pub_date     = (Get-Date).ToUniversalTime().ToString('o')
+            download_url = "$base/$($setup.Name)"
+            portable_url = if ($portable) { "$base/$($portable.Name)" } else { '' }
+            release_url  = "https://github.com/2000cyj/primeval/releases/tag/$tag"
+          }
+          $json = $manifest | ConvertTo-Json -Depth 5
+          [System.IO.File]::WriteAllText('dist/latest.json', $json, [System.Text.UTF8Encoding]::new($false))
+          Write-Host "生成 dist/latest.json（版本 $version）"
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
@@ -213,6 +251,7 @@ jobs:
           files: |
             dist/*.exe
             dist/*.zip
+            dist/latest.json
           draft: false
           prerelease: false
           # GitHub 自动根据 commit 生成「更新了什么」，追加在正文后面

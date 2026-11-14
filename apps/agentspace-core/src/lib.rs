@@ -25,6 +25,7 @@ pub mod paths;
 pub mod pi_settings;
 pub mod proc;
 pub mod toolbox;
+pub mod updater;
 pub mod proxy;
 pub mod skills;
 

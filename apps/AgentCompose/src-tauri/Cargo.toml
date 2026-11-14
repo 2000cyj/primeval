@@ -1,6 +1,6 @@
 [package]
 name = "agent-compose"
-version = "1.0.0"
+version = "1.0.1"
 description = "AgentCompose desktop UI"
 authors = ["Primeval"]
 edition = "2021"
