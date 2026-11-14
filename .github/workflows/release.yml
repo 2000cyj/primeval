@@ -167,41 +167,58 @@ jobs:
           name: agentspace-windows
           path: dist
 
+      # ── 发布说明 ───────────────────────────────────────────
+      #
+      # 优先用 docs/release-notes/<tag>.md —— 那个是手写的，
+      # 写清楚这一版新增了什么、修了什么。
+      #
+      # 没有的话退回默认模板：只有安装说明和命令行用法。
+      # （模板里不硬写「更新了什么」—— 那种内容写死就会过期，
+      #   下个版本还挂着上个版本的总结，比没有更糟。）
       - name: 生成发布说明
         shell: pwsh
         run: |
           $tag = '${{ github.ref_name }}'
-          $body = @"
-          ## AgentSpace $tag
+          $notes = "docs/release-notes/$tag.md"
+          if (Test-Path $notes) {
+            Copy-Item $notes 'dist/release-notes.md'
+            Write-Host "用 $notes 作发布说明"
+          } else {
+            $body = @"
+            ## AgentSpace $tag
 
-          Windows 安装包（x64）。
+            Windows 安装包（x64）。
 
-          | 格式 | 说明 |
-          | --- | --- |
-          | `AgentSpace_*_x64-setup.exe` | NSIS 安装包，双击一路下一步 |
-          | `AgentSpace_*_x64_portable.zip` | 便携版，解压即用，不写注册表 |
+            | 格式 | 说明 |
+            | --- | --- |
+            | `AgentSpace_*_x64-setup.exe` | NSIS 安装包，双击一路下一步 |
+            | `AgentSpace_*_x64_portable.zip` | 便携版，解压即用，不写注册表 |
 
-          装的是 AgentSpace 桌面端 —— 智能体、Skills、MCP server、Pi 扩展
-          收在一处管。命令行 ``agentspace`` 会一起装上。
+            装的是 AgentSpace 桌面端 —— 智能体、Skills、MCP server、Pi 扩展
+            收在一处管。命令行 ``agentspace`` 会一起装上。
 
-          ### 安装
+            ### 安装
 
-          - **EXE**：双击安装。装完在开始菜单里找 AgentSpace。
-          - **便携版**：解压后直接跑 `AgentSpace.exe`。
+            - **EXE**：双击安装。装完在开始菜单里找 AgentSpace。
+            - **便携版**：解压后直接跑 `AgentSpace.exe`。
 
-          ### 命令行
+            ### 命令行
 
-          ```bash
-          agentspace run <智能体名>   # 按智能体定义准备目录并拉起 Pi
-          agentspace skill list      # 看有哪些 skill
-          agentspace mcp list        # 看有哪些 MCP server
-          agentspace extension list  # 看有哪些 Pi 扩展
-          ```
+            ```bash
+            agentspace run <智能体名>   # 按智能体定义准备目录并拉起 Pi
+            agentspace install <智能体名>  # 只落地配置，不启动 Pi
+            agentspace update <智能体名>    # 覆盖更新已装好的配置
+            agentspace skill list      # 看有哪些 skill
+            agentspace mcp list        # 看有哪些 MCP server
+            agentspace extension list  # 看有哪些 Pi 扩展
+            ```
 
-          > 安装包未签名，Windows SmartScreen 可能拦一下 ——
-          > 「更多信息 → 仍要运行」。
-          "@
-          Set-Content -Path 'dist/release-notes.md' -Value $body -Encoding utf8
+            > 安装包未签名，Windows SmartScreen 可能拦一下 ——
+            > 「更多信息 → 仍要运行」。
+            "@
+            Set-Content -Path 'dist/release-notes.md' -Value $body -Encoding utf8
+            Write-Host "没有 $notes，用默认模板"
+          }
 
       # ── 版本清单 ───────────────────────────────────────────
       #
