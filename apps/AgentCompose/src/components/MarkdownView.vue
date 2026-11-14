@@ -15,7 +15,7 @@ import DOMPurify from 'dompurify'
 const props = withDefaults(
   defineProps<{
     /** Markdown 原文 */
-    source: string
+    source?: string
   }>(),
   { source: '' },
 )
