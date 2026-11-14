@@ -17,7 +17,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  add: [def: McpServerDef]
+  /**
+   * 添加一个目录里的 server。
+   *
+   * `registryName` 一并带出去（如 `io.github.owner/repo`）——
+   * 数据管理导出时靠它判「这个 server 是目录装的还是手动填的」：
+   * 目录装的导出时只记名字，导入方自己去目录里找；手动填的导出完整定义。
+   */
+  add: [def: McpServerDef, registryName: string]
 }>()
 
 /** 目录条目的一行展示模型 */
@@ -109,7 +116,7 @@ watch(
 
 const onAdd = (row: RegistryRow): void => {
   if (!row.def) return
-  emit('add', row.def)
+  emit('add', row.def, row.source)
   emit('close')
 }
 </script>

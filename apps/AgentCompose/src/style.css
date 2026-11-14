@@ -93,7 +93,6 @@ a {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
 }
-
 .mono {
   font-family: 'SFMono-Regular', 'Cascadia Mono', Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
@@ -109,4 +108,89 @@ a {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/*
+ * 滚动条：细一点。
+ *
+ * 不用 Naive UI 的 NScrollbar —— 它要固定 height 才会滚，给 max-height 的话
+ * 内容直接溢出（HelpModal 的注释里踩过这个坑）。所以滚动区一律用原生
+ * overflow，代价就是滚动条是系统默认的那么宽（Windows 上 17px）。
+ *
+ * 这里用 ::-webkit-scrollbar 把它改窄 —— Chromium 内核（WebView2）认这个。
+ * 轨道透明，滑块用中性灰，hover 才加深 —— 跟整体的石墨色一致。
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-border-strong) transparent;
+}
+
+/*
+ * 给滚动条留出固定位置。
+ *
+ * 不留的话，滚动条出现/消失时内容宽度会跳一下（平移 8px）——
+ * 滚动到底部看结果列表时最明显。
+ */
+html {
+  scrollbar-gutter: stable;
+}
+
+/*
+ * 内部滚动区（弹窗里的列表、表格体）也留位置。
+ *
+ * 根容器的 scrollbar-gutter 不会继承给后代 —— 后代自己滚的时候
+ * 滚动条出现/消失还是会跳一下。
+ *
+ * 用属性选择器盖住所有可能自己滚的元素，不用给 20 处滚动区逐个加。
+ */
+* {
+  scrollbar-gutter: stable;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-border-strong);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-text-4);
+}
+
+/* 横向滚动条（比如表格宽了）用同一条规则 */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * 页面标题栏：吸顶。
+ *
+ * 页面很长时（设置页、数据管理的导入结果）标题会滚出视野 —— 用户滚到一半
+ * 不知道自己在哪个页。吸顶之后标题一直在。
+ *
+ * top 必须是顶栏高度：顶栏自己也是 sticky 的（top: 0），标题要排在它下面，
+ * 不然会被盖住一半。
+ *
+ * 背景那两行 shadow 是为了盖住缝：
+ * - 上方 20px：.page 的 padding-top，head 吸顶后这里会露出滚过的内容
+ * - 下方 16px：head 与下一块之间是 margin / gap，不是盒子，内容会从缝里透出
+ *
+ * 用 shadow 而不是 padding/margin 补偿 —— shadow 不占布局，视觉位置不变。
+ */
+.page-head {
+  position: sticky;
+  top: var(--h-header);
+  z-index: 5;
+  background: var(--c-bg);
+  box-shadow:
+    0 16px 0 var(--c-bg),
+    0 -20px 0 var(--c-bg);
 }

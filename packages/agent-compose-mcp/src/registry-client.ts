@@ -191,9 +191,20 @@ export function dedupeByName(entries: McpRegistryEntry[]): McpRegistryEntry[] {
 
 /** 把 registry 的原始响应转成条目列表 */
 function toEntries(raw: unknown): McpRegistryEntry[] {
-  const items = Array.isArray((raw as { servers?: unknown })?.servers)
-    ? ((raw as { servers: RawItem[] }).servers ?? [])
-    : []
+  // 两种形态都吃：
+  // - 搜索接口：`{ servers: [{ server: {...}, _meta: {...} }] }`
+  // - 取单条：`{ server: {...}, _meta: {...} }`
+  const source = raw as { servers?: unknown; server?: unknown }
+  const items: RawItem[] = Array.isArray(source.servers)
+    ? (source.servers as RawItem[])
+    : source.server
+      ? [
+          {
+            server: source.server as RawItem['server'],
+            _meta: (raw as { _meta?: Record<string, unknown> })._meta,
+          },
+        ]
+      : []
   const out: McpRegistryEntry[] = []
   for (const item of items) {
     const server = item.server
@@ -243,4 +254,37 @@ export async function searchRegistry(
     nextCursor: raw.metadata?.nextCursor,
     source: 'registry.modelcontextprotocol.io',
   }
+}
+
+/**
+ * 按条目名精确取一条（`io.github.owner/repo` 这种）。
+ *
+ * 数据管理导入时用 —— 导出包里记的是目录条目名，导入方要拿回完整定义。
+ *
+ * 路径是 `/v0/servers/{name}/versions/latest`：
+ * - 条目名里的 `/` 要编码成 `%2F`（否则会被当成路径分隔符）
+ * - 必须带 `versions/latest` —— 直接打 `/v0/servers/{name}` 是 404
+ *
+ * 找不到返回 null（不是报错）—— 条目可能已经从目录里下架了。
+ *
+ * `base` 只给测试用（指到假服务器上）；生产不传。
+ */
+export async function fetchRegistryEntry(
+  name: string,
+  base: string = REGISTRY_BASE,
+): Promise<McpRegistryEntry | null> {
+  const trimmed = name.trim()
+  if (!trimmed) return null
+  const url = `${base}/${encodeURIComponent(trimmed)}/versions/latest`
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'agent-compose-mcp/0.1' },
+  })
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`目录服务返回 ${response.status}`)
+  }
+  const raw = (await response.json()) as { server?: RawItem['server'] }
+  if (!raw.server) return null
+  const entries = toEntries(raw)
+  return entries[0] ?? null
 }

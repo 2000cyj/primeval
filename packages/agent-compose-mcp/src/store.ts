@@ -73,6 +73,10 @@ function parseServer(value: unknown): McpServerDef | undefined {
   if (typeof value['token'] === 'string' && value['token'] !== '') {
     def.token = value['token']
   }
+  // 来自官方目录的条目名 —— 数据管理导出时靠它判「目录装的 vs 手动填的」
+  if (typeof value['registryName'] === 'string' && value['registryName'] !== '') {
+    def.registryName = value['registryName']
+  }
   return def
 }
 

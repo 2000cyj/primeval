@@ -23,7 +23,7 @@ import type { SessionManager } from './session.ts'
 import type { UpstreamPool } from './upstream.ts'
 import type { McpProfile, McpRuntimeStatus, McpServerDef } from './types.ts'
 import { parseSelection } from './session.ts'
-import { entryToServerDef, searchRegistry } from './registry-client.ts'
+import { entryToServerDef, fetchRegistryEntry, searchRegistry } from './registry-client.ts'
 import { FIXED_TOKEN } from './config.ts'
 import type { OAuthManager } from './oauth.ts'
 
@@ -443,6 +443,25 @@ export class McpHttpServer {
             const def = entryToServerDef(entry)
             return { ...entry, installable: def !== null, def: def ?? undefined }
           }),
+        })
+        return
+      }
+
+      // 按名字取目录里的一条
+      //
+      // 数据管理导入时用 —— 导出包里记的是目录条目名（如 io.github.owner/repo），
+      // 导入方要拿回完整定义才能建出上游。
+      if (pathname.startsWith('/admin/registry/entry') && method === 'GET') {
+        const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+        const name = url.searchParams.get('name') ?? ''
+        const entry = await fetchRegistryEntry(name)
+        if (!entry) {
+          sendJson(res, 404, { error: `目录里没有「${name}」` })
+          return
+        }
+        const def = entryToServerDef(entry)
+        sendJson(res, 200, {
+          entry: { ...entry, installable: def !== null, def: def ?? undefined },
         })
         return
       }

@@ -308,12 +308,14 @@ const onSaveServer = async (def: McpServerDef): Promise<void> => {
 }
 
 /** 从官方目录一键添加：目录条目已由 sidecar 翻译成上游定义 */
-const onAddFromRegistry = async (def: McpServerDef): Promise<void> => {
+const onAddFromRegistry = async (def: McpServerDef, registryName: string): Promise<void> => {
   if (servers.value.some((server) => server.id === def.id)) {
     message.warning('已存在同名 server')
     return
   }
-  const next = [...servers.value, def]
+  // 记下它来自目录里的哪个条目 —— 数据管理导出时靠这个分流：
+  // 目录装的导出只记名字，导入方自己去目录找；手动填的导出完整定义。
+  const next = [...servers.value, { ...def, registryName }]
   try {
     await persistServers(next)
   } catch (error) {

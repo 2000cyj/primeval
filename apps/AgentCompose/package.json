@@ -18,6 +18,7 @@
   "dependencies": {
     "@remote/agent-compose-mcp": "workspace:*",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
     "dompurify": "^3.4.17",
     "lucide-vue-next": "^0.468.0",
     "marked": "^18.2.0",
