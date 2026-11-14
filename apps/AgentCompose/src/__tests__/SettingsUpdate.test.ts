@@ -39,6 +39,14 @@ vi.mock('@/api/extensions', () => ({
   openExternal: openUrlMock,
 }))
 
+/**
+ * 进度事件的 listen —— 真实环境由 Tauri 提供，测试里返回个取消函数就行。
+ */
+const listenMock = vi.hoisted(() => vi.fn().mockResolvedValue(() => {}))
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: listenMock,
+}))
+
 /** 挂设置页 */
 const mountView = async () => {
   const wrapper = mount({
@@ -57,6 +65,7 @@ const buttonByText = (wrapper: VueWrapper, text: string): DOMWrapper<Element> | 
 afterEach(() => {
   invokeMock.mockReset()
   openUrlMock.mockReset()
+  listenMock.mockClear()
   document.body.innerHTML = ''
 })
 
@@ -149,7 +158,7 @@ describe('设置页版本检测', () => {
     expect(document.body.textContent ?? '').toContain('连不上 GitHub')
   })
 
-  it('点「更新到」打开安装包下载地址', async () => {
+  it('点「更新到」在应用内下载并安装，不打开浏览器', async () => {
     updateResult.current = {
       currentVersion: '1.0.0',
       latestVersion: '1.2.0',
@@ -163,6 +172,8 @@ describe('设置页版本检测', () => {
     updateResult.fail = false
     invokeMock.mockImplementation((cmd: string) => {
       if (cmd === 'check_app_update') return Promise.resolve(updateResult.current)
+      // 应用内更新：后端下载 + 验签 + 安装
+      if (cmd === 'install_update_and_restart') return Promise.resolve(true)
       return Promise.resolve([])
     })
 
@@ -174,8 +185,9 @@ describe('设置页版本检测', () => {
     await buttonByText(wrapper, '更新到 1.2.0')?.trigger('click')
     await flushPromises()
 
-    expect(openUrlMock).toHaveBeenCalledWith(
-      'https://github.com/2000cyj/primeval/releases/download/v1.2.0/setup.exe',
-    )
+    // 走的是后端的应用内更新命令
+    expect(invokeMock).toHaveBeenCalledWith('install_update_and_restart')
+    // 不是把用户丢到浏览器
+    expect(openUrlMock).not.toHaveBeenCalled()
   })
 })

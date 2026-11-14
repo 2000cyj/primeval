@@ -88,6 +88,51 @@ jobs:
           $json | ConvertTo-Json -Depth 10 | Set-Content $conf -Encoding utf8
           Write-Host "版本号设为 $version"
 
+      # ── 准备更新签名密钥 ───────────────────────────────────
+      #
+      # 应用内更新要验签（minisign）：公钥写在 tauri.conf.json 的
+      # plugins.updater.pubkey，私钥只存在 CI 的秘密里。
+      #
+      # 密钥格式：minisign 的两行文件，整体被 base64 包了一层。
+      #
+      # 关键：Tauri CLI 自己会做 base64 解码（decode_key），
+      # 所以交给它的必须是**原始 base64** —— 写文件路径也行，
+      # 但文件里要是 base64 文本，不能是解码后的明文。
+      #
+      # 拿不到密钥就不能发版 —— 发了也没有人能验证更新包。
+      - name: 准备更新签名密钥
+        shell: pwsh
+        env:
+          RAW_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RAW_KEY)) {
+            Write-Error "缺少 TAURI_SIGNING_PRIVATE_KEY 秘密 —— 应用内更新需要它来签名更新包"
+            exit 1
+          }
+          $raw = $env:RAW_KEY.Trim()
+          # 秘密里通常就是那一整行 base64。
+          # 万一有人存的是解码后的两行明文，先还原回 base64。
+          if ($raw.StartsWith('untrusted comment:')) {
+            $lines = @($raw -split "`r?`n" | Where-Object { $_.Trim() -ne '' })
+            if ($lines.Count -ge 2) {
+              $raw = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($lines[1].Trim()))
+              Write-Host "秘密是明文两行格式，已还原成 base64"
+            }
+          }
+          if ($raw -notmatch '^[A-Za-z0-9+/=\r\n]+$') {
+            Write-Error "TAURI_SIGNING_PRIVATE_KEY 格式不对：应该是 base64 的 minisign 私钥"
+            exit 1
+          }
+          # 写成只含 base64 的文件 —— CLI 会自己解码
+          $keyPath = Join-Path $env:RUNNER_TEMP 'agentspace_signing.key'
+          [System.IO.File]::WriteAllText($keyPath, $raw, [System.Text.UTF8Encoding]::new($false))
+          "TAURI_SIGNING_PRIVATE_KEY=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (-not [string]::IsNullOrWhiteSpace($env:KEY_PASSWORD)) {
+            "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$env:KEY_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          Write-Host "签名密钥已就绪（$($raw.Length) 字符）"
+
       # ── 构建随包分发的两个可执行文件 ───────────────────────
       #
       # tauri.conf.json 的 bundle.resources 引用了它们 ——
@@ -114,11 +159,38 @@ jobs:
       #
       # 只做 nsis（配置里写的是 "all"，会连带构建 msi/deb/rpm/appimage ——
       # msi 要额外下 wix 工具链，deb/rpm 要额外工具链，Windows 上也不需要）。
+      #
+      # createUpdaterArtifacts 已开（tauri.conf.json）：除了常规安装包，
+      # 还会多产出一个带 .sig 签名的更新包 —— 应用内更新靠它。
       - name: 构建安装包
         env:
           # CI 上工具链是干净的 MSVC，不用跑探针
           AGENT_COMPOSE_SKIP_PROBE: '1'
         run: pnpm --filter @remote/agent-compose run tauri build --bundles nsis
+
+      # ── 收集更新包（给应用内更新用） ────────────────────────
+      #
+      # NSIS 安装器本身就是更新包（v2 updater 的做法）：
+      # 它自带 /UPDATE 模式，能替换掉正在运行的那份程序。
+      # 旁边的 .sig 是 minisign 签名，应用里验签用。
+      - name: 收集更新包
+        shell: pwsh
+        run: |
+          $nsisDir = 'apps/AgentCompose/src-tauri/target/release/bundle/nsis'
+          if (-not (Test-Path $nsisDir)) {
+            Write-Error "没有 NSIS 产物目录：$nsisDir"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
+          Get-ChildItem $nsisDir -File | ForEach-Object {
+            Copy-Item $_.FullName 'dist/'
+            Write-Host "更新产物：$($_.Name)"
+          }
+          # 必须有签名，否则应用里验签不过
+          if (-not (Get-ChildItem $nsisDir -Filter '*.sig' -File)) {
+            Write-Error "没有 .sig 签名文件 —— TAURI_SIGNING_PRIVATE_KEY 没生效？"
+            exit 1
+          }
 
       # ── 打便携版 zip（免安装）──────────────────────────────
       #
@@ -143,7 +215,6 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-          Copy-Item "${{ env.BUNDLE_DIR }}/nsis/*.exe" 'dist/'
           Get-ChildItem 'dist' | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length/1MB)) MB" }
 
       - uses: actions/upload-artifact@v4
@@ -272,6 +343,47 @@ jobs:
           [System.IO.File]::WriteAllText('dist/latest.json', $json, [System.Text.UTF8Encoding]::new($false))
           Write-Host "生成 dist/latest.json（版本 $version）"
 
+      # ── 应用内更新的清单（updater.json）────────────────────
+      #
+      # 上面那个 latest.json 是给我们自己的检测逻辑读的（带便携版地址等）。
+      # Tauri 官方 updater 插件要的是另一种格式：platforms 映射 +
+      # 每个平台的签名。所以单独生成一份。
+      #
+      # 目标键：插件按 {os}-{arch}-{installer} 找，找不到再找 {os}-{arch}。
+      # 我们发的是 NSIS 安装器，所以两个都写上。
+      - name: 生成 updater.json
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $version = $tag.TrimStart('v')
+          $base = "https://github.com/2000cyj/primeval/releases/download/$tag"
+          $setup = Get-ChildItem 'dist' -Filter '*_x64-setup.exe' | Select-Object -First 1
+          $sig = Get-ChildItem 'dist' -Filter '*_x64-setup.exe.sig' | Select-Object -First 1
+          if (-not $setup) { Write-Error '找不到安装包'; exit 1 }
+          if (-not $sig) { Write-Error '找不到签名文件'; exit 1 }
+
+          # 签名文件里就是 base64 的签名体，直接当字符串用
+          $signature = [string](Get-Content $sig.FullName -Raw -Encoding UTF8).Trim()
+          $notes = [string](Get-Content 'dist/release-notes.md' -Raw -Encoding UTF8)
+          $url = "$base/$($setup.Name)"
+
+          $platform = [ordered]@{
+            signature = $signature
+            url       = $url
+          }
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = $notes
+            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = [ordered]@{
+              'windows-x86_64-nsis' = $platform
+              'windows-x86_64'      = $platform
+            }
+          }
+          $json = $manifest | ConvertTo-Json -Depth 6
+          [System.IO.File]::WriteAllText('dist/updater.json', $json, [System.Text.UTF8Encoding]::new($false))
+          Write-Host "生成 dist/updater.json（版本 $version）"
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
@@ -282,7 +394,9 @@ jobs:
           files: |
             dist/*.exe
             dist/*.zip
+            dist/*.sig
             dist/latest.json
+            dist/updater.json
           draft: false
           prerelease: false
           # GitHub 自动根据 commit 生成「更新了什么」，追加在正文后面

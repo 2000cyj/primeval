@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, useMessage } from 'naive-ui'
+import { NButton, NIcon, NInput, NProgress, useMessage } from 'naive-ui'
 import { Copy, Download, Eye, EyeOff, Search, TestTube2, X } from 'lucide-vue-next'
 import {
   getProxy,
@@ -12,9 +12,17 @@ import {
 } from '@/api/proxy'
 import { getCliStatus, type CliStatus } from '@/api/cli'
 import { getVersion } from '@tauri-apps/api/app'
-import { checkAppUpdate, type AppUpdateInfo } from '@/api/updater'
+import {
+  checkAppUpdate,
+  installUpdateAndRestart,
+  onUpdateDownloadProgress,
+  type AppUpdateInfo,
+  type UpdateDownloadProgress,
+} from '@/api/updater'
 import { openExternal } from '@/api/extensions'
+import { formatDateTime } from '@/utils/datetime'
 import agentspaceLogo from '@/assets/agentspace-logo.png'
+import MarkdownView from '@/components/MarkdownView.vue'
 
 const message = useMessage()
 
@@ -48,11 +56,38 @@ const isLatest = computed(() => updateState.value === 'latest')
 const latestVersion = computed(() => updateInfo.value?.latestVersion ?? '')
 /** 新版本发布说明 */
 const updateNotes = computed(() => updateInfo.value?.notes ?? '')
-/** 新版本发布日期 */
-const updatePublishedAt = computed(() => updateInfo.value?.publishedAt ?? '')
+/** 新版本发布日期（转成能读的本地时间） */
+const updatePublishedAt = computed(() => formatDateTime(updateInfo.value?.publishedAt ?? ''))
 
 /** 发布说明是不是展开的 */
 const notesExpanded = ref(false)
+
+/** 正在下载安装（进度条阶段） */
+const installing = ref(false)
+/** 下载进度（null = 还没开始或已结束） */
+const downloadProgress = ref<UpdateDownloadProgress | null>(null)
+/** 进度监听的取消函数 */
+let unlistenProgress: (() => void) | undefined = undefined
+/** 下载百分比（服务端没给总量就不知道，显示不确定态） */
+const downloadPercent = computed(() => {
+  const progress = downloadProgress.value
+  if (!progress || progress.total <= 0) return null
+  return Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
+})
+
+/** 已下载多少 MB */
+const downloadedMb = computed(() => {
+  const progress = downloadProgress.value
+  if (!progress) return '0.0'
+  return (progress.downloaded / 1024 / 1024).toFixed(1)
+})
+
+/** 总共多少 MB */
+const totalMb = computed(() => {
+  const progress = downloadProgress.value
+  if (!progress || progress.total <= 0) return ''
+  return (progress.total / 1024 / 1024).toFixed(1)
+})
 
 /** 打开 Release 页面看完整发布说明 */
 const openReleaseNotes = async (): Promise<void> => {
@@ -82,19 +117,27 @@ const checkLatestVersion = async (): Promise<void> => {
   }
 }
 
-/** 开始更新：打开安装包下载页 */
+/** 开始更新：应用内下载 → 验签 → 安装器接手 → 重启 */
 const startUpdate = async (): Promise<void> => {
-  const info = updateInfo.value
-  if (!info) return
-  // 有直链就下直链；没有（走的是发布页那种来源）就打开 release 页面，
-  // 让用户自己挑附件。
-  const direct = info.downloadUrl
-  const target = direct || info.releaseUrl
+  if (installing.value) return
+  installing.value = true
+  downloadProgress.value = null
+  unlistenProgress = await onUpdateDownloadProgress((progress) => {
+    downloadProgress.value = progress
+  })
   try {
-    await openExternal(target)
-    message.info(direct ? '已开始下载安装包' : '已打开发布页，请下载后安装')
+    const started = await installUpdateAndRestart()
+    // Windows 上安装器起来后进程就退出了，走到这里说明没有更新可装
+    if (!started) {
+      message.info('当前已是最新版本')
+      updateState.value = 'latest'
+    }
   } catch (error) {
-    message.error(`打不开下载地址：${error instanceof Error ? error.message : String(error)}`)
+    message.error(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    installing.value = false
+    unlistenProgress?.()
+    unlistenProgress = undefined
   }
 }
 
@@ -294,14 +337,36 @@ onMounted(load)
           {{ isLatest ? '已是最新版本' : '检查最新版本' }}
         </NButton>
 
-        <NButton v-else type="primary" size="small" @click="startUpdate">
+        <NButton v-else type="primary" size="small" :loading="installing" @click="startUpdate">
           <template #icon>
             <NIcon :size="13">
               <Download />
             </NIcon>
           </template>
-          更新到 {{ latestVersion }}
+          {{ installing ? '正在下载…' : `更新到 ${latestVersion}` }}
         </NButton>
+      </div>
+
+      <!-- 下载中：进度条（下载在应用内完成，不跳出浏览器） -->
+      <div v-if="installing" class="download-block">
+        <div class="row row-note">
+          <span class="note-text">正在下载新版本</span>
+          <span v-if="downloadPercent !== null" class="note-version tnum"
+            >{{ downloadPercent }}%</span
+          >
+          <span class="note-date tnum">
+            {{ downloadedMb }}<template v-if="totalMb"> / {{ totalMb }}</template> MB
+          </span>
+        </div>
+        <NProgress
+          type="line"
+          :percentage="downloadPercent ?? undefined"
+          :indeterminate="downloadPercent === null"
+          :height="4"
+          :show-indicator="false"
+          processing
+        />
+        <p class="note-hint">下载完会自动安装并重启，不用你手动操作。</p>
       </div>
 
       <!-- 有新版本：说清楚是什么版本、什么时候发的、改了什么 -->
@@ -311,10 +376,7 @@ onMounted(load)
           <span class="note-version tnum">{{ latestVersion }}</span>
           <span v-if="updatePublishedAt" class="note-date">发布于 {{ updatePublishedAt }}</span>
           <NButton text size="tiny" @click="openReleaseNotes">查看发布说明</NButton>
-        </div>
-
-        <div v-if="updateNotes" class="notes" :class="{ expanded: notesExpanded }">
-          <pre class="notes-body">{{ updateNotes }}</pre>
+          <!-- 展开/收起靠右 -->
           <NButton
             v-if="updateNotes.length > 200"
             text
@@ -324,6 +386,10 @@ onMounted(load)
           >
             {{ notesExpanded ? '收起' : '展开全部' }}
           </NButton>
+        </div>
+
+        <div v-if="updateNotes" class="notes" :class="{ expanded: notesExpanded }">
+          <MarkdownView class="notes-body" :source="updateNotes" />
         </div>
       </div>
     </div>
@@ -515,6 +581,9 @@ onMounted(load)
 }
 
 .row-note {
+  /* 元素挤在左边，「展开/收起」靠 margin-left:auto 推到最右 */
+  justify-content: flex-start;
+  gap: 10px;
   padding: 12px 16px;
   border-top: 1px solid var(--c-border);
   background: var(--c-surface-sunken);
@@ -580,6 +649,19 @@ onMounted(load)
   border-top: 1px solid var(--c-border);
 }
 
+/* 下载进度块 */
+.download-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border);
+}
+
+.note-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
 .notes {
   position: relative;
 }
@@ -587,15 +669,10 @@ onMounted(load)
 .notes-body {
   margin: 0;
   padding: 10px 12px;
-  max-height: 96px;
+  max-height: 220px;
   overflow: hidden;
-  font-family: var(--font-sans);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--c-text-3);
-  white-space: pre-wrap;
-  word-break: break-word;
-  background: var(--c-surface-2);
+  background: var(--c-surface-sunken);
+  border: 1px solid var(--c-border);
   border-radius: 6px;
 }
 
@@ -604,7 +681,7 @@ onMounted(load)
 }
 
 .notes-toggle {
-  margin-top: 4px;
+  margin-left: auto;
 }
 
 /* ── 网络 ── */

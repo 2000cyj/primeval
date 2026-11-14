@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "默认权限：核心能力 + 系统文件/目录选择框 + 应用内标题栏的窗口控制",
+  "description": "默认权限：核心能力 + 系统文件/目录选择框 + 应用内标题栏的窗口控制 + 应用内更新",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -12,6 +12,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "core:window:allow-is-maximized"
+    "core:window:allow-is-maximized",
+    "updater:default"
   ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "@remote/agent-compose",
-  "version": "1.0.2",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "AgentSpace 桌面端：管理智能体、Skills、MCP server 与 Pi 扩展（Vue 3 + Tauri）",
@@ -18,18 +18,20 @@
   "dependencies": {
     "@remote/agent-compose-mcp": "workspace:*",
     "@tauri-apps/api": "^2",
+    "dompurify": "^3.4.17",
     "lucide-vue-next": "^0.468.0",
+    "marked": "^18.2.0",
     "naive-ui": "^2.45.3",
     "vue": "catalog:"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "catalog:",
+    "jsdom": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:",
-    "vue-tsc": "catalog:",
     "vitest": "catalog:",
-    "@vue/test-utils": "catalog:",
-    "jsdom": "catalog:"
+    "vue-tsc": "catalog:"
   }
 }

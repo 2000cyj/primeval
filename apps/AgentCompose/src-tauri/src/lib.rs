@@ -1060,6 +1060,9 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        // 应用内更新：官方 updater 插件。下载、验签、安装都在应用内完成，
+        // 不再把用户丢到浏览器去自己点链接下载。
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             cli_status,
             agents::agents_scan,
@@ -1125,6 +1128,7 @@ pub fn run() {
             history::cli_op_history_remove,
             history::cli_op_history_clear,
             updater::check_app_update,
+            updater::install_update_and_restart,
             custom_titlebar,
         ])
         .run(tauri::generate_context!())

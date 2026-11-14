@@ -1,6 +1,6 @@
 [package]
 name = "agent-compose"
-version = "1.0.2"
+version = "1.0.1"
 description = "AgentCompose desktop UI"
 authors = ["Primeval"]
 edition = "2021"
@@ -22,6 +22,9 @@ tauri-build = { version = "2", features = [] }
 # CLI（apps/agentspace-cli）也依赖它 —— 一套数据，两个客户端。
 agentspace-core = { path = "../../agentspace-core" }
 tauri = { version = "2", features = [] }
+# 应用内更新：官方 updater 插件。
+# 跟 cc-switch 一样用它 —— 检测、下载、验签、交给 NSIS 装好并重启，全在应用内完成。
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 默认 feature 即 rustls，无需 native-tls / openssl
