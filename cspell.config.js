@@ -90,6 +90,7 @@ export default {
     'multiwebview',
     'npmmirror',
     'nsapp',
+    'NSIS',
     'nums',
     'oninitialized',
     'onsessionclosed',

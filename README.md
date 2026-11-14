@@ -1,384 +1,63 @@
 # AgentSpace
 
-**AgentSpace 是一个 AI 工具箱** —— 把智能体、Skills、MCP server、Pi 扩展收在一处管,再用 `agentspace` 命令行把它们铺到任意项目里跑起来。
+[![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+[![Vue](https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white)](https://vuejs.org)
+[![Rust](https://img.shields.io/badge/Rust-1.85%2B-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![pnpm](https://img.shields.io/badge/pnpm-10.18.1-F69220?logo=pnpm&logoColor=white)](https://pnpm.io)
+[![Platform](https://img.shields.io/badge/平台-Windows-0078D4?logo=windows&logoColor=white)](https://learn.microsoft.com/windows/)
 
-仓库结构:
-
-| 部件        | 位置                         | 作用                                                    |
-| ----------- | ---------------------------- | ------------------------------------------------------- |
-| 桌面端      | `apps/AgentCompose`          | Tauri + Vue 3,管理智能体 / Skills / MCP / Pi 扩展       |
-| 共享 crate  | `apps/agentspace-core`       | 智能体、Skill、工具箱、代理等落盘逻辑,桌面端与 CLI 共用 |
-| 命令行      | `apps/agentspace-cli`        | `agentspace` —— 按智能体定义准备目录并拉起 Pi           |
-| MCP sidecar | `packages/agent-compose-mcp` | MCP 代理:对上游是 client,对 agent 是 server             |
-
-前端用 pnpm workspace,构建、类型检查、测试、提交规范与代码规范是全套本地工具链;Rust 侧用 cargo。
-
----
-
-## 一、技术栈一览
-
-| 分类       | 选型                       | 版本             | 作用                                  |
-| ---------- | -------------------------- | ---------------- | ------------------------------------- |
-| 运行时     | Node.js                    | `>=22.18.0`      | 由 `engines` + `engine-strict` 强制   |
-| 包管理     | pnpm + workspace + catalog | `10.18.1`        | workspace 软链 + 版本集中管理         |
-| 任务编排   | turbo                      | `^2.10.5`        | 拓扑执行 + 本地构建缓存               |
-| 语言       | TypeScript                 | `^5.9.3`         | 两级 `tsconfig` 继承                  |
-| 应用构建   | Vite + @vitejs/plugin-vue  | vite `^8.1.5`    | 渲染层 dev/build/preview              |
-| 桌面壳     | Tauri v2                   | `^2`             | 原生窗口 + Rust 壳                    |
-| 类型检查   | tsc + vue-tsc              | vue-tsc `^3.3.7` | 应用额外校验 `.vue` 文件              |
-| 测试       | Vitest + jsdom + @vue/test | vitest `^4.1.10` | 各包自带配置,jsdom 兼容 Vue 组件      |
-| 版本记录   | @changesets/cli            | `^2.31.1`        | 仅用于版本记录(全部包都是 private)    |
-| 代码规范   | ESLint(v10 扁平配置)       | `^10.7.0`        | typescript-eslint + eslint-plugin-vue |
-| 格式化     | Prettier                   | `^3.9.5`         | 与 ESLint 通过 prettier config 解耦   |
-| 提交规范   | commitizen + cz-git        | `^1.13.1`        | 中文交互式 prompt                     |
-| 提交校验   | commitlint                 | `^21.2.1`        | conventional commits                  |
-| Git 钩子   | husky                      | `^9.1.7`         | pre-commit + commit-msg               |
-| 暂存区检查 | lint-staged                | `^17.0.8`        | 仅校验本次暂存文件                    |
-| 拼写检查   | cspell                     | `^10.0.1`        | 全仓词法扫描                          |
-
----
-
-## 二、环境要求
-
-通过三处**强制**版本约束:
-
-- `package.json` → `engines`:`node >=22.18.0`、`pnpm >=10.18.1`、`npm: "please-use-pnpm"`
-- `package.json` → `packageManager: "pnpm@10.18.1"`
-- `.npmrc` → `engine-strict=true` + `.nvmrc` 锁定 `22.18.0`
+**AgentSpace 是一个 AI 工具箱** —— 把智能体、Skills、MCP server、Pi 扩展收在一处管，
+再用 `agentspace` 命令行把它们铺到任意项目里跑起来。
 
 ```bash
-node -v                                  # 需 >= 22.18.0
-corepack enable && corepack prepare pnpm@10.18.1 --activate   # 激活指定版本 pnpm
+cd D:/OB/your-project
+agentspace run my-agent     # Skills / 指令 / MCP 铺到当前目录，拉起 Pi
 ```
 
----
+## 功能
 
-## 三、仓库结构
+| 能力         | 做什么                                                                           |
+| ------------ | -------------------------------------------------------------------------------- |
+| **Skills**   | 统一看本机 Skill 仓库：来源、谁在用、更新时间、启停开关                          |
+| **MCP 管理** | 一个代理地址（`http://127.0.0.1:7801/mcp`）对上所有 agent，上游 server 集中管理  |
+| **Agents**   | 探测本机 CLI agent（Claude Code / Codex / Gemini CLI …），能装、能升级、能看版本 |
+| **Pi 扩展**  | Pi 自带 / npm / 自定义三类扩展，勾选即用                                         |
+| **智能体**   | 把上面挑好的能力打包成一份可复用配置，`agentspace run` 一键落地                  |
 
-```
-remote-monorepo/
-├── apps/
-│   ├── AgentCompose/           # @remote/agent-compose(private) AgentSpace 桌面端(Tauri + Rust 壳 + Vue 3)
-│   ├── agentspace-core/        # agentspace_core    共享 Rust crate(桌面端与 CLI 共用一套落盘逻辑)
-│   └── agentspace-cli/         # agentspace-cli     agentspace 命令行
-├── packages/
-│   └── agent-compose-mcp/      # @remote/agent-compose-mcp(private) MCP sidecar + 共享 TS 类型
-├── .changeset/                 # 版本变更记录
-│   ├── config.json
-│   └── README.md
-├── .husky/                     # Git 钩子(pre-commit / commit-msg)
-├── scripts/                    # 仓库级脚本(figma MCP 等)
-├── apps/AgentCompose/
-│   ├── scripts/                # build-cli / build-sidecar / tauri 启动器
-│   └── src-tauri/              # Tauri Rust 后端 + Tauri commands
-├── turbo.json                  # turbo 任务图
-├── vitest.config.ts            # 根统一 Vitest 配置
-├── pnpm-workspace.yaml         # workspace + catalog 集中版本
-├── tsconfig.json               # 根基础 tsconfig
-├── eslint.config.js            # ESLint 扁平配置
-├── prettier.config.js          # Prettier 配置
-├── commitlint.config.js
-├── cspell.config.js
-├── .lintstagedrc.json
-├── .editorconfig
-├── .nvmrc
-├── .npmrc
-├── .gitignore
-└── package.json                # 根 workspace,聚合脚本入口
-```
+![界面](apps/AgentCompose/docs/images/skills.png)
 
-### 依赖方向(单向,禁止循环)
+> 完整界面截图与逐页操作说明：[应用 README](./apps/AgentCompose/README.md) · [使用指南](./apps/AgentCompose/docs/使用指南.md)
 
-```
-AgentCompose(Vue 渲染层) ──► agent-compose-mcp(MCP sidecar)
-agentspace-cli ──► agentspace-core
-AgentCompose(Rust 后端) ──► agentspace-core
-```
+## 技术
 
-Rust 侧两个 crate 不在 pnpm workspace 里,靠 Cargo 的 path 依赖连起来。
+| 层         | 选型                                                                       |
+| ---------- | -------------------------------------------------------------------------- |
+| 桌面端     | Tauri 2 + Vue 3 + TypeScript + Naive UI                                    |
+| 桌面端后端 | Rust（skills / agents / extensions / mcp / proxy / history / github 模块） |
+| 命令行     | Rust + clap（`agentspace`）                                                |
+| MCP 代理   | TypeScript sidecar（对上游是 client，对 agent 是 server）                  |
+| 工程化     | pnpm workspace + catalog、turbo、Vitest、ESLint、Prettier、changesets      |
 
-内部依赖统一使用 `workspace:*` 协议,pnpm 软链本地源码而非从 registry 拉取。Rust 侧不在 pnpm workspace 里 —— `agentspace-core` 是共享 crate,`agentspace-cli` 在它之上构建,桌面端也依赖同一个 crate。
+## 仓库结构
 
-| Package                     | 目录                         | 可见性  | 角色                                       |
-| --------------------------- | ---------------------------- | ------- | ------------------------------------------ |
-| `@remote/agent-compose`     | `apps/AgentCompose`          | private | AgentSpace 桌面端(Tauri + Rust 壳 + Vue 3) |
-| `@remote/agent-compose-mcp` | `packages/agent-compose-mcp` | private | MCP sidecar + 共享 TS 类型                 |
-| `@remote/agentspace-cli`    | `apps/agentspace-cli`        | private | `agentspace` 命令行(Rust 二进制)           |
+| 部件        | 位置                         | 作用                                                     |
+| ----------- | ---------------------------- | -------------------------------------------------------- |
+| 桌面端      | `apps/AgentCompose`          | Tauri + Vue 3，管理智能体 / Skills / MCP / Pi 扩展       |
+| 共享 crate  | `apps/agentspace-core`       | 智能体、Skill、工具箱、代理的落盘逻辑，桌面端与 CLI 共用 |
+| 命令行      | `apps/agentspace-cli`        | `agentspace` —— 按智能体定义准备目录并拉起 Pi            |
+| MCP sidecar | `packages/agent-compose-mcp` | MCP 代理：对上游是 client，对 agent 是 server            |
 
-Rust 侧在 pnpm workspace 之外:`apps/agentspace-core` 是共享 crate
-(`agentspace_core`),`apps/agentspace-cli` 在它之上构建 `agentspace` 命令行。
-桌面端依赖同一个 crate —— 两个客户端操作的是 `~/.agent-compose/` 下的同一份数据。
-
----
-
-## 四、快速开始
+## 快速开始
 
 ```bash
-pnpm install                  # 装依赖并初始化 husky
-pnpm -r list --depth -1       # 查看所有 workspace 包
-pnpm build                    # turbo 拓扑构建所有包
-pnpm typecheck                # turbo 类型检查(含 .vue)
-pnpm test                     # vitest 跑全仓测试
-pnpm lint / pnpm lint:fix     # ESLint 检查 / 自动修复
-pnpm format                   # prettier 格式化
-pnpm commit                   # cz-git 中文交互式提交
+pnpm install                                    # 装依赖
+pnpm --filter @remote/agent-compose dev        # 起桌面端
+pnpm build / typecheck / test / lint            # 构建、类型检查、测试、规范
 ```
 
-指定包执行:
-
-```bash
-pnpm --filter @remote/agent-compose dev        # tauri dev(vite 5176 + 原生窗口)
-pnpm --filter @remote/agent-compose dev:web    # 只起 vite dev server(5176),不起壳
-pnpm --filter @remote/agent-compose build      # tauri build(前端 dist + rust 可执行文件)
-
-# Rust 侧不在 pnpm workspace 里,直接用 cargo
-cargo test --manifest-path apps/agentspace-core/Cargo.toml
-cargo build --release --manifest-path apps/agentspace-cli/Cargo.toml
-```
-
-> `apps/AgentCompose` 的 tauri 命令走 `scripts/tauri.mjs`:它会把 `~/.cargo/bin` 与
-> GNU 工具链的 `self-contained` binutils 目录补进 PATH,并在启动前跑一次 2 秒探针编译,
-> 自动挑一组能用的 `rustc` 参数(本机 rustup 的 GNU 工具链 spawn 不了自带的
-> `dlltool.exe`,而 `raw-dylib` crate 需要 rustc 现场生成 import library)。探针会打印
-> 最终选中的策略。
-
-> 根目录未定义 `dev` 脚本;`turbo run dev` 会把所有带 `dev` 脚本的包排进任务图,只起渲染层请用 `pnpm --filter @remote/agent-compose dev:web`。
-
-> `dev` 类长进程任务已配置 `cache: false, persistent: true`,turbo 不会缓存也不会超时强杀。
-
----
-
-## 五、turbo 任务编排
-
-`turbo.json` 在仓库根,声明任务间的依赖关系与缓存策略。核心规则:
-
-- `build` / `typecheck` / `test` 任务:`dependsOn: ["^build"]`,意味着**某个库包变更时,下游所有依赖它的包会重跑**
-- `build` 任务:`outputs: ["dist/**"]`,产物纳入本地缓存(`.turbo/`,已 gitignore)
-- `@remote/agent-compose#build` 声明 `outputs: ["dist/**", "src-tauri/bin/**"]` 且 `cache: false`:产物含两个随包分发的可执行文件(CLI 与 MCP sidecar),每次都要真构建
-- `dev` 任务:`cache: false, persistent: true`,常驻进程不缓存
-- `format` / `commit` / `lint:spelling` 等交互或不稳定输出:`cache: false`
-
-实际效果:
-
-| 场景                     | 首次 | 二次               |
-| ------------------------ | ---- | ------------------ |
-| `pnpm build`(无任何变更) | ~12s | ~30ms `FULL TURBO` |
-
-`scripts` 里的 `build` / `typecheck` 走 `turbo run`,自动获得拓扑执行与缓存。
-
----
-
-## 六、pnpm catalog 版本集中管理
-
-`pnpm-workspace.yaml` 的 `catalog:` 块集中声明**会被多包共用的工具版本**:
-
-```yaml
-catalog:
-  typescript: ^5.9.3
-  vite: ^8.1.5
-  vue: ^3.5.40
-  vue-tsc: ^3.3.7
-  vitest: ^4.1.10
-  '@vue/test-utils': ^2.4.11
-  jsdom: ^29.1.1
-  '@vitejs/plugin-vue': ^6.0.8
-```
-
-各 `package.json` 用 `"catalog:"` 引用,不再写版本号:
-
-```json
-{
-  "devDependencies": {
-    "typescript": "catalog:",
-    "vite": "catalog:"
-  }
-}
-```
-
-升级时**改一处 `pnpm-workspace.yaml` 即可**,所有包同步。
-
----
-
-## 七、TypeScript 配置体系
-
-**两级继承**——根配置保持最通用,库包最严格,应用特化适配 Vue:
-
-```
-tsconfig.json (根:最基础的编译选项)
-   │
-   ├── packages/agent-compose-mcp/tsconfig.json
-   │
-   └── apps/AgentCompose/tsconfig.json (渲染层:Vue3 + TS 特化)
-```
-
-| 层级                                         | 关键选项                                                                                          | 用途                                 |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| **根** `tsconfig.json`                       | `target: ES2022`、`module: ESNext`、`moduleResolution: Bundler`、`isolatedModules`                | 全仓共享的最基本编译环境             |
-| **渲染层** `apps/AgentCompose/tsconfig.json` | 直接继承根配置,追加 `lib: [ES2022, DOM, DOM.Iterable]`、`jsx: preserve`、`@/*` 路径别名、`noEmit` | 适配 Vue3 SFC + 浏览器,产物交给 Vite |
-
-各 package 的 `tsconfig.json` 仅声明本包路径相关选项(`outDir` / `rootDir` / `include`),通过 `extends` 复用上层。
-
----
-
-## 八、构建工具
-
-Rust 侧两个 crate 用 cargo 构建;`apps/AgentCompose/scripts/` 下有三个脚本把
-「构建 CLI / 构建 sidecar / 启动 Tauri」串起来。
-
-### 渲染层:Vite
-
-`apps/AgentCompose/vite.config.ts`(纯 Web 调试入口):
-
-```ts
-export default defineConfig({
-  plugins: [vue()],
-  resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-  },
-})
-```
-
-`apps/AgentCompose` 的 `typecheck` 脚本 = `vue-tsc --noEmit -p tsconfig.json`。
-
----
-
-## 九、测试
-
-**各包自带 vitest 配置** —— 渲染层组件测试需要 `@vitejs/plugin-vue` 和 `@/*`
-别名,根配置里没有,所以根 `pnpm test` 只覆盖 `packages/*`:
-
-```bash
-pnpm --filter @remote/agent-compose test    # 桌面端组件测试(vitest + vue 插件 + alias)
-pnpm --filter @remote/agent-compose-mcp test # MCP sidecar 的 TS 测试
-npx vitest run packages/                    # 只跑 packages 下的
-```
-
-Rust 侧的测试用 cargo:
-
-```bash
-cargo test --manifest-path apps/agentspace-core/Cargo.toml
-cargo test --manifest-path apps/agentspace-cli/Cargo.toml
-```
-
----
-
-## 十、版本记录(changesets)
-
-`.changeset/` 目录用 changesets 记录版本变更。
-
-**当前所有包都是 private 应用,不发版** —— 机制先留着,以后有公开包再用。
-`pnpm changeset` 写一条变更记录,`changeset version` 把记录落到各包的
-`package.json` 与 `CHANGELOG.md`。
-
-版本类型:semver —— `major` 破坏性变更 / `minor` 新增向后兼容功能 / `patch` bug 修复。
-
----
-
-## 十一、ESLint 配置策略
-
-扁平配置(`eslint.config.js`,ESLint v9+ 风格),核心是**按包区分严格度**:
-
-1. **全局忽略**:`dist`、`node_modules`、`.turbo`、`coverage`、`target`(Rust 构建产物)、Figma 下载的第三方产物。
-2. **基础规则集**:`@eslint/js` recommended + `typescript-eslint` recommended + `eslint-plugin-vue` flat/recommended。
-3. **库包(`packages/**`)**—— 最严格:
-   - `no-explicit-any` / `explicit-module-boundary-types` / `no-non-null-assertion` / `consistent-type-imports` → `error`
-   - `no-unused-vars` → `error`(`_` 前缀除外)
-4. **应用(`apps/AgentCompose/**`)**—— 适度放宽:
-   - `vue/component-api-style` / `vue/define-props-declaration` → `error`
-   - `vue/multi-word-component-names` / `vue/require-default-prop` / `no-explicit-any` → `warn`
-5. **Prettier 兜底**:`eslint-config-prettier` 放在最后,关闭与 Prettier 冲突的格式化类规则。
-
----
-
-## 十二、Prettier 配置
-
-`prettier.config.js` 统一全仓风格:
-
-| 选项            | 值         | 含义                   |
-| --------------- | ---------- | ---------------------- |
-| `semi`          | `false`    | 不加分号               |
-| `singleQuote`   | `true`     | 单引号                 |
-| `printWidth`    | `100`      | 每行最大 100 字符      |
-| `tabWidth`      | `2`        | 2 空格缩进             |
-| `trailingComma` | `'all'`    | 多行尾随逗号           |
-| `endOfLine`     | `'lf'`     | 统一 LF                |
-| `arrowParens`   | `'always'` | 箭头函数参数始终带括号 |
-
-按文件类型覆盖:`*.json` 保留双引号无尾随逗号;`*.md` `proseWrap: 'preserve'` 保留换行。
-
-`.prettierignore` 排除 `node_modules`、`dist`、`pnpm-lock.yaml`。
-
----
-
-## 十三、提交规范与 Git 钩子
-
-### 约定式提交
-
-`<type>(<scope>): <subject>`,commitlint 强制校验,类型 `feat / fix / docs / style / refactor / perf / test / chore / ...`。
-
-### 交互式提交(推荐)
-
-```bash
-pnpm commit   # 启动 cz-git 中文 prompt
-```
-
-`commitlint.config.js` 预置别名,例如 `fd` → `docs: fix typos`。
-
-### 钩子链路
-
-| 钩子         | 文件                | 作用                                                |
-| ------------ | ------------------- | --------------------------------------------------- |
-| `pre-commit` | `.husky/pre-commit` | 执行 `lint-staged`,仅对暂存文件跑 ESLint + Prettier |
-| `commit-msg` | `.husky/commit-msg` | 执行 `commitlint --edit`,校验提交信息格式           |
-
-`lint-staged` 规则:代码文件先 ESLint 修复再 Prettier;配置/文档文件仅 Prettier。`prepare: husky` 在 `pnpm install` 后自动安装本地钩子。
-
----
-
-## 十四、拼写检查
-
-`pnpm lint:spelling` 通过 cspell 全仓扫描 `apps/**`、`packages/**`、根目录 `md/json/js/ts/vue` 等文件。
-
-- 已预置词典(`monorepo`、`pnpm`、`eslint`、`prettier`、`vue`)与 `@cspell/dict-lorem-ipsum`
-- 自动忽略 `node_modules`、`dist`、`build`、`pnpm-lock.yaml`、`package.json`、`tsconfig*.json`
-- 第三方生成代码误报可在 `cspell.config.js` 的 `ignorePaths` / `words` 补充
-
----
-
-## 十五、命令速查
-
-| 命令                                                                   | 作用                                            |
-| ---------------------------------------------------------------------- | ----------------------------------------------- |
-| `pnpm install`                                                         | 装依赖并初始化 husky 钩子                       |
-| `pnpm --filter @remote/agent-compose dev:web`                          | 只启动渲染层 Web dev server(5176,不起 Tauri 壳) |
-| `pnpm build`                                                           | turbo 拓扑构建所有包                            |
-| `pnpm typecheck`                                                       | turbo 类型检查                                  |
-| `pnpm --filter @remote/agent-compose test`                             | 桌面端组件测试(vitest + vue 插件)               |
-| `pnpm --filter @remote/agent-compose-mcp test`                         | MCP sidecar 的 TS 测试                          |
-| `pnpm lint` / `pnpm lint:fix`                                          | ESLint 检查 / 自动修复                          |
-| `pnpm format` / `pnpm format:check`                                    | Prettier 格式化 / 仅检查                        |
-| `pnpm lint:spelling`                                                   | cspell 拼写检查                                 |
-| `pnpm commit`                                                          | cz-git 交互式提交                               |
-| `pnpm commit:lint`                                                     | 对已有提交信息跑 commitlint                     |
-| `pnpm changeset`                                                       | 新建 changeset(版本记录用)                      |
-| `pnpm --filter <pkg> <cmd>`                                            | 在指定包执行                                    |
-| `cargo test --manifest-path apps/agentspace-core/Cargo.toml`           | core crate 的单测                               |
-| `cargo build --release --manifest-path apps/agentspace-cli/Cargo.toml` | 构建 `agentspace` 二进制                        |
-| `pnpm --filter @remote/agent-compose dev`                              | 启动 AgentSpace 桌面端(Tauri 壳 + vite 5176)    |
-| `pnpm --filter @remote/agent-compose build`                            | 构建桌面端(前端 dist + rust 可执行文件)         |
-
-> ⚠️ 不提供 `pnpm version` / `pnpm publish`——这些名被 pnpm 内置子命令占据。
-> 也不提供 `release:publish`:当前所有包都是 private,没有可发版对象。
-
----
-
-## 十六、约定
-
-1. **只用 pnpm**:`engines` + `.npmrc` 已阻断 npm/yarn。
-2. **依赖单向**:Rust 侧 `agentspace-cli` 与桌面端都只依赖 `agentspace-core`,不反向依赖;`agentspace-core` 不依赖任何其它 workspace 包。
-3. **内部依赖用 `workspace:*`**:pnpm 软链本地源码。
-4. **库包优先严格**:`packages/**` 公共 API 禁 `any`、需显式边界类型;应用层可逐步收敛。
-5. **提交走 `pnpm commit`**:避免 `commit-msg` 钩子拦截。
-6. **tsconfig 用继承**:新包通过 `extends` 复用上层配置,不复制粘贴。
-7. **版本由 changeset 管**:不要手改 `package.json` 的 `version`。
-8. **工具版本由 catalog 管**:不要在 package.json 里写版本号,统一用 `"catalog:"`。
+## 文档
+
+- [应用 README（产品介绍 + 界面截图）](./apps/AgentCompose/README.md)
+- [使用指南（按页面走一遍）](./apps/AgentCompose/docs/使用指南.md)
+- [开发指南（技术栈 / 构建 / 测试 / 规范详解）](./docs/开发指南.md)
+- [发布说明](./docs/release-notes/)
