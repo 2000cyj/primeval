@@ -1,17 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, type Component } from 'vue'
-import {
-  NButton,
-  NCheckbox,
-  NIcon,
-  NInput,
-  NModal,
-  NSpace,
-  NSwitch,
-  NTag,
-  useMessage,
-} from 'naive-ui'
-import { Plus, RefreshCw, Search } from 'lucide-vue-next'
+import { NButton, NCheckbox, NIcon, NModal, NSpace, NSwitch, NTag, useMessage } from 'naive-ui'
+import { Plus, RefreshCw } from 'lucide-vue-next'
 import { Github } from 'lucide-vue-next'
 import { Copy, Download, FolderInput, Globe, Monitor, Pencil } from 'lucide-vue-next'
 import { type Skill } from '@/data/skills'
@@ -31,6 +21,7 @@ import SkillEditModal from '@/components/SkillEditModal.vue'
 import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
 import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
+import HoverSearch from '@/components/HoverSearch.vue'
 
 const message = useMessage()
 const query = ref('')
@@ -440,19 +431,7 @@ const onDuplicated = (info: SkillInfo) => {
           从仓库添加
         </NButton>
         <FilterMenu v-model="filters" :groups="filterGroups" />
-        <NInput
-          v-model:value="query"
-          class="search"
-          size="small"
-          clearable
-          placeholder="搜索名称或描述"
-        >
-          <template #prefix>
-            <NIcon :size="14">
-              <Search />
-            </NIcon>
-          </template>
-        </NInput>
+        <HoverSearch v-model="query" placeholder="搜索名称或描述" :width="240" />
         <NButton size="small" type="primary" @click="openCreate">
           <template #icon>
             <NIcon :size="14">

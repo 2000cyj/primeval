@@ -1,6 +1,6 @@
 {
   "name": "@remote/agent-compose",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "description": "AgentSpace 桌面端：管理智能体、Skills、MCP server 与 Pi 扩展（Vue 3 + Tauri）",

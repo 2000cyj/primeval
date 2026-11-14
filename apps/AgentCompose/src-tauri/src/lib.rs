@@ -1033,6 +1033,15 @@ fn install_sidecar(app: &AppHandle) {
     }
 }
 
+/// 当前平台是不是「应用内标题栏」。
+///
+/// Windows 上我们在 setup 里关掉了系统标题栏，前端据此画最小化/最大化/关闭。
+/// macOS / Linux 保留系统标题栏，前端就不要画窗口按钮。
+#[tauri::command]
+fn custom_titlebar() -> bool {
+    cfg!(target_os = "windows")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1041,6 +1050,13 @@ pub fn run() {
             install_cli(app.handle());
             // sidecar 也装一份：CLI 靠它拉起 MCP 代理
             install_sidecar(app.handle());
+            // Windows：关掉系统标题栏，改由应用自己画标题栏。
+            // 不这么做的话，窗口上会出现「系统标题栏 + 应用顶栏」两层，
+            // 应用名重复一次，两边高度/颜色也对不齐（cc-switch 也是这么干的）。
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -1109,6 +1125,7 @@ pub fn run() {
             history::cli_op_history_remove,
             history::cli_op_history_clear,
             updater::check_app_update,
+            custom_titlebar,
         ])
         .run(tauri::generate_context!())
         .expect("error while running AgentSpace");

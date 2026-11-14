@@ -21,10 +21,10 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Search,
   Trash2,
 } from 'lucide-vue-next'
 import PiGlyph from '@/components/PiGlyph.vue'
+import HoverSearch from '@/components/HoverSearch.vue'
 import {
   extensionTemplate,
   listExtensions,
@@ -411,19 +411,12 @@ onUnmounted(() => {
         </template>
 
         <div class="market-bar">
-          <NInput
-            v-model:value="marketQuery"
-            size="small"
-            clearable
+          <HoverSearch
+            v-model="marketQuery"
             placeholder="搜索扩展名或描述"
+            :width="220"
             @keyup.enter="search(false)"
-          >
-            <template #prefix>
-              <NIcon :size="13">
-                <Search />
-              </NIcon>
-            </template>
-          </NInput>
+          />
           <NButton size="small" type="primary" :loading="marketLoading" @click="search(false)">
             搜索
           </NButton>

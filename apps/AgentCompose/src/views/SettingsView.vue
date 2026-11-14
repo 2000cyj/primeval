@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { NButton, NIcon, NInput, useMessage } from 'naive-ui'
-import { Blocks, Copy, Download, Eye, EyeOff, Search, TestTube2, X } from 'lucide-vue-next'
+import { Copy, Download, Eye, EyeOff, Search, TestTube2, X } from 'lucide-vue-next'
 import {
   getProxy,
   scanProxies,
@@ -14,6 +14,7 @@ import { getCliStatus, type CliStatus } from '@/api/cli'
 import { getVersion } from '@tauri-apps/api/app'
 import { checkAppUpdate, type AppUpdateInfo } from '@/api/updater'
 import { openExternal } from '@/api/extensions'
+import agentspaceLogo from '@/assets/agentspace-logo.png'
 
 const message = useMessage()
 
@@ -263,9 +264,7 @@ onMounted(load)
       <div class="row">
         <div class="identity">
           <span class="mark" aria-hidden="true">
-            <NIcon :size="16">
-              <Blocks />
-            </NIcon>
+            <img class="mark-logo" :src="agentspaceLogo" width="32" height="32" alt="" />
           </span>
           <span class="identity-text">
             <span class="identity-name">AgentSpace</span>
@@ -532,9 +531,16 @@ onMounted(load)
   place-items: center;
   width: 32px;
   height: 32px;
+  overflow: hidden;
   border-radius: var(--radius);
-  color: #fff;
-  background: var(--c-accent);
+}
+
+/* 应用图标：跟 exe 图标、侧边栏品牌行同一张，铺满容器 */
+.mark-logo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .identity-text {

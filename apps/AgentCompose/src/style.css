@@ -36,6 +36,9 @@
   --radius: 6px;
   --radius-sm: 4px;
 
+  /* 窗口标题栏高度：顶栏和侧边栏的品牌行共用，两边才对得齐 */
+  --h-header: 48px;
+
   color-scheme: light;
 }
 

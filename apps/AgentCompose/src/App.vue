@@ -20,11 +20,16 @@ import { useNotifications } from '@/composables/useNotifications'
 import { useCliOps } from '@/composables/useCliOps'
 import { useExtensionOps } from '@/composables/useExtensionOps'
 import { useCreatedAgents } from '@/data/createdAgents'
+import { useWindowChrome } from '@/composables/useWindowChrome'
+import { useSidebar } from '@/composables/useSidebar'
 
 const { init: initNotifications } = useNotifications()
 const { bindRetryActions } = useCliOps()
 const { bindRetryActions: bindExtensionRetry } = useExtensionOps()
 const { load: loadAgents } = useCreatedAgents()
+const { init: initWindowChrome } = useWindowChrome()
+const { init: initSidebar } = useSidebar()
+const { toggle: toggleSidebar } = useSidebar()
 
 /** 新建智能体：向导已经落盘了，这里只负责跳到智能体页 */
 const onAgentCreated = (): void => {
@@ -135,8 +140,24 @@ const onHashChange = () => {
   activeView.value = readHash()
 }
 
+/** Ctrl+B：收起 / 展开侧边栏 */
+const onKeydown = (event: KeyboardEvent) => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'b') return
+  // 输入框里打字时不抢快捷键
+  const target = event.target as HTMLElement | null
+  if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return
+  event.preventDefault()
+  toggleSidebar()
+}
+
 onMounted(async () => {
   window.addEventListener('hashchange', onHashChange)
+  // 侧边栏收起状态从 localStorage 读回来
+  initSidebar()
+  // Ctrl+B：收起 / 展开侧边栏
+  window.addEventListener('keydown', onKeydown)
+  // Windows 上关掉系统标题栏，改用应用内标题栏 —— 先问后端要不要画窗口按钮
+  void initWindowChrome()
   // 升级历史从磁盘读回来（重启后还在），再给失败的那些绑上「重试」。
   await initNotifications()
   bindRetryActions()
@@ -152,6 +173,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('hashchange', onHashChange)
+  window.removeEventListener('keydown', onKeydown)
 })
 </script>
 

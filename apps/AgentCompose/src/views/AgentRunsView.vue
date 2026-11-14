@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NButton, NIcon, NInput, NModal, NSpace, useMessage } from 'naive-ui'
-import { Plus, Search } from 'lucide-vue-next'
+import { NButton, NIcon, NModal, NSpace, useMessage } from 'naive-ui'
+import { Plus } from 'lucide-vue-next'
 import { agentIcons } from '@/data/agentIcons'
 import { useCreatedAgents, type CreatedAgent } from '@/data/createdAgents'
 import AgentRunMenu, { type AgentRunMenuAction } from '@/components/AgentRunMenu.vue'
+import HoverSearch from '@/components/HoverSearch.vue'
 
 const emit = defineEmits<{ create: []; edit: [id: string] }>()
 
@@ -77,19 +78,7 @@ const confirmDelete = async () => {
         <p class="page-sub">{{ createdAgents.length }} 个智能体，可绑定能力后交给智能体执行</p>
       </div>
       <NSpace :size="8">
-        <NInput
-          v-model:value="query"
-          class="search"
-          size="small"
-          clearable
-          placeholder="搜索名称或能力"
-        >
-          <template #prefix>
-            <NIcon :size="14">
-              <Search />
-            </NIcon>
-          </template>
-        </NInput>
+        <HoverSearch v-model="query" placeholder="搜索名称或能力" :width="240" />
         <NButton size="small" type="primary" @click="emit('create')">
           <template #icon>
             <NIcon :size="14">

@@ -3,9 +3,14 @@ import { computed, ref } from 'vue'
 import { NButton, NIcon, NPopover, NTooltip } from 'naive-ui'
 import { Bell, CircleAlert, CircleCheck, CircleHelp, Loader2, X } from 'lucide-vue-next'
 import { useNotifications } from '@/composables/useNotifications'
+import { useWindowChrome } from '@/composables/useWindowChrome'
 import HelpModal from '@/components/HelpModal.vue'
+import WindowControls from '@/components/WindowControls.vue'
 
 const { notices, runningCount, dismiss, clear } = useNotifications()
+
+/** Windows 上没有系统标题栏，窗口按钮由我们画 */
+const { enabled: customChrome } = useWindowChrome()
 
 /** 帮助弹窗开没开 */
 const helpOpen = ref(false)
@@ -28,7 +33,12 @@ const timeText = (timestamp: number): string => {
 </script>
 
 <template>
-  <header class="topbar">
+  <!--
+    顶栏同时是窗口标题栏：Windows 上系统标题栏被去掉了，
+    这一行就是标题栏，空白处可以拖动窗口（双击最大化由 Tauri 处理）。
+    按钮是 <button>，Tauri 的拖拽判定会自动放过它们。
+  -->
+  <header class="topbar" data-tauri-drag-region="deep">
     <NTooltip trigger="hover">
       <template #trigger>
         <NButton quaternary circle size="small" aria-label="帮助" @click="helpOpen = true">
@@ -110,6 +120,9 @@ const timeText = (timestamp: number): string => {
     </NTooltip>
 
     <HelpModal v-model:show="helpOpen" />
+
+    <!-- 窗口按钮贴窗口右边：跟系统标题栏一个位置 -->
+    <WindowControls v-if="customChrome" />
   </header>
 </template>
 
@@ -122,7 +135,7 @@ const timeText = (timestamp: number): string => {
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  height: 48px;
+  height: var(--h-header);
   padding: 0 16px 0 24px;
   background: var(--c-surface);
   border-bottom: 1px solid var(--c-border);
