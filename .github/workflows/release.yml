@@ -162,6 +162,13 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # ── checkout ───────────────────────────────────────────
+      #
+      # 要 checkout：发布说明要从仓库里的 docs/release-notes/<tag>.md 读。
+      # 不 checkout 的话工作目录是空的，Test-Path 永远 false，
+      # 就会退回默认模板（v1.0.2 就这么发的，正文跟手写的不是一份）。
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: agentspace-windows
@@ -280,4 +287,4 @@ jobs:
           prerelease: false
           # GitHub 自动根据 commit 生成「更新了什么」，追加在正文后面
           # （conventional commits 的 feat/fix 会被自动分类）
-          generate_release_notes: true
+          generate_release_notes: false
