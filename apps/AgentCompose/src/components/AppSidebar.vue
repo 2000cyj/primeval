@@ -103,7 +103,7 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 .brand-name {
   font-size: 13px;
   font-weight: 600;
-  color: #f3f4f6;
+  color: var(--c-rail-text-active);
 }
 
 .nav {
@@ -129,7 +129,7 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 
 .nav-item:hover {
   background: var(--c-rail-hover);
-  color: #d1d5db;
+  color: var(--c-rail-text-active);
 }
 
 .nav-item.active {
@@ -148,17 +148,17 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 
 .nav-count {
   font-size: 11px;
-  color: #6b7280;
+  color: #93938d;
 }
 
 .nav-item.active .nav-count {
-  color: #9ca3af;
+  color: #5c5c58;
 }
 
 .rail-foot {
   margin-top: auto;
   padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-top: 1px solid rgba(28, 28, 26, 0.1);
 }
 
 @media (max-width: 760px) {

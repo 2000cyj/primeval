@@ -5,33 +5,33 @@
  */
 
 :root {
-  /* 中性色阶 */
-  --c-bg: #f7f8fa;
+  /* 中性色阶：真中性灰，不复用任何框架默认色阶 */
+  --c-bg: #f7f7f5;
   --c-surface: #ffffff;
-  --c-surface-sunken: #fafafa;
-  --c-border: #e5e7eb;
-  --c-border-strong: #d1d5db;
+  --c-surface-sunken: #f5f5f3;
+  --c-border: #eaeae6;
+  --c-border-strong: #dcdcd6;
 
   /* 文本 */
-  --c-text: #111827;
-  --c-text-strong: #181b22;
-  --c-text-2: #374151;
-  --c-text-3: #6b7280;
-  --c-text-4: #9ca3af;
-  --c-text-disabled: #c3c8d1;
+  --c-text: #1c1c1a;
+  --c-text-strong: #111110;
+  --c-text-2: #5c5c58;
+  --c-text-3: #93938d;
+  --c-text-4: #b9b9b2;
+  --c-text-disabled: #d3d3ce;
 
-  /* 语义色 */
-  --c-accent: #4f46e5;
-  --c-success: #059669;
-  --c-warning: #b45309;
-  --c-danger: #dc2626;
+  /* 语义色：主色是深灰，颜色只留给状态 */
+  --c-accent: #2f2f2d;
+  --c-success: #2f7d5d;
+  --c-warning: #a16207;
+  --c-danger: #b42318;
 
-  /* 侧边栏 */
-  --c-rail: #16181d;
-  --c-rail-text: #9ca3af;
-  --c-rail-text-active: #ffffff;
-  --c-rail-hover: rgba(255, 255, 255, 0.06);
-  --c-rail-active: rgba(255, 255, 255, 0.1);
+  /* 侧边栏（浅色） */
+  --c-rail: #f3f3f1;
+  --c-rail-text: #5c5c58;
+  --c-rail-text-active: #1c1c1a;
+  --c-rail-hover: #e9e9e5;
+  --c-rail-active: #ffffff;
 
   --radius: 6px;
   --radius-sm: 4px;

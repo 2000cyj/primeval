@@ -169,7 +169,7 @@ const summary = (group: FilterGroup): string => {
   padding: 4px;
   border-radius: var(--radius-sm);
   background: var(--c-surface);
-  box-shadow: 0 6px 20px rgba(17, 24, 39, 0.12);
+  box-shadow: 0 6px 20px rgba(28, 28, 26, 0.12);
 }
 
 .filter-group {
@@ -232,7 +232,7 @@ const summary = (group: FilterGroup): string => {
   padding: 4px;
   border-radius: var(--radius-sm);
   background: var(--c-surface);
-  box-shadow: 0 6px 20px rgba(17, 24, 39, 0.12);
+  box-shadow: 0 6px 20px rgba(28, 28, 26, 0.12);
 }
 
 .filter-group:hover > .group-sub,

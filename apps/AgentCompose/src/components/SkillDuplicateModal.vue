@@ -139,10 +139,10 @@ const submit = async () => {
   margin: 12px 0 0;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  background: rgb(190 18 60 / 10%);
+  background: rgb(180 35 24 / 10%);
   font-size: 12px;
   line-height: 1.5;
-  color: #be123c;
+  color: #b42318;
 }
 
 .modal-actions {

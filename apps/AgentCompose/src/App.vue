@@ -41,38 +41,38 @@ const onAgentEdit = (id: string): void => {
 }
 
 /**
- * 主题覆盖：中性灰 + 单一靛蓝强调色，小圆角，无阴影堆砌。
- * 与 style.css 的 CSS 变量保持同一套色值。
+ * 主题覆盖：无彩石墨 —— 主色就是黑，颜色只留给状态；
+ * 小圆角、无阴影堆砌。与 style.css 的 CSS 变量保持同一套色值。
  */
 const themeOverrides: GlobalThemeOverrides = {
   common: {
-    primaryColor: '#4f46e5',
-    primaryColorHover: '#4338ca',
-    primaryColorPressed: '#3730a3',
-    primaryColorSuppl: '#4f46e5',
-    successColor: '#059669',
-    warningColor: '#b45309',
-    errorColor: '#dc2626',
-    infoColor: '#6b7280',
+    primaryColor: '#2f2f2d',
+    primaryColorHover: '#3a3a36',
+    primaryColorPressed: '#232320',
+    primaryColorSuppl: '#2f2f2d',
+    successColor: '#2f7d5d',
+    warningColor: '#a16207',
+    errorColor: '#b42318',
+    infoColor: '#5c5c58',
     borderRadius: '6px',
     borderRadiusSmall: '4px',
     fontSize: '13px',
     fontFamily:
       "Inter, system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
-    textColorBase: '#111827',
-    textColor1: '#111827',
-    textColor2: '#374151',
-    textColor3: '#6b7280',
-    placeholderColor: '#9ca3af',
+    textColorBase: '#1c1c1a',
+    textColor1: '#1c1c1a',
+    textColor2: '#5c5c58',
+    textColor3: '#93938d',
+    placeholderColor: '#93938d',
     bodyColor: '#ffffff',
     cardColor: '#ffffff',
     modalColor: '#ffffff',
     popoverColor: '#ffffff',
-    tableHeaderColor: '#fafafa',
-    borderColor: '#e5e7eb',
-    dividerColor: '#efeff1',
-    hoverColor: '#f3f4f6',
-    scrollbarColor: '#d1d5db',
+    tableHeaderColor: '#fbfbfa',
+    borderColor: '#eaeae6',
+    dividerColor: '#f0f0ee',
+    hoverColor: '#f5f5f3',
+    scrollbarColor: '#dcdcd6',
   },
   Button: {
     fontWeight: '500',
@@ -81,19 +81,19 @@ const themeOverrides: GlobalThemeOverrides = {
   },
   Input: {
     borderRadius: '6px',
-    borderHover: '1px solid #d1d5db',
-    borderFocus: '1px solid #4f46e5',
-    boxShadowFocus: '0 0 0 2px rgba(79, 70, 229, 0.12)',
+    borderHover: '1px solid #dcdcd6',
+    borderFocus: '1px solid #2f2f2d',
+    boxShadowFocus: '0 0 0 2px rgba(47, 47, 45, 0.12)',
   },
   Switch: {
-    railColorActive: '#4f46e5',
+    railColorActive: '#2f2f2d',
     knobColorActive: '#ffffff',
   },
   Tag: {
     borderRadius: '4px',
   },
   Card: {
-    borderRadius: '8px',
+    borderRadius: '6px',
     paddingMedium: '16px',
   },
 }

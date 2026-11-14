@@ -403,7 +403,7 @@ const submit = async (): Promise<void> => {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #eceef1;
+  background: #ececeb;
   font-size: 10px;
   font-weight: 600;
   color: var(--c-text-3);
@@ -415,7 +415,7 @@ const submit = async (): Promise<void> => {
 }
 
 .step.done .step-dot {
-  background: #d8f3e6;
+  background: #e7f1ec;
   color: var(--c-success);
 }
 
@@ -507,7 +507,7 @@ const submit = async (): Promise<void> => {
 
 .harness-item:has(.n-radio--checked) {
   border-left-color: var(--c-accent);
-  background: #f5f6ff;
+  background: #f5f5f3;
 }
 
 .harness-item:hover {
@@ -535,7 +535,7 @@ const submit = async (): Promise<void> => {
   gap: 10px;
   padding: 12px 14px;
   border-top: 1px solid var(--c-border);
-  background: #fff7ed;
+  background: #faf6ee;
   font-size: 12px;
   color: var(--c-text-2);
 }

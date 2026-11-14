@@ -197,14 +197,14 @@ const confirm = () => {
 }
 
 .warn-icon {
-  color: #d97745;
+  color: #a16207;
 }
 
 .upgrade-block {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  background: #fff7ed;
+  background: #faf6ee;
 }
 
 .upgrade-name {
@@ -319,16 +319,16 @@ const confirm = () => {
 }
 
 .install-version.broken {
-  color: #be123c;
+  color: #b42318;
 }
 
 .install-default {
   flex: none;
   padding: 1px 6px;
-  border: 1px solid rgb(79 70 229 / 30%);
+  border: 1px solid rgb(28 28 26 / 22%);
   border-radius: 999px;
-  background: rgb(79 70 229 / 10%);
+  background: rgb(28 28 26 / 8%);
   font-size: 10px;
-  color: #4f46e5;
+  color: #1c1c1a;
 }
 </style>

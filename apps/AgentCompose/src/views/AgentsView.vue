@@ -497,9 +497,9 @@ const toggleInstalls = async (agent: AgentInfo) => {
 .scan-error {
   margin: 0;
   padding: 10px 16px;
-  background: rgb(190 18 60 / 10%);
+  background: rgb(180 35 24 / 10%);
   font-size: 12px;
-  color: #be123c;
+  color: #b42318;
 }
 
 .table-card {
@@ -618,7 +618,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
   gap: 4px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: rgb(79 70 229 / 10%);
+  background: rgb(28 28 26 / 8%);
   font-size: 11px;
   color: var(--c-accent);
 }
@@ -722,7 +722,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
   border: none;
   background: transparent;
   font-size: 11px;
-  color: #d97745;
+  color: #a16207;
   cursor: pointer;
 }
 
@@ -739,7 +739,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
   margin: 0 16px 12px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  background: rgb(217 119 69 / 8%);
+  background: rgb(161 98 7 / 10%);
 }
 
 .panel-title {
@@ -748,7 +748,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
   gap: 8px;
   font-size: 11px;
   font-weight: 500;
-  color: #d97745;
+  color: #a16207;
 }
 
 .panel-loading {
@@ -760,7 +760,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
   margin: 10px 0 0;
   font-size: 11px;
   line-height: 1.5;
-  color: #be123c;
+  color: #b42318;
 }
 
 .modal-head {
@@ -770,14 +770,14 @@ const toggleInstalls = async (agent: AgentInfo) => {
 }
 
 .warn-icon {
-  color: #d97745;
+  color: #a16207;
 }
 
 .upgrade-block {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  background: #fff7ed;
+  background: #faf6ee;
 }
 
 .upgrade-name {
@@ -832,7 +832,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
 .cell-error {
   font-size: 11px;
   line-height: 1.5;
-  color: #be123c;
+  color: #b42318;
 }
 
 .spin {

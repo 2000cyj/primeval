@@ -195,7 +195,7 @@ watch(
 
 .item.selected {
   border-color: var(--c-accent);
-  background: #eef2ff;
+  background: #f1f1ee;
 }
 
 .check {

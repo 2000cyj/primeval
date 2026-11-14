@@ -229,7 +229,7 @@ const toggle = (value: boolean) => {
 }
 
 .state.error {
-  color: #be123c;
+  color: #b42318;
 }
 
 .identity {
@@ -326,7 +326,7 @@ const toggle = (value: boolean) => {
 }
 
 .meta-row dd.running {
-  color: #167d69;
+  color: #2f7d5d;
 }
 
 .file-list {

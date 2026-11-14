@@ -460,7 +460,7 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
     </header>
 
     <div v-if="loadError" class="load-error">
-      <NIcon :size="15" color="var(--c-warning, #b45309)">
+      <NIcon :size="15" color="var(--c-warning, #a16207)">
         <TriangleAlert />
       </NIcon>
       <span class="load-error-text">{{ loadError }}</span>

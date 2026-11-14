@@ -232,8 +232,8 @@ watch(
 }
 
 .skill-option.checked {
-  background: #faf9ff;
-  border-color: #cfcaff;
+  background: #f5f5f3;
+  border-color: #dcdcd6;
 }
 
 .skill-icon {

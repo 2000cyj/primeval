@@ -124,7 +124,7 @@ const confirmDelete = async () => {
           @keydown.enter="emit('edit', run.id)"
         >
           <div class="cell-name" role="cell">
-            <span class="cell-icon" style="background: #fbeffe" aria-hidden="true">
+            <span class="cell-icon" style="background: #f5f5f3" aria-hidden="true">
               <img class="cell-icon-img" :src="iconOf()" :alt="run.name" />
             </span>
             <span class="cell-text">

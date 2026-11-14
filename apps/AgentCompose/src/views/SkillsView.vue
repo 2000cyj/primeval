@@ -11,7 +11,7 @@ import {
   NTag,
   useMessage,
 } from 'naive-ui'
-import { Plus, RefreshCw, Search, Sparkles } from 'lucide-vue-next'
+import { Plus, RefreshCw, Search } from 'lucide-vue-next'
 import { Github } from 'lucide-vue-next'
 import { Copy, Download, FolderInput, Globe, Monitor, Pencil } from 'lucide-vue-next'
 import { type Skill } from '@/data/skills'
@@ -229,23 +229,12 @@ const duplicateTarget = ref<string | null>(null)
 /** 从 GitHub 仓库添加的弹窗 */
 const showRepo = ref(false)
 
-/** 新导入的 skill 在列表里的配色（按名字散列，保证同一个 skill 颜色稳定） */
-const palette = [
-  { iconBg: '#EEF2FF', iconColor: '#4F46E5' },
-  { iconBg: '#EFF6FF', iconColor: '#2563EB' },
-  { iconBg: '#ECFDF5', iconColor: '#047857' },
-  { iconBg: '#FFF0E8', iconColor: '#D97745' },
-  { iconBg: '#FFFBEB', iconColor: '#B45309' },
-  { iconBg: '#F1F5F9', iconColor: '#475569' },
-]
-
-const colorOf = (name: string) => {
-  let hash = 0
-  for (let i = 0; i < name.length; i += 1) {
-    hash = (hash * 31 + name.charCodeAt(i)) >>> 0
-  }
-  return palette[hash % palette.length]
-}
+/**
+ * 能力包图标底色：无彩石墨风格里颜色不承载语义，
+ * 所以统一一套中性底色，图标本身按来源区分。
+ */
+const iconBg = '#f1f1ee'
+const iconColor = '#5c5c58'
 
 /**
  * 「使用者」= 绑定了这个 skill 的智能体名称。
@@ -262,7 +251,6 @@ const agentNamesFor = (relativePath: string): string[] =>
 
 /** 把后端返回的 skill 转成列表里展示的结构 */
 const toDisplaySkill = (info: SkillInfo): Skill => {
-  const color = colorOf(info.name)
   const updated = new Date(info.updatedAtMs)
   const pad = (value: number) => String(value).padStart(2, '0')
   return {
@@ -276,9 +264,9 @@ const toDisplaySkill = (info: SkillInfo): Skill => {
     // 使用者 = 绑定了这个 skill 的智能体名称（按相对路径引用匹配）
     agentNames: agentNamesFor(info.relativePath),
     updated: `${updated.getFullYear()}-${pad(updated.getMonth() + 1)}-${pad(updated.getDate())} ${pad(updated.getHours())}:${pad(updated.getMinutes())}:${pad(updated.getSeconds())}`,
-    icon: Sparkles,
-    iconBg: color.iconBg,
-    iconColor: color.iconColor,
+    icon: sourceIcon(info.source),
+    iconBg,
+    iconColor,
     enabled: info.enabled,
     refreshable: info.refreshable,
   }
@@ -782,30 +770,14 @@ const onDuplicated = (info: SkillInfo) => {
   white-space: nowrap;
 }
 
-/* 四种来源各自一个色，一眼能分清 */
-.source-manual {
-  background: #eef2ff;
-  color: #4f46e5;
-}
-
-.source-local {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.source-url {
-  background: #ecfdf5;
-  color: #047857;
-}
-
-.source-runtime {
-  background: #fff0e8;
-  color: #d97745;
-}
-
+/* 来源标签：颜色不承载语义，靠文案区分 */
+.source-manual,
+.source-local,
+.source-url,
+.source-runtime,
 .source-duplicate {
-  background: #fffbeb;
-  color: #b45309;
+  background: #f1f1ee;
+  color: #5c5c58;
 }
 
 .cell-users {
@@ -852,9 +824,9 @@ const onDuplicated = (info: SkillInfo) => {
 .load-error {
   margin: 0;
   padding: 10px 20px;
-  background: rgb(190 18 60 / 10%);
+  background: rgb(180 35 24 / 10%);
   font-size: 12px;
-  color: #be123c;
+  color: #b42318;
 }
 
 .sr-only {
