@@ -332,7 +332,9 @@ onUnmounted(() => {
         <template #tab>
           <span class="tab-label">
             已安装
-            <span class="tab-count tnum">{{ installed.length }}</span>
+            <span class="tab-count-slot">
+              <span class="tab-count tnum">{{ installed.length }}</span>
+            </span>
           </span>
         </template>
 
@@ -401,7 +403,10 @@ onUnmounted(() => {
         <template #tab>
           <span class="tab-label">
             市场
-            <span v-if="marketTotal" class="tab-count tnum">{{ marketTotal }}</span>
+            <!-- 预留一个位置：总数后到时 tab 宽度不变，选中的 tab 不会跟着挪位 -->
+            <span class="tab-count-slot">
+              <span v-if="marketTotal" class="tab-count tnum">{{ marketTotal }}</span>
+            </span>
           </span>
         </template>
 
@@ -426,73 +431,88 @@ onUnmounted(() => {
 
         <p v-if="marketError" class="error-text" role="alert">{{ marketError }}</p>
 
-        <NSpin :show="marketLoading">
-          <div v-if="packages.length" class="pkg-grid">
-            <article v-for="item in packages" :key="item.name" class="card pkg">
-              <header class="pkg-head">
-                <span class="pkg-name">{{ item.name }}</span>
-                <span class="pkg-version tnum">v{{ item.version }}</span>
-              </header>
-              <p class="pkg-desc">{{ item.description || '（没有描述）' }}</p>
-              <footer class="pkg-foot">
-                <span class="pkg-meta tnum">
-                  {{ item.weeklyDownloads ? `${item.weeklyDownloads} 次/周` : '' }}
-                  <template v-if="item.author"> · {{ item.author }}</template>
-                </span>
-                <span class="pkg-actions">
-                  <button
-                    v-if="item.repository"
-                    type="button"
-                    class="pkg-link"
-                    :title="`${item.name} 的仓库`"
-                    :aria-label="`${item.name} 的仓库（用系统浏览器打开）`"
-                    @click="openRepo(item)"
-                  >
-                    <NIcon :size="12">
-                      <ArrowUpRight />
-                    </NIcon>
-                  </button>
-                  <NButton v-if="isInstalled(item.name)" size="tiny" secondary disabled>
-                    已安装
-                  </NButton>
-                  <NButton
-                    v-else
-                    size="tiny"
-                    type="primary"
-                    :loading="ops.isBusy(item.name)"
-                    @click="install(item)"
-                  >
-                    <template #icon>
+        <NSpin :show="marketLoading && packages.length > 0">
+          <div class="market-body">
+            <div v-if="packages.length" class="pkg-grid">
+              <article v-for="item in packages" :key="item.name" class="card pkg">
+                <header class="pkg-head">
+                  <span class="pkg-name">{{ item.name }}</span>
+                  <span class="pkg-version tnum">v{{ item.version }}</span>
+                </header>
+                <p class="pkg-desc">{{ item.description || '（没有描述）' }}</p>
+                <footer class="pkg-foot">
+                  <span class="pkg-meta tnum">
+                    {{ item.weeklyDownloads ? `${item.weeklyDownloads} 次/周` : '' }}
+                    <template v-if="item.author"> · {{ item.author }}</template>
+                  </span>
+                  <span class="pkg-actions">
+                    <button
+                      v-if="item.repository"
+                      type="button"
+                      class="pkg-link"
+                      :title="`${item.name} 的仓库`"
+                      :aria-label="`${item.name} 的仓库（用系统浏览器打开）`"
+                      @click="openRepo(item)"
+                    >
                       <NIcon :size="12">
-                        <Download />
+                        <ArrowUpRight />
                       </NIcon>
-                    </template>
-                    {{ ops.busyLabel(item.name) || '安装' }}
-                  </NButton>
-                </span>
-              </footer>
-            </article>
-          </div>
-          <p v-else-if="!marketLoading" class="empty">
-            搜点什么 —— 市场的数据源是 npm 上的
-            <code class="mono">pi-package</code>
-            标签。
-          </p>
+                    </button>
+                    <NButton v-if="isInstalled(item.name)" size="tiny" secondary disabled>
+                      已安装
+                    </NButton>
+                    <NButton
+                      v-else
+                      size="tiny"
+                      type="primary"
+                      :loading="ops.isBusy(item.name)"
+                      @click="install(item)"
+                    >
+                      <template #icon>
+                        <NIcon :size="12">
+                          <Download />
+                        </NIcon>
+                      </template>
+                      {{ ops.busyLabel(item.name) || '安装' }}
+                    </NButton>
+                  </span>
+                </footer>
+              </article>
+            </div>
+            <!-- 首次搜索还没拿到结果：用骨架占位，别让空态塌陷把下面的内容顶上来 -->
+            <div v-else-if="marketLoading" class="pkg-grid" aria-hidden="true">
+              <div v-for="n in 6" :key="n" class="card pkg pkg-skeleton">
+                <span class="sk sk-title"></span>
+                <span class="sk sk-line"></span>
+                <span class="sk sk-line sk-short"></span>
+                <span class="sk sk-foot"></span>
+              </div>
+            </div>
 
-          <!-- 翻页：已加载多少 / 总共多少 -->
-          <div v-if="packages.length" class="pager">
-            <span class="pager-text tnum">
-              已加载 {{ packages.length }} / {{ marketTotal }} 个
-            </span>
-            <NButton
-              v-if="hasMore"
-              size="small"
-              secondary
-              :loading="marketLoading"
-              @click="search(true)"
-            >
-              加载更多
-            </NButton>
+            <p v-else class="empty">
+              <template v-if="marketQuery"> 没找到和「{{ marketQuery }}」匹配的扩展。 </template>
+              <template v-else>
+                搜点什么 —— 市场的数据源是 npm 上的
+                <code class="mono">pi-package</code>
+                标签。
+              </template>
+            </p>
+
+            <!-- 翻页：已加载多少 / 总共多少 -->
+            <div v-if="packages.length" class="pager">
+              <span class="pager-text tnum">
+                已加载 {{ packages.length }} / {{ marketTotal }} 个
+              </span>
+              <NButton
+                v-if="hasMore"
+                size="small"
+                secondary
+                :loading="marketLoading"
+                @click="search(true)"
+              >
+                加载更多
+              </NButton>
+            </div>
           </div>
         </NSpin>
       </NTabPane>
@@ -637,6 +657,12 @@ onUnmounted(() => {
   color: var(--c-text-3);
 }
 
+/* 数字还没来的时候先占好位置，tab 宽度保持不变 */
+.tab-count-slot {
+  display: inline-block;
+  width: 36px;
+}
+
 .card {
   background: var(--c-surface);
   border: 1px solid var(--c-border);
@@ -746,6 +772,62 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
+}
+
+/* 市场区固定一个最小高度：搜索中 / 空态时下面的内容不会被顶上来 */
+.market-body {
+  min-height: 320px;
+}
+
+/* 首次搜索的骨架占位：形状跟真实卡片一致，页面不会跳 */
+.pkg-skeleton {
+  min-height: 128px;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.sk {
+  display: block;
+  border-radius: 3px;
+  background: #f1f1ee;
+  animation: sk-pulse 1.6s ease-in-out infinite;
+}
+
+.sk-title {
+  width: 42%;
+  height: 12px;
+}
+
+.sk-line {
+  width: 88%;
+  height: 9px;
+}
+
+.sk-short {
+  width: 58%;
+}
+
+.sk-foot {
+  width: 100%;
+  height: 18px;
+  margin-top: auto;
+}
+
+@keyframes sk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk {
+    animation: none;
+  }
 }
 
 .pkg {
