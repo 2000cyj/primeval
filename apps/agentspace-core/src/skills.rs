@@ -1667,6 +1667,12 @@ fn patch_frontmatter(fm_text: &str, name: &str, description: Option<&str>) -> St
     if let Some(value) = description {
         let value = value.trim();
         if !value.is_empty() && !text.lines().any(|line| line.starts_with("description:")) {
+            // 必须先补换行 ——
+            // 直接 push_str 会拼成 `name: xxxdescription: yyy`，
+            // YAML 解析直接失败，整个 frontmatter 都读不出来（描述和正文全丢）。
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
             text.push_str(&format!("description: {}\n", yaml_scalar(value)));
         }
     }
@@ -2028,6 +2034,57 @@ fn name_from_url(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_writes_description_without_breaking_frontmatter() {
+        // 手动创建的 skill：frontmatter 里只有 name，没有 description
+        let dir = std::env::temp_dir().join(format!(
+            "agentspace-skill-update-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join(".agent-compose")).unwrap();
+        let paths = Paths::new(dir.clone());
+
+        skills_create_manual(&paths, "测试skill".into(), "".into()).unwrap();
+
+        // 改描述 + 改正文
+        let updated = skills_update(
+            &paths,
+            "测试skill".into(),
+            None,
+            Some("这是我的描述".into()),
+            Some("# 正文内容\n".into()),
+        )
+        .unwrap();
+        assert_eq!(updated.description, "这是我的描述");
+
+        // 落盘的 frontmatter 必须是两行 —— 不能拼成 `name: xdescription: y`
+        // （拼在一起 YAML 解析失败，整个 frontmatter 都读不出来）
+        let raw = std::fs::read_to_string(
+            paths.skills_root().join("测试skill").join("SKILL.md"),
+        )
+        .unwrap();
+        let (frontmatter, body) = parse_frontmatter(&raw);
+        assert!(
+            frontmatter.is_some(),
+            "frontmatter 应该能解析，实际内容：{raw:?}"
+        );
+        assert_eq!(fm_get(&frontmatter, "description"), "这是我的描述");
+        assert_eq!(body.trim(), "# 正文内容");
+
+        // 列表和详情读到的也得一致
+        let listed = skills_list(&paths).unwrap();
+        assert_eq!(listed[0].description, "这是我的描述");
+        let detail = skills_read(&paths, "测试skill".into()).unwrap();
+        assert_eq!(detail.description, "这是我的描述");
+        assert!(!detail.content.contains("description:"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn parses_frontmatter_scalars() {
