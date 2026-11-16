@@ -178,14 +178,32 @@ html {
  *
  * top 必须是顶栏高度：顶栏自己也是 sticky 的（top: 0），标题要排在它下面，
  * 不然会被盖住一半。
- *
- * 只要背景色，不要用 box-shadow 往下延伸 —— 吸顶元素的内容不会跑到它上面
- * （z-index 已经挡住了），延伸反而会盖住紧跟在标题下面的那块
- * （MCP 页的 tab 行就是这么被切掉一半的）。
  */
 .page-head {
   position: sticky;
   top: var(--h-header);
   z-index: 5;
   background: var(--c-bg);
+}
+
+/*
+ * 标题下方的渐隐。
+ *
+ * 吸顶必然有个代价：内容往上滚时从标题底下经过，会被硬切一刀
+ * （MCP 页那组客户端配置按钮就是这么被切掉一半的）—— 看着像 UI 坏了。
+ *
+ * 加一段从背景色到透明的渐变，内容滚进去是「淡出」而不是「被砍」，
+ * 这是 GitHub / Notion 那些 sticky header 的标准做法。
+ *
+ * 用 ::after 而不是 box-shadow：shadow 是纯色硬边，遮不出渐变。
+ */
+.page-head::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 16px;
+  background: linear-gradient(to bottom, var(--c-bg), transparent);
+  pointer-events: none;
 }
