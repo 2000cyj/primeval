@@ -90,7 +90,7 @@ const save = async () => {
     preset="card"
     class="edit-modal"
     :style="{ width: '640px', maxHeight: 'calc(100vh - 64px)' }"
-    content-style="max-height: calc(100vh - 190px); overflow-y: auto"
+    content-style="max-height: calc(100vh - 190px); overflow-y: auto; scrollbar-gutter: stable vertical"
     :bordered="false"
     :mask-closable="!saving"
     @update:show="(show: boolean) => !show && emit('close')"

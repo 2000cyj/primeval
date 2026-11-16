@@ -120,13 +120,17 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 
 <style scoped>
 .rail {
-  position: sticky;
-  top: 0;
   display: flex;
   flex-direction: column;
   flex: none;
   width: 208px;
   height: 100vh;
+  /* 窗口不再整体滚了 —— 侧边栏自己滚，
+     不然项目一多就会被 .shell 的 overflow: hidden 裁掉 */
+  overflow-y: auto;
+  /* 只给垂直轴留位置：写 stable 的话水平方向也空出 8px，
+     看着就是一条多余的横滑轮 */
+  scrollbar-gutter: stable vertical;
   padding: 0 8px 12px;
   background: var(--c-rail);
 }

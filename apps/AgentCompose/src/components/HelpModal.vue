@@ -224,6 +224,8 @@ const hitCount = computed(() => {
   max-height: min(56vh, 480px);
   overflow-y: auto;
   overflow-x: hidden;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .groups {

@@ -435,6 +435,8 @@ const submit = async (): Promise<void> => {
   min-height: 0;
   overflow-y: auto;
   padding: 20px 24px 28px;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .body-head {

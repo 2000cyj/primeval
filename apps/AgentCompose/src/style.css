@@ -50,6 +50,10 @@ html,
 body,
 #app {
   height: 100%;
+  /* 窗口本身不滚 —— 滚动交给内容容器（.content）。
+     不锁住的话，body 会多出一条自己的滚动条，
+     屏幕上就是「多条滑轮」。 */
+  overflow: hidden;
 }
 
 body {
@@ -110,3 +114,60 @@ a {
   white-space: nowrap;
   border: 0;
 }
+
+/*
+ * 滚动条：细一点。
+ *
+ * 不用 Naive UI 的 NScrollbar —— 它要固定 height 才会滚，给 max-height 的话
+ * 内容直接溢出（HelpModal 的注释里踩过这个坑）。所以滚动区一律用原生
+ * overflow，代价就是滚动条是系统默认的那么宽（Windows 上 17px）。
+ *
+ * 这里用 ::-webkit-scrollbar 把它改窄 —— Chromium 内核（WebView2）认这个。
+ * 轨道透明，滑块用中性灰，hover 才加深 —— 跟整体的石墨色一致。
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-border-strong);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-text-4);
+}
+
+/* 横向滚动条（比如表格宽了）用同一条规则 */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * 给滚动条留固定位置。
+ *
+ * 不留的话，滚动条出现/消失时内容宽度会跳一下（平移 8px）——
+ * 滚动过程中最明显。
+ *
+ * 两个讲究：
+ *
+ * 1. 只给**真正会滚**的元素加，不能用 `*` 全局加 ——
+ *    overflow: hidden 的元素也是滚动容器（比如侧边栏那个裁图标的圆角框），
+ *    全局加会让它内部空出 8px —— 图标就被压扁了。
+ *
+ * 2. 写 `stable vertical` 而不是 `stable` ——
+ *    `stable` 对两个轴都留位置，水平方向也空出 8px，
+ *    看着就是一条多余的横滑轮。
+ *
+ * 窗口本身不滚（滚动交给 .content），所以 html 上不用加。
+ */

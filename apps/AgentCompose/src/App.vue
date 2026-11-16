@@ -186,27 +186,34 @@ onBeforeUnmount(() => {
 
         <main class="main">
           <AppTopbar />
-          <SkillsView v-if="activeView === 'skills'" />
-          <McpView v-else-if="activeView === 'mcp'" />
-          <AgentsView v-else-if="activeView === 'agents'" />
-          <ExtensionsView v-else-if="activeView === 'extensions'" />
-          <AgentRunsView
-            v-else-if="activeView === 'agentRuns'"
-            @create="navigate('agentCreate')"
-            @edit="onAgentEdit"
-          />
-          <AgentCreateWizard
-            v-else-if="activeView === 'agentCreate'"
-            @cancel="navigateBack()"
-            @done="onAgentCreated"
-          />
-          <AgentEditView
-            v-else-if="activeView === 'agentEdit'"
-            :agent-id="editingAgentId"
-            @cancel="navigateBack('agentRuns')"
-            @saved="navigate('agentRuns')"
-          />
-          <SettingsView v-else />
+          <!--
+            页面内容自己滚，不滚整个窗口。
+            整页滚的话滚动条会贯穿整个窗口高度 —— 顶栏那 48px 里也有一条，
+            看着像「滑轮顶到头部」。把滚动容器放到顶栏下面就没这问题。
+          -->
+          <div class="content">
+            <SkillsView v-if="activeView === 'skills'" />
+            <McpView v-else-if="activeView === 'mcp'" />
+            <AgentsView v-else-if="activeView === 'agents'" />
+            <ExtensionsView v-else-if="activeView === 'extensions'" />
+            <AgentRunsView
+              v-else-if="activeView === 'agentRuns'"
+              @create="navigate('agentCreate')"
+              @edit="onAgentEdit"
+            />
+            <AgentCreateWizard
+              v-else-if="activeView === 'agentCreate'"
+              @cancel="navigateBack()"
+              @done="onAgentCreated"
+            />
+            <AgentEditView
+              v-else-if="activeView === 'agentEdit'"
+              :agent-id="editingAgentId"
+              @cancel="navigateBack('agentRuns')"
+              @saved="navigate('agentRuns')"
+            />
+            <SettingsView v-else />
+          </div>
         </main>
       </div>
     </NMessageProvider>
@@ -214,14 +221,37 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/*
+ * 窗口高度固定，内容区自己滚。
+ *
+ * 整页滚（body 滚动）的话，滚动条贯穿整个窗口 —— 顶栏那 48px 里也有一条，
+ * 看着像滑轮顶到了头部。所以这里把滚动交给 .content，窗口本身不动。
+ */
 .shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .main {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
+  height: 100vh;
+  overflow: hidden;
   background: var(--c-bg);
+}
+
+/* 页面内容的滚动容器 */
+.content {
+  flex: 1;
+  /* flex 子项默认 min-height: auto —— 不置 0 的话内容会把容器撑高，
+     容器自己就不滚了 */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 </style>

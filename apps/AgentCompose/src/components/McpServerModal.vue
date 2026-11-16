@@ -518,6 +518,8 @@ const submit = (): void => {
 .form-scroll {
   max-height: calc(100vh - 210px);
   overflow-y: auto;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .form {

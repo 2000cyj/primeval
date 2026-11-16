@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, NProgress, useMessage } from 'naive-ui'
-import { Copy, Download, Eye, EyeOff, Search, TestTube2, X } from 'lucide-vue-next'
+import { NButton, NIcon, NInput, NProgress, NTooltip, useMessage } from 'naive-ui'
+import { Copy, Download, Eye, EyeOff, Info, Search, TestTube2, Upload, X } from 'lucide-vue-next'
 import {
   getProxy,
   scanProxies,
@@ -23,6 +23,8 @@ import { openExternal } from '@/api/extensions'
 import { formatDateTime } from '@/utils/datetime'
 import agentspaceLogo from '@/assets/agentspace-logo.png'
 import MarkdownView from '@/components/MarkdownView.vue'
+import BackupExportModal from '@/components/BackupExportModal.vue'
+import BackupImportModal from '@/components/BackupImportModal.vue'
 
 const message = useMessage()
 
@@ -140,6 +142,13 @@ const startUpdate = async (): Promise<void> => {
     unlistenProgress = undefined
   }
 }
+
+// ── 数据管理 ──
+
+/** 导出弹窗是否打开 */
+const exportModalOpen = ref(false)
+/** 导入弹窗是否打开 */
+const importModalOpen = ref(false)
 
 // ── 全局出站代理 ──
 
@@ -539,6 +548,47 @@ onMounted(load)
         </div>
       </div>
     </section>
+
+    <section class="section">
+      <header class="section-head">
+        <h2 class="section-title">
+          数据管理
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NIcon :size="13" class="section-info">
+                <Info />
+              </NIcon>
+            </template>
+            导入和导出本地配置数据
+          </NTooltip>
+        </h2>
+        <p class="section-sub">导入和导出智能体、Skills、MCP server 与 Pi 扩展</p>
+      </header>
+
+      <div class="card">
+        <div class="row data-row">
+          <NButton size="small" @click="exportModalOpen = true">
+            <template #icon>
+              <NIcon :size="14">
+                <Download />
+              </NIcon>
+            </template>
+            导出数据
+          </NButton>
+          <NButton size="small" @click="importModalOpen = true">
+            <template #icon>
+              <NIcon :size="14">
+                <Upload />
+              </NIcon>
+            </template>
+            导入数据
+          </NButton>
+        </div>
+      </div>
+    </section>
+
+    <BackupExportModal :show="exportModalOpen" @close="exportModalOpen = false" />
+    <BackupImportModal :show="importModalOpen" @close="importModalOpen = false" />
   </section>
 </template>
 
@@ -704,6 +754,20 @@ onMounted(load)
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--c-text-3);
+}
+
+/* 标题旁的说明图标 */
+.section-info {
+  margin-left: 4px;
+  color: var(--c-text-3);
+  cursor: help;
+  vertical-align: -2px;
+}
+
+/* 数据管理卡片里的两个按钮 */
+.data-row {
+  justify-content: flex-start;
+  gap: 10px;
 }
 
 .field {

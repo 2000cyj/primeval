@@ -160,7 +160,7 @@ watch(
     preset="card"
     class="repo-modal"
     :style="{ width: modalWidth, maxHeight: 'calc(100vh - 64px)' }"
-    content-style="max-height: calc(100vh - 170px); overflow-y: auto"
+    content-style="max-height: calc(100vh - 170px); overflow-y: auto; scrollbar-gutter: stable vertical"
     :title="current ? `从 ${current.sourceUrl} 添加` : '从 GitHub 仓库添加'"
     :bordered="false"
     @update:show="(value: boolean) => emit('update:show', value)"

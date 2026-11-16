@@ -15,6 +15,7 @@
 //! **不依赖 Tauri** —— 桌面端和 CLI 都要能引它，Tauri 只能待在桌面端那一侧。
 
 pub mod agent;
+pub mod backup;
 pub mod bridge;
 pub mod extensions;
 /// git 源的解析与克隆 —— 只在 crate 内用（github.rs 调它）。

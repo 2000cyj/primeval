@@ -213,6 +213,8 @@ watch(
   padding: 0 2px 0 0;
   overflow-y: auto;
   list-style: none;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .skill-option {

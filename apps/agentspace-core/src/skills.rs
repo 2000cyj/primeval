@@ -36,7 +36,10 @@ const MAX_SKILL_NAME_CHARS: usize = 64;
 const MAX_SKILL_DESCRIPTION_CHARS: usize = 1024;
 
 /// skill 目录里的 sidecar：记录来源等信息，不影响 SKILL.md。
-const SOURCE_FILE: &str = ".agent-compose.json";
+pub const SOURCE_FILE: &str = ".agent-compose.json";
+
+/// sidecar 文件名（给同 crate 的其它模块用）。
+pub(crate) const SOURCE_FILE_PUBLIC: &str = SOURCE_FILE;
 
 /// Skill 仓库里的一个 skill。
 #[derive(Serialize, Clone, Debug)]
@@ -552,6 +555,23 @@ struct ZipEntry {
     data: Vec<u8>,
 }
 
+/// zip 条目（给同 crate 的其它模块用 —— 数据管理要读导出包）。
+pub(crate) struct ZipEntryPublic {
+    pub name: String,
+    pub data: Vec<u8>,
+}
+
+/// 读 zip（给同 crate 的其它模块用）。
+pub(crate) fn read_zip_public(path: &Path) -> Result<Vec<ZipEntryPublic>, String> {
+    Ok(read_zip(path)?
+        .into_iter()
+        .map(|entry| ZipEntryPublic {
+            name: entry.name,
+            data: entry.data,
+        })
+        .collect())
+}
+
 fn read_u16(data: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([data[offset], data[offset + 1]])
 }
@@ -708,6 +728,11 @@ fn set_origin(paths: &Paths, name: &str, origin: Option<serde_json::Value>) {
 /// 读来源出处。
 fn read_origin(dir: &Path) -> Option<serde_json::Value> {
     read_meta(dir).get("origin").cloned()
+}
+
+/// 读来源出处（给同 crate 的其它模块用 —— 数据管理要判「远程还是本地」）。
+pub(crate) fn read_origin_public(dir: &Path) -> Option<serde_json::Value> {
+    read_origin(dir)
 }
 
 /// 该 skill 能不能「从来源更新」。

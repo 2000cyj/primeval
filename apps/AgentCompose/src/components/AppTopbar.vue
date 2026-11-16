@@ -127,14 +127,19 @@ const timeText = (timestamp: number): string => {
 </template>
 
 <style scoped>
+/*
+ * 顶栏：不在滚动容器里（在 .content 上面），所以它天然固定 ——
+ * 不需要 sticky。
+ *
+ * 之前是 sticky + 整页滚动，滚动条会穿过顶栏那 48px，看着像滑轮顶到了头部。
+ * 现在滚动交给 .content，滚动条只在顶栏下面。
+ */
 .topbar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
+  flex: none;
   height: var(--h-header);
   padding: 0 16px 0 24px;
   background: var(--c-surface);
@@ -202,6 +207,8 @@ const timeText = (timestamp: number): string => {
   padding: 0;
   overflow-y: auto;
   list-style: none;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .panel-item {

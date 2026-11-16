@@ -608,7 +608,8 @@ const onDuplicated = (info: SkillInfo) => {
   /* 整页不滚动：页面头部与表头固定，只有表格体滚动 */
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 48px);
+  /* 高度交给滚动容器（.content）决定 —— 它已经限高在视口减顶栏了 */
+  height: 100%;
   padding: 20px 24px 24px;
   overflow: hidden;
 }
@@ -674,6 +675,8 @@ const onDuplicated = (info: SkillInfo) => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .skill-row {

@@ -400,7 +400,7 @@ watch(
     preset="card"
     class="create-modal"
     :style="{ width: modalWidth, maxHeight: 'calc(100vh - 64px)' }"
-    content-style="max-height: calc(100vh - 170px); overflow-y: auto"
+    content-style="max-height: calc(100vh - 170px); overflow-y: auto; scrollbar-gutter: stable vertical"
     :bordered="false"
     :mask-closable="!busy"
     @update:show="(show: boolean) => !show && emit('close')"
@@ -953,6 +953,8 @@ watch(
   padding: 0;
   overflow-y: auto;
   list-style: none;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .repo-item {
@@ -1034,6 +1036,8 @@ watch(
   gap: 6px;
   max-height: 300px;
   overflow-y: auto;
+  /* 滚动条留固定位置：出现/消失时内容宽度不跳 */
+  scrollbar-gutter: stable vertical;
 }
 
 .runtime-item {

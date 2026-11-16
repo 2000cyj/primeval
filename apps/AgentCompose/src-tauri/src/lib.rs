@@ -11,6 +11,7 @@ mod extensions;
 mod github;
 mod history;
 mod paths;
+mod backup;
 mod proxy;
 mod skills;
 mod updater;
@@ -1129,6 +1130,12 @@ pub fn run() {
             history::cli_op_history_clear,
             updater::check_app_update,
             updater::install_update_and_restart,
+            backup::backup_inventory,
+            backup::backup_export,
+            backup::backup_inspect,
+            backup::backup_import,
+            backup::backup_import_status,
+            backup::backup_pick_import_zip,
             custom_titlebar,
         ])
         .run(tauri::generate_context!())
