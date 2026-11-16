@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NTooltip } from 'naive-ui'
-import { Blocks, ChevronLeft, ChevronRight, Cpu, Network, Server, Settings } from 'lucide-vue-next'
+import {
+  Blocks,
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Cpu,
+  Network,
+  Server,
+  Settings,
+} from 'lucide-vue-next'
 import { agentScan } from '@/api/agents'
 import { useSidebar } from '@/composables/useSidebar'
 import PiGlyph from '@/components/PiGlyph.vue'
@@ -15,6 +24,7 @@ export type ViewKey =
   | 'agentRuns'
   | 'agentCreate'
   | 'agentEdit'
+  | 'wiki'
   | 'settings'
 
 defineProps<{ active: ViewKey }>()
@@ -34,6 +44,7 @@ const navItems = [
   { key: 'agents' as const, label: 'Agents', icon: Network },
   { key: 'extensions' as const, label: 'Pi 扩展', icon: PiGlyph },
   { key: 'agentRuns' as const, label: '智能体', icon: Cpu },
+  { key: 'wiki' as const, label: 'Wiki', icon: BookOpen },
 ]
 
 /** Agents 的计数：本机真实装好的 CLI 数量（探测结果在模块级共享） */

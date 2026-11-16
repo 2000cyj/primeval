@@ -16,6 +16,7 @@ import AgentRunsView from '@/views/AgentRunsView.vue'
 import AgentCreateWizard from '@/views/AgentCreateWizard.vue'
 import AgentEditView from '@/views/AgentEditView.vue'
 import SettingsView from '@/views/SettingsView.vue'
+import WikiView from '@/views/WikiView.vue'
 import { useNotifications } from '@/composables/useNotifications'
 import { useCliOps } from '@/composables/useCliOps'
 import { useExtensionOps } from '@/composables/useExtensionOps'
@@ -111,6 +112,7 @@ const views: ViewKey[] = [
   'agentRuns',
   'agentCreate',
   'agentEdit',
+  'wiki',
   'settings',
 ]
 
@@ -212,6 +214,7 @@ onBeforeUnmount(() => {
               @cancel="navigateBack('agentRuns')"
               @saved="navigate('agentRuns')"
             />
+            <WikiView v-else-if="activeView === 'wiki'" />
             <SettingsView v-else />
           </div>
         </main>
