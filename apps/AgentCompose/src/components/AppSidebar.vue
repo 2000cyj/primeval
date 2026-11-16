@@ -23,6 +23,11 @@ const emit = defineEmits<{ navigate: [key: ViewKey] }>()
 /** 侧边栏收起 / 展开 */
 const { collapsed, toggle } = useSidebar()
 
+/** 折叠按钮的左边距 —— 跟侧栏宽度对齐（展开 208 / 收起 56）。 */
+const toggleStyle = computed(() => ({
+  '--toggle-left': `${collapsed.value ? 56 : 208}px`,
+}))
+
 const navItems = [
   { key: 'skills' as const, label: 'Skills', icon: Blocks },
   { key: 'mcp' as const, label: 'MCP', icon: Server },
@@ -47,26 +52,6 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
       </span>
       <span v-if="!collapsed" class="brand-name">AgentSpace</span>
     </div>
-
-    <!--
-      收起 / 展开：圆形按钮，骑在侧边栏右边缝的中间（一半在侧栏内、一半在主区）。
-      放在品牌行里会被 logo 挤到边上，放在中间更好按。
-    -->
-    <NTooltip trigger="hover" placement="right" :disabled="!collapsed">
-      <template #trigger>
-        <button
-          type="button"
-          class="rail-toggle"
-          :aria-label="collapsed ? '展开侧边栏' : '收起侧边栏'"
-          :aria-expanded="!collapsed"
-          @click="toggle"
-        >
-          <ChevronRight v-if="collapsed" :size="13" />
-          <ChevronLeft v-else :size="13" />
-        </button>
-      </template>
-      {{ collapsed ? '展开侧边栏' : '收起侧边栏' }}
-    </NTooltip>
 
     <nav class="nav" aria-label="主导航">
       <NTooltip
@@ -116,6 +101,34 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
       </NTooltip>
     </div>
   </aside>
+
+  <!--
+    收起 / 展开：圆形按钮，骑在侧边栏右边缝的中间（一半在侧栏内、一半在主区）。
+    放在品牌行里会被 logo 挤到边上，放在中间更好按。
+
+    放在 .rail **外面**：.rail 是滚动容器（overflow: auto），
+    而 overflow 会裁剪溢出的内容 —— 按钮骑在缝上（right: -11px），
+    放在里面会被切掉一半。
+
+    定位靠 .shell（position: relative），左边距用 --toggle-left ——
+    值跟侧栏宽度一致（展开 208 / 收起 56）。
+  -->
+  <NTooltip trigger="hover" placement="right" :disabled="!collapsed">
+    <template #trigger>
+      <button
+        type="button"
+        class="rail-toggle"
+        :style="toggleStyle"
+        :aria-label="collapsed ? '展开侧边栏' : '收起侧边栏'"
+        :aria-expanded="!collapsed"
+        @click="toggle"
+      >
+        <ChevronRight v-if="collapsed" :size="13" />
+        <ChevronLeft v-else :size="13" />
+      </button>
+    </template>
+    {{ collapsed ? '展开侧边栏' : '收起侧边栏' }}
+  </NTooltip>
 </template>
 
 <style scoped>
@@ -130,8 +143,11 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
   width: 208px;
   height: 100vh;
   /* 窗口不再整体滚了 —— 侧边栏自己滚，
-     不然项目一多就会被 .shell 的 overflow: hidden 裁掉 */
+     不然项目一多就会被 .shell 的 overflow: hidden 裁掉。
+     overflow-x 必须显式写 hidden：规范里 overflow-y: auto 会把
+     overflow-x: visible 变成 auto，横向溢出会多出一条横滑轮。 */
   overflow-y: auto;
+  overflow-x: hidden;
   /* 只给垂直轴留位置：写 stable 的话水平方向也空出 8px，
      看着就是一条多余的横滑轮 */
   scrollbar-gutter: stable vertical;
@@ -237,10 +253,13 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 /*
  * 收起 / 展开按钮：圆形，骑在侧边栏右边缝的中间。
  * 一半在侧栏内、一半在主区（在主区那半是悬在内容上方的，所以要 z-index）。
+ *
+ * 包含块是 .shell（position: relative）—— 不能挂在 .rail 上：
+ * .rail 是滚动容器，overflow 会把骑在缝上的这半圆裁掉。
  */
 .rail-toggle {
   position: absolute;
-  right: -11px;
+  left: calc(var(--toggle-left) - 11px);
   top: 50%;
   transform: translateY(-50%);
   z-index: 6;

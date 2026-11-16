@@ -231,6 +231,9 @@ onBeforeUnmount(() => {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  /* 侧边栏那个折叠圆钮靠它当包含块（按钮骑在侧栏右缝上，
+     不能再挂在 .rail 上 —— .rail 是滚动容器，会把它裁掉） */
+  position: relative;
 }
 
 .main {
