@@ -120,6 +120,10 @@ const detectedCount = computed(() => agentScan.value.filter((agent) => agent.ins
 
 <style scoped>
 .rail {
+  /* relative 不是为了定位自身，而是给里面的「收起/展开」圆钮当包含块 ——
+     那个按钮是 position: absolute + right: -11px（骑在侧栏右缝上）。
+     没有 positioned 祖先的话，包含块会退到视口，按钮直接飞到窗口最右边。 */
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: none;
