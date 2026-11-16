@@ -17,11 +17,19 @@ import {
 import SkillRowMenu, { type SkillMenuAction } from '@/components/SkillRowMenu.vue'
 import SkillDetailDrawer from '@/components/SkillDetailDrawer.vue'
 import SkillCreateModal, { type CreateMethod } from '@/components/SkillCreateModal.vue'
-import SkillEditorModal from '@/components/SkillEditorModal.vue'
 import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
 import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
+
+/**
+ * 编辑器是**独立视图**（占 Skills 页的位置），不是弹窗 ——
+ * 正文很长，弹窗框太小；而且弹窗盖着列表，看不到自己改的是哪个 skill。
+ */
+const emit = defineEmits<{
+  /** 去编辑页写正文 */
+  edit: [skillName: string]
+}>()
 
 const message = useMessage()
 const query = ref('')
@@ -212,8 +220,6 @@ const createMethod = ref<CreateMethod | null>(null)
 /** 待删除的 skill（删除前二次确认） */
 const deleteTarget = ref<Skill | null>(null)
 /** 编辑弹窗 */
-const showEdit = ref(false)
-const editTarget = ref<string | null>(null)
 /** 创建副本弹窗 */
 const showDuplicate = ref(false)
 const duplicateTarget = ref<string | null>(null)
@@ -315,10 +321,9 @@ const openDetail = (skillName: string) => {
   detailSkill.value = skillList.value.find((skill) => skill.name === skillName) ?? null
 }
 
-/** 打开编辑弹窗 */
+/** 去编辑页 */
 const openEdit = (skillName: string) => {
-  editTarget.value = skillName
-  showEdit.value = true
+  emit('edit', skillName)
 }
 
 /** 打开创建副本弹窗 */
@@ -372,9 +377,9 @@ const openCreate = () => {
  */
 const onManualCreated = (info: SkillInfo) => {
   skillList.value = [toDisplaySkill(info), ...skillList.value]
-  editTarget.value = info.name
-  showEdit.value = true
   message.success(`已创建：${info.name} —— 写正文吧`)
+  // 直接进编辑页写正文
+  emit('edit', info.name)
 }
 
 /** 添加成功：插入到列表头部 */
@@ -383,19 +388,7 @@ const onCreated = (info: SkillInfo) => {
   message.success(`已添加：${info.name}`)
 }
 
-/** 编辑保存：按名字（可能已改名）替换列表里那一项 */
-const onSaved = (info: SkillInfo, previousName: string) => {
-  const index = skillList.value.findIndex((skill) => skill.name === previousName)
-  const next = toDisplaySkill(info)
-  if (index >= 0) skillList.value.splice(index, 1, next)
-  else skillList.value = [next, ...skillList.value]
-  // 改名后勾选的是新名字
-  if (previousName !== info.name) {
-    selected.value = selected.value.map((name) => (name === previousName ? info.name : name))
-  }
-  if (detailSkill.value?.name === previousName) detailSkill.value = next
-  message.success(`已保存：${info.name}`)
-}
+/** 副本创建成功：插入到列表头部 */
 
 /** 副本创建成功：插入到列表头部 */
 const onDuplicated = (info: SkillInfo) => {
@@ -578,13 +571,6 @@ const onDuplicated = (info: SkillInfo) => {
           deleteTarget = skillList.find((item) => item.name === name) ?? null
         }
       "
-    />
-
-    <!-- 大页面编辑器：写 SKILL.md 正文 -->
-    <SkillEditorModal
-      :skill-name="editTarget"
-      @close="showEdit = false"
-      @saved="(info: SkillInfo) => onSaved(info, editTarget ?? info.name)"
     />
 
     <SkillDuplicateModal

@@ -24,6 +24,7 @@ export type ViewKey =
   | 'agentRuns'
   | 'agentCreate'
   | 'agentEdit'
+  | 'skillEdit'
   | 'wiki'
   | 'settings'
 

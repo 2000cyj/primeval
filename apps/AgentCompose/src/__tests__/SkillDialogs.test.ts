@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import SkillEditorModal from '../components/SkillEditorModal.vue'
+import SkillEditorView from '../views/SkillEditorView.vue'
 import SkillDuplicateModal from '../components/SkillDuplicateModal.vue'
 import SkillDetailDrawer from '../components/SkillDetailDrawer.vue'
 
@@ -48,12 +48,25 @@ const setValue = async (element: Element, value: string) => {
 }
 
 /** 大页面编辑器用了 useMessage，要挂在 MessageProvider 下 */
+/** 编辑器是独立视图，用了 useMessage，要挂在 MessageProvider 下 */
 const mountEditor = () =>
   mount({
-    components: { NMessageProvider, SkillEditorModal },
-    template: '<NMessageProvider><SkillEditorModal :skill-name="name" /></NMessageProvider>',
+    components: { NMessageProvider, SkillEditorView },
+    template: '<NMessageProvider><SkillEditorView :skill-name="name" /></NMessageProvider>',
     data: () => ({ name: '知识库检索' }),
   })
+
+/** 在 wrapper 里按文案找按钮并点它（独立视图的元素不在 body 里） */
+const clickIn = async (
+  wrapper: { findAll: (selector: string) => { element: HTMLElement }[] },
+  selector: string,
+  text: string,
+) => {
+  const target = wrapper.findAll(selector).find((item) => item.element.textContent?.includes(text))
+  if (!target) throw new Error(`找不到文案为「${text}」的元素：${selector}`)
+  target.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
 
 /** 抽屉里用到 useMessage，要挂在 MessageProvider 下 */
 const mountDrawer = (skillName: string) =>
@@ -68,7 +81,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('SkillEditorModal（大页面）', () => {
+describe('SkillEditorView（独立视图）', () => {
   it('打开时读出真实内容，保存时调 skills_update', async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === 'skills_read') return Promise.resolve(detail)
@@ -90,15 +103,15 @@ describe('SkillEditorModal（大页面）', () => {
     await flushPromises()
 
     // 名称 / 描述都来自后端
-    const inputs = document.body.querySelectorAll('input')
-    expect((inputs[0] as HTMLInputElement).value).toBe('知识库检索')
-    expect((inputs[1] as HTMLInputElement).value).toBe('从企业知识库中检索信息')
+    const inputs = wrapper.findAll('input')
+    expect(inputs[0]?.element.value).toBe('知识库检索')
+    expect(inputs[1]?.element.value).toBe('从企业知识库中检索信息')
     // 正文走 Markdown 编辑器（不是 textarea）
-    expect(document.body.querySelector('.markdown-editor')).toBeTruthy()
+    expect(wrapper.find('.markdown-editor').exists()).toBe(true)
 
-    await setValue(inputs[0]!, '知识库检索 增强版')
-    await setValue(inputs[1]!, '新描述')
-    await clickByText('button', '保存')
+    await setValue(inputs[0]!.element, '知识库检索 增强版')
+    await setValue(inputs[1]!.element, '新描述')
+    await clickIn(wrapper, 'button', '保存')
 
     const call = calledCommand('skills_update')
     expect(call?.[1]).toEqual({
@@ -107,24 +120,65 @@ describe('SkillEditorModal（大页面）', () => {
       description: '新描述',
       content: '# 知识库检索\n\n正文内容',
     })
-    expect(wrapper.findComponent(SkillEditorModal).emitted('saved')?.[0]).toBeTruthy()
+    expect(wrapper.findComponent(SkillEditorView).emitted('saved')?.[0]).toBeTruthy()
   })
 
-  it('大页面不超视口：高度按视口算，预览区自己滚', async () => {
+  it('左上角有「返回列表」，没有改动时直接回', async () => {
     invokeMock.mockImplementation((command: string) =>
       command === 'skills_read' ? Promise.resolve(detail) : Promise.resolve(null),
     )
 
-    mountEditor()
+    const wrapper = mountEditor()
     await flushPromises()
 
-    // 高度跟着视口走（92vh），不会撑出屏幕
-    const card = document.body.querySelector('.n-card') as HTMLElement
-    expect(card).toBeTruthy()
+    // 返回按钮在
+    expect(wrapper.text()).toContain('返回列表')
 
-    // 编辑区在内容区里，自己滚
-    expect(document.body.querySelector('.markdown-editor')).toBeTruthy()
-    expect(document.body.querySelector('.preview-scroll')).toBeTruthy()
+    await clickIn(wrapper, 'button', '返回列表')
+
+    // 没改动 → 直接回列表，不弹确认
+    expect(wrapper.findComponent(SkillEditorView).emitted('cancel')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('有未保存的修改')
+  })
+
+  it('有未保存改动时，返回要先问一句', async () => {
+    invokeMock.mockImplementation((command: string) =>
+      command === 'skills_read' ? Promise.resolve(detail) : Promise.resolve(null),
+    )
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    // 改点东西
+    await setValue(wrapper.findAll('input')[1]!.element, '改了描述')
+
+    await clickIn(wrapper, 'button', '返回列表')
+    await flushPromises()
+
+    // 弹确认，还没回列表
+    // （确认弹窗是 NModal，teleport 到 body —— 要在 document.body 里找）
+    expect(document.body.textContent).toContain('有未保存的修改')
+    expect(wrapper.findComponent(SkillEditorView).emitted('cancel')).toBeFalsy()
+
+    // 放弃改动 → 才回列表
+    await clickByText('button', '放弃改动')
+    await flushPromises()
+    expect(wrapper.findComponent(SkillEditorView).emitted('cancel')).toBeTruthy()
+  })
+
+  it('有未保存改动时标出「未保存」', async () => {
+    invokeMock.mockImplementation((command: string) =>
+      command === 'skills_read' ? Promise.resolve(detail) : Promise.resolve(null),
+    )
+
+    const wrapper = mountEditor()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('未保存')
+
+    await setValue(wrapper.findAll('input')[1]!.element, '改了描述')
+
+    expect(wrapper.text()).toContain('未保存')
   })
 
   it('保存失败时展示后端原因', async () => {
@@ -136,15 +190,15 @@ describe('SkillEditorModal（大页面）', () => {
       return Promise.resolve(null)
     })
 
-    mountEditor()
+    const wrapper = mountEditor()
     await flushPromises()
 
     // 改点东西，「保存」才可点（没改动时按钮是禁用的）
-    const desc = document.body.querySelectorAll('input')[1] as HTMLInputElement
-    await setValue(desc, '新描述')
+    await setValue(wrapper.findAll('input')[1]!.element, '新描述')
 
-    await clickByText('button', '保存')
+    await clickIn(wrapper, 'button', '保存')
 
+    // 错误提示是 message —— 挂在 MessageProvider 上，teleport 到 body
     expect(document.body.textContent).toContain('已存在同名 skill')
   })
 })

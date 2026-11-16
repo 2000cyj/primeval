@@ -9,6 +9,7 @@ import {
 import AppSidebar, { type ViewKey } from '@/components/AppSidebar.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
 import SkillsView from '@/views/SkillsView.vue'
+import SkillEditorView from '@/views/SkillEditorView.vue'
 import McpView from '@/views/McpView.vue'
 import AgentsView from '@/views/AgentsView.vue'
 import ExtensionsView from '@/views/ExtensionsView.vue'
@@ -39,6 +40,20 @@ const onAgentCreated = (): void => {
 
 /** 正在编辑的智能体 id */
 const editingAgentId = ref('')
+
+/** 正在编辑的 skill 名 */
+const editingSkillName = ref('')
+
+/** 进 skill 编辑页（独立视图，不是弹窗） */
+const onSkillEdit = (name: string): void => {
+  editingSkillName.value = name
+  navigate('skillEdit')
+}
+
+/** skill 保存好了 —— 回 Skills 列表 */
+const onSkillSaved = (): void => {
+  navigate('skills')
+}
 
 /** 点数据行 → 进编辑页 */
 const onAgentEdit = (id: string): void => {
@@ -112,6 +127,7 @@ const views: ViewKey[] = [
   'agentRuns',
   'agentCreate',
   'agentEdit',
+  'skillEdit',
   'wiki',
   'settings',
 ]
@@ -184,7 +200,11 @@ onBeforeUnmount(() => {
     <NGlobalStyle />
     <NMessageProvider>
       <div class="shell">
-        <AppSidebar :active="activeView" @navigate="navigate" />
+        <!-- 编辑 skill 时侧边栏仍高亮 Skills —— 它是 Skills 页的一部分 -->
+        <AppSidebar
+          :active="activeView === 'skillEdit' ? 'skills' : activeView"
+          @navigate="navigate"
+        />
 
         <main class="main">
           <AppTopbar />
@@ -194,7 +214,7 @@ onBeforeUnmount(() => {
             看着像「滑轮顶到头部」。把滚动容器放到顶栏下面就没这问题。
           -->
           <div class="content">
-            <SkillsView v-if="activeView === 'skills'" />
+            <SkillsView v-if="activeView === 'skills'" @edit="onSkillEdit" />
             <McpView v-else-if="activeView === 'mcp'" />
             <AgentsView v-else-if="activeView === 'agents'" />
             <ExtensionsView v-else-if="activeView === 'extensions'" />
@@ -213,6 +233,12 @@ onBeforeUnmount(() => {
               :agent-id="editingAgentId"
               @cancel="navigateBack('agentRuns')"
               @saved="navigate('agentRuns')"
+            />
+            <SkillEditorView
+              v-else-if="activeView === 'skillEdit'"
+              :skill-name="editingSkillName"
+              @cancel="navigateBack('skills')"
+              @saved="onSkillSaved"
             />
             <WikiView v-else-if="activeView === 'wiki'" />
             <SettingsView v-else />
