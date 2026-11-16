@@ -18,6 +18,7 @@ import type { UpstreamPool } from './upstream.ts'
 import { hasStaticToken } from './upstream.ts'
 import type { McpProfile, McpSelection, McpServerDef } from './types.ts'
 import { MCP_NS_SEPARATOR } from './types.ts'
+import { createWikiTools } from './wiki.ts'
 
 /** 一个视图里对外可见的工具 */
 export type ViewTool = {
@@ -28,12 +29,35 @@ export type ViewTool = {
   inputSchema: unknown
 }
 
+/**
+ * 本地工具：不来自任何上游 server，直接在本机执行。
+ *
+ * Wiki 就是这么接进来的（见 wiki.ts）—— agent 读 AgentSpace 的内置知识库，
+ * 不需要另起一个 MCP server。
+ */
+export type LocalTool = {
+  /** 对外工具名 */
+  name: string
+  /** 工具描述（给 LLM 看，写清楚什么时候该用） */
+  description: string
+  /** JSON Schema（顶层必须是 object） */
+  inputSchema: ToolInputSchema
+  /** 执行本地工具，返回 MCP 的工具结果 */
+  execute: (args: Record<string, unknown>) => Promise<CallToolResult>
+}
+
 /** 一次请求对应的工具视图 */
 export type McpView = {
   selection: McpSelection
   tools: ViewTool[]
   /** 对外工具名 → registry 内部名（带前缀）。调用路由靠它反查。 */
   outwardToExposed: Map<string, string>
+  /**
+   * 本地工具（对外工具名 → 工具）。
+   *
+   * 本地工具不走 registry 转发：tools/call 先查这里，命中就本地执行。
+   */
+  localTools: Map<string, LocalTool>
 }
 
 /**
@@ -141,12 +165,21 @@ export class SessionManager {
   private readonly registry: ToolRegistry
   private readonly bus: EventBus
   private readonly oauth: OAuthManager | undefined
+  /** 本地工具（默认是 Wiki 的三个工具） */
+  private readonly localTools: LocalTool[]
 
-  constructor(pool: UpstreamPool, registry: ToolRegistry, bus: EventBus, oauth?: OAuthManager) {
+  constructor(
+    pool: UpstreamPool,
+    registry: ToolRegistry,
+    bus: EventBus,
+    oauth?: OAuthManager,
+    localTools: LocalTool[] = createWikiTools(),
+  ) {
     this.pool = pool
     this.registry = registry
     this.bus = bus
     this.oauth = oauth
+    this.localTools = localTools
   }
 
   /**
@@ -163,32 +196,39 @@ export class SessionManager {
     const outwardToExposed = new Map<string, string>()
     const tools: ViewTool[] = []
 
+    // 本地工具先占住名字：撞名时让上游工具改名（本地工具优先）
+    const localTools = new Map<string, LocalTool>()
+    for (const tool of this.localTools) {
+      localTools.set(tool.name, tool)
+    }
+
     for (const tool of all as ExposedTool[]) {
       if (allowed && !allowed.has(tool.serverId)) continue
 
-      const outward = prefixed ? tool.name : stripPrefix(tool.name, tool.serverId)
-      if (outwardToExposed.has(outward)) {
-        // 单 server 视图下理论上不会冲突；真冲突时加序号兜底
-        let seq = 2
-        let candidate = `${outward}_${seq}`
-        while (outwardToExposed.has(candidate)) {
-          seq += 1
-          candidate = `${outward}_${seq}`
-        }
-        outwardToExposed.set(candidate, tool.name)
-        tools.push({
-          name: candidate,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        })
-        continue
+      const base = prefixed ? tool.name : stripPrefix(tool.name, tool.serverId)
+      // 单 server 视图下理论上不会冲突；真冲突时加序号兜底。
+      // 跟本地工具撞名也一样处理 —— 本地工具的名字是固定的，不能让上游抢走。
+      let outward = base
+      let seq = 1
+      while (outwardToExposed.has(outward) || localTools.has(outward)) {
+        seq += 1
+        outward = `${base}_${seq}`
       }
 
       outwardToExposed.set(outward, tool.name)
       tools.push({ name: outward, description: tool.description, inputSchema: tool.inputSchema })
     }
 
-    return { selection, tools, outwardToExposed }
+    // 本地工具也进对外清单（tools/list 直接用 view.tools）
+    for (const tool of localTools.values()) {
+      tools.push({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+      })
+    }
+
+    return { selection, tools, outwardToExposed, localTools }
   }
 
   /**
@@ -214,6 +254,22 @@ export class SessionManager {
     server.setRequestHandler('tools/call', async (request): Promise<CallToolResult> => {
       const name = request.params.name
       const args = request.params.arguments as Record<string, unknown> | undefined
+
+      // 本地工具优先：本地工具不经过 registry，直接在本机执行
+      const local = view.localTools.get(name)
+      if (local) {
+        try {
+          return await local.execute(args ?? {})
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          // 降级为工具级错误，不抛协议级错误，agent 会话不崩
+          return {
+            isError: true,
+            content: [{ type: 'text', text: `本地工具执行失败：${message}` }],
+          }
+        }
+      }
+
       const exposed = view.outwardToExposed.get(name)
 
       if (!exposed) {

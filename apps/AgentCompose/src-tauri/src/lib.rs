@@ -15,6 +15,7 @@ mod backup;
 mod proxy;
 mod skills;
 mod updater;
+mod wiki;
 
 /// MCP sidecar 的数据目录。
 ///
@@ -1136,6 +1137,14 @@ pub fn run() {
             backup::backup_import,
             backup::backup_import_status,
             backup::backup_pick_import_zip,
+            wiki::wiki_list,
+            wiki::wiki_read,
+            wiki::wiki_save,
+            wiki::wiki_create,
+            wiki::wiki_delete,
+            wiki::wiki_search,
+            wiki::wiki_tags,
+            wiki::wiki_publish_as_skill,
             custom_titlebar,
         ])
         .run(tauri::generate_context!())

@@ -50,6 +50,7 @@ fn real_data_export() {
             .filter(|e| e.kind == SourceKind::Local)
             .map(|e| e.name.clone())
             .collect(),
+        wiki_slugs: Vec::new(),
     };
     let result = backup::export(&paths, &[], &selection, &out).unwrap();
     println!(

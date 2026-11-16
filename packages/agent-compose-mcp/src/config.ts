@@ -33,6 +33,16 @@ export function mcpDataDir(): string {
 }
 
 /**
+ * 内置 Wiki 的根目录（app data 下的 `wiki/` 子目录）。
+ *
+ * 桌面端（agentspace-core）把 Wiki 写在同一个位置，
+ * sidecar 的本地工具直接读这里的文件 —— 两边不用同步。
+ */
+export function wikiDir(): string {
+  return join(appDataDir(), 'wiki')
+}
+
+/**
  * 运行时信息目录：port 与 token 落在这里。
  *
  * **固定在默认位置，不受 `AGENT_COMPOSE_DATA_DIR` 影响。**

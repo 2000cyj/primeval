@@ -67,6 +67,8 @@ pub enum DataKind {
     McpServer,
     /// Pi 扩展。
     Extension,
+    /// Wiki 页面。
+    Wiki,
 }
 
 impl DataKind {
@@ -77,6 +79,7 @@ impl DataKind {
             DataKind::Skill => "skill",
             DataKind::McpServer => "mcpServer",
             DataKind::Extension => "extension",
+            DataKind::Wiki => "wiki",
         }
     }
 }
@@ -157,6 +160,20 @@ pub struct ManifestExtension {
     pub files: Vec<String>,
 }
 
+/// Wiki 页面条目。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ManifestWiki {
+    pub slug: String,
+    pub title: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// 正文所在的包内文件。
+    pub file: String,
+}
+
 /// 导出包的清单。
 ///
 /// 除了 `version` 以外都给了默认值 —— 清单往后加字段时，老包还能读。
@@ -171,6 +188,7 @@ pub struct Manifest {
     pub skills: Vec<ManifestSkill>,
     pub mcp_servers: Vec<ManifestMcpServer>,
     pub extensions: Vec<ManifestExtension>,
+    pub wiki: Vec<ManifestWiki>,
 }
 
 impl Default for Manifest {
@@ -183,6 +201,7 @@ impl Default for Manifest {
             skills: Vec::new(),
             mcp_servers: Vec::new(),
             extensions: Vec::new(),
+            wiki: Vec::new(),
         }
     }
 }
@@ -199,6 +218,9 @@ pub struct ExportSelection {
     pub mcp_server_ids: Vec<String>,
     #[serde(default)]
     pub extension_names: Vec<String>,
+    /// 要带走的 wiki 页面（slug）。
+    #[serde(default)]
+    pub wiki_slugs: Vec<String>,
 }
 
 /// 导出结果。
@@ -220,6 +242,7 @@ pub struct ExportCounts {
     pub skills: usize,
     pub mcp_servers: usize,
     pub extensions: usize,
+    pub wiki: usize,
 }
 
 /// 导入请求（界面勾了哪些冲突要覆盖）。
@@ -481,6 +504,7 @@ pub fn export(
         skills: Vec::new(),
         mcp_servers: Vec::new(),
         extensions: Vec::new(),
+        wiki: Vec::new(),
     };
 
     // ── Skills ────────────────────────────────────────────
@@ -671,6 +695,28 @@ pub fn export(
         });
     }
 
+    // ── Wiki 页面 ─────────────────────────────────────────
+    //
+    // Wiki 的正文就是 Markdown 文件 —— 跟 skill 一样原样打包，
+    // 不做「远程只记链接」的区分：wiki 是人写的本地内容，没有上游。
+    for slug in &selection.wiki_slugs {
+        let Ok(page) = crate::wiki::read_page(paths, slug) else {
+            continue;
+        };
+        let zip_name = format!("wiki/{slug}/page.md");
+        items.push(ZipItem {
+            name: zip_name.clone(),
+            data: page.content.into_bytes(),
+        });
+        manifest.wiki.push(ManifestWiki {
+            slug: slug.clone(),
+            title: page.title,
+            tags: page.tags,
+            parent: page.parent,
+            file: zip_name,
+        });
+    }
+
     // ── 写清单 + 打包 ─────────────────────────────────────
     let manifest_text = serde_json::to_string_pretty(&manifest)
         .map_err(|e| format!("序列化清单失败：{e}"))?;
@@ -700,6 +746,7 @@ pub fn export(
             skills: manifest.skills.len(),
             mcp_servers: manifest.mcp_servers.len(),
             extensions: manifest.extensions.len(),
+            wiki: manifest.wiki.len(),
         },
     })
 }
@@ -1014,6 +1061,7 @@ pub fn inspect(
         skills: manifest.skills.len(),
         mcp_servers: manifest.mcp_servers.len(),
         extensions: manifest.extensions.len(),
+        wiki: manifest.wiki.len(),
     };
 
     if summary.skills == 0 && summary.agents == 0 && summary.mcp_servers == 0 && summary.extensions == 0 {
@@ -1232,6 +1280,25 @@ pub fn import(
 
     report("完成", "导入完成", total);
 
+    // ── Wiki 页面 ─────────────────────────────────────────
+    for item in &manifest.wiki {
+        report("导入 Wiki", &item.title, done);
+        let exists = crate::wiki::read_page(paths, &item.slug).is_ok();
+        if exists && !allowed(DataKind::Wiki, &item.slug) {
+            result.skipped.wiki += 1;
+            done += 1;
+            continue;
+        }
+        match import_wiki(paths, item, &files) {
+            Ok(true) => result.imported.wiki += 1,
+            Ok(false) => result.skipped.wiki += 1,
+            Err(error) => result
+                .failures
+                .push(format!("wiki:{} —— {error}", item.title)),
+        }
+        done += 1;
+    }
+
     // 智能体引用的 skill 有没有真的导进来
     let imported_skill_names: Vec<String> = manifest
         .skills
@@ -1383,6 +1450,41 @@ fn import_extension(
             Ok(true)
         }
     }
+}
+
+/// 导入一个 wiki 页面。
+fn import_wiki(
+    paths: &Paths,
+    item: &ManifestWiki,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<bool, String> {
+    let Some(data) = files.get(&item.file) else {
+        return Err("包里没有它的正文".to_string());
+    };
+    let content = String::from_utf8_lossy(data).to_string();
+    // 页面已存在且允许覆盖 → 走 save（它会覆盖正文）
+    // 页面不存在 → 先建再存
+    if crate::wiki::read_page(paths, &item.slug).is_ok() {
+        crate::wiki::save_page(
+            paths,
+            &item.slug,
+            &item.title,
+            &content,
+            &item.tags,
+            item.parent.clone(),
+        )?;
+    } else {
+        crate::wiki::create_page(paths, &item.title, item.parent.clone())?;
+        crate::wiki::save_page(
+            paths,
+            &item.slug,
+            &item.title,
+            &content,
+            &item.tags,
+            item.parent.clone(),
+        )?;
+    }
+    Ok(true)
 }
 
 /// 导入一个智能体。
@@ -1687,6 +1789,51 @@ mod tests {
         // current 递增
         let currents: Vec<usize> = steps.iter().map(|step| step.current).collect();
         assert!(currents.windows(2).all(|pair| pair[0] <= pair[1]), "进度不能倒退");
+
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    #[test]
+    fn export_and_import_roundtrip_carries_wiki_pages() {
+        let paths = temp_paths("wiki-backup");
+
+        // 造两个 wiki 页面
+        let page = crate::wiki::create_page(&paths, "部署手册", None).unwrap();
+        crate::wiki::save_page(
+            &paths,
+            &page.slug,
+            "部署手册",
+            "# 部署手册
+
+第一步：生成密钥",
+            &["运维".to_string()],
+            None,
+        )
+        .unwrap();
+
+        // 导出
+        let zip_path = paths.root().join("export.zip");
+        let selection = ExportSelection {
+            wiki_slugs: vec![page.slug.clone()],
+            ..Default::default()
+        };
+        let result = export(&paths, &[], &selection, &zip_path).unwrap();
+        assert_eq!(result.counts.wiki, 1);
+
+        // 删掉本地 —— 模拟另一台机器
+        crate::wiki::delete_page(&paths, &page.slug).unwrap();
+        assert!(crate::wiki::read_page(&paths, &page.slug).is_err());
+
+        // 导入
+        let mut servers = Vec::new();
+        let imported = import(&paths, &mut servers, &zip_path, &[], &[], None).unwrap();
+        assert_eq!(imported.imported.wiki, 1);
+        assert!(imported.failures.is_empty());
+
+        // 内容回来了
+        let restored = crate::wiki::read_page(&paths, &page.slug).unwrap();
+        assert!(restored.content.contains("生成密钥"));
+        assert_eq!(restored.tags, vec!["运维".to_string()]);
 
         let _ = fs::remove_dir_all(paths.home());
     }

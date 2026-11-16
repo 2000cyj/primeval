@@ -29,6 +29,7 @@ pub mod toolbox;
 pub mod updater;
 pub mod proxy;
 pub mod skills;
+pub mod wiki;
 
 pub use agent::{CreatedAgent, DEFAULT_RUNTIME};
 pub use paths::Paths;
