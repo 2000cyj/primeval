@@ -22,7 +22,7 @@ export type BackupSourceKind = 'remote' | 'local'
 export type BackupExtensionSource = 'npm' | 'custom' | 'builtin' | (string & {})
 
 /** 冲突项的类别 —— 也用来拼「覆盖」的 key（`skill:vue`）。 */
-export type BackupConflictType = 'agent' | 'skill' | 'mcpServer' | 'extension'
+export type BackupConflictType = 'agent' | 'skill' | 'mcpServer' | 'extension' | 'wiki'
 
 /** 可导出的智能体。 */
 export interface BackupAgent {
@@ -82,6 +82,20 @@ export interface BackupInventory {
   skills: BackupSkill[]
   mcpServers: BackupMcpServer[]
   extensions: BackupExtension[]
+  /** wiki 页面 */
+  wikiPages: BackupWikiPage[]
+}
+
+/** 一个可导出的 wiki 页面。 */
+export interface BackupWikiPage {
+  /** 页面 slug */
+  slug: string
+  /** 标题 */
+  title: string
+  /** 标签 */
+  tags: string[]
+  /** 父页面 slug */
+  parent: string | null
 }
 
 /** 导出时勾了什么。 */
@@ -90,6 +104,8 @@ export interface BackupExportRequest {
   skillNames: string[]
   mcpServerIds: string[]
   extensionNames: string[]
+  /** 要带走的 wiki 页面 slug */
+  wikiSlugs: string[]
 }
 
 /** 各类型各多少条 —— 导出数量、导入结果、清单摘要共用一个形状。 */
@@ -98,6 +114,7 @@ export interface BackupCounts {
   skills: number
   mcpServers: number
   extensions: number
+  wiki: number
 }
 
 /** 导出结果。 */

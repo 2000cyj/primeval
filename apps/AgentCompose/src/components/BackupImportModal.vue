@@ -86,6 +86,7 @@ const typeLabels: Record<string, string> = {
   skill: 'Skills',
   mcpServer: 'MCP server',
   extension: 'Pi 扩展',
+  wiki: 'Wiki 页面',
 }
 
 /** 一个冲突分组。 */
@@ -112,7 +113,7 @@ const conflicts = computed(() => report.value?.conflicts ?? [])
  * 固定顺序：先智能体（它是总纲），再 Skills、MCP、扩展。
  */
 const conflictGroups = computed<ConflictGroup[]>(() => {
-  const order: BackupConflictType[] = ['agent', 'skill', 'mcpServer', 'extension']
+  const order: BackupConflictType[] = ['agent', 'skill', 'mcpServer', 'extension', 'wiki']
   const groups: ConflictGroup[] = []
   for (const type of order) {
     const items = conflicts.value.filter((conflict) => backupConflictType(conflict) === type)
@@ -162,7 +163,7 @@ const reportWarnings = computed(() => report.value?.warnings ?? [])
 
 /** 包里一共有什么。 */
 const summary = computed(
-  () => report.value?.summary ?? { agents: 0, skills: 0, mcpServers: 0, extensions: 0 },
+  () => report.value?.summary ?? { agents: 0, skills: 0, mcpServers: 0, extensions: 0, wiki: 0 },
 )
 
 /** 导入失败的条目。 */
@@ -397,7 +398,7 @@ watch(
         <span class="summary-title">将导入 {{ importCount }} 项，跳过 {{ skipCount }} 项</span>
         <span class="summary-detail">
           包里有智能体 {{ summary.agents }} · Skills {{ summary.skills }} · MCP
-          {{ summary.mcpServers }} · 扩展 {{ summary.extensions }}
+          {{ summary.mcpServers }} · 扩展 {{ summary.extensions }} · Wiki {{ summary.wiki }}
         </span>
       </div>
 
@@ -522,12 +523,17 @@ watch(
           <span class="count-label">扩展</span>
         </div>
         <div class="count-cell">
+          <span class="count-value tnum">{{ result?.imported.wiki ?? 0 }}</span>
+          <span class="count-label">Wiki</span>
+        </div>
+        <div class="count-cell">
           <span class="count-value tnum">
             {{
               (result?.skipped.agents ?? 0) +
               (result?.skipped.skills ?? 0) +
               (result?.skipped.mcpServers ?? 0) +
-              (result?.skipped.extensions ?? 0)
+              (result?.skipped.extensions ?? 0) +
+              (result?.skipped.wiki ?? 0)
             }}
           </span>
           <span class="count-label">跳过</span>

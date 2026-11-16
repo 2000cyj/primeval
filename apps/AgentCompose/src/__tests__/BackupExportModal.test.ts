@@ -57,6 +57,14 @@ const inventory = {
       sourceLabel: '@mksglu/context-mode',
     },
   ],
+  wikiPages: [
+    {
+      slug: '部署手册',
+      title: '部署手册',
+      tags: ['运维'],
+      parent: null,
+    },
+  ],
 }
 
 const mountModal = async () => {
@@ -133,6 +141,7 @@ describe('导出弹窗', () => {
         skillNames: [],
         mcpServerIds: ['idea'],
         extensionNames: ['context-mode'],
+        wikiSlugs: [],
       },
     })
   })
@@ -168,6 +177,7 @@ describe('导出弹窗', () => {
         skillNames: ['vue'],
         mcpServerIds: ['idea'],
         extensionNames: ['context-mode'],
+        wikiSlugs: [],
       },
     })
   })

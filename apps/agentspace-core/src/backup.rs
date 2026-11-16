@@ -327,6 +327,17 @@ pub struct Inventory {
     pub skills: Vec<SkillExportItem>,
     pub mcp_servers: Vec<McpExportItem>,
     pub extensions: Vec<ExtensionExportItem>,
+    pub wiki_pages: Vec<WikiExportItem>,
+}
+
+/// 可导出的一个 wiki 页面。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiExportItem {
+    pub slug: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub parent: Option<String>,
 }
 
 /// 列出所有可导出的数据。
@@ -423,6 +434,16 @@ pub fn inventory(paths: &Paths, mcp_servers: &[serde_json::Value]) -> Inventory 
 
     for extension in list_export_extensions(paths) {
         out.extensions.push(extension);
+    }
+
+    // Wiki 页面
+    for meta in crate::wiki::list_pages(paths) {
+        out.wiki_pages.push(WikiExportItem {
+            slug: meta.slug,
+            title: meta.title,
+            tags: meta.tags,
+            parent: meta.parent,
+        });
     }
 
     out

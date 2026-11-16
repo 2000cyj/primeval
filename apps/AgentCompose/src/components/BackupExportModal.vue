@@ -33,6 +33,7 @@ const inventory = ref<BackupInventory>({
   skills: [],
   mcpServers: [],
   extensions: [],
+  wikiPages: [],
 })
 /** 正在读库存 */
 const loading = ref(false)
@@ -54,12 +55,16 @@ const manualSkills = ref<string[]>([])
 const manualMcp = ref<string[]>([])
 /** 勾中的扩展名 */
 const manualExtensions = ref<string[]>([])
+/** 勾中的 wiki 页面 slug */
+const manualWiki = ref<string[]>([])
 /** 被取消勾选的 skill 名 */
 const offSkills = ref<string[]>([])
 /** 被取消勾选的 MCP server id */
 const offMcp = ref<string[]>([])
 /** 被取消勾选的扩展名 */
 const offExtensions = ref<string[]>([])
+/** 被取消勾选的 wiki 页面 */
+const offWiki = ref<string[]>([])
 
 /** 折叠起来的分组 */
 const collapsed = ref<Record<string, boolean>>({
@@ -67,6 +72,7 @@ const collapsed = ref<Record<string, boolean>>({
   skill: false,
   mcpServer: false,
   extension: false,
+  wiki: false,
 })
 
 /**
@@ -205,6 +211,16 @@ const extensionHint = (extension: BackupExtension): string => {
   return extension.source
 }
 
+/** wiki 页面列表 */
+const wikiRows = computed<ExportRow[]>(() =>
+  inventory.value.wikiPages.map((page) => ({
+    key: page.slug,
+    label: page.title,
+    hint: page.tags.length ? page.tags.join(' · ') : '本地页面',
+    pulled: false,
+  })),
+)
+
 /** 扩展列表 */
 const extensionRows = computed<ExportRow[]>(() =>
   inventory.value.extensions.map((extension) => ({
@@ -215,17 +231,25 @@ const extensionRows = computed<ExportRow[]>(() =>
   })),
 )
 
+/** 勾中的 wiki 页面 slug */
+const checkedWiki = computed(() => {
+  const known = new Set(inventory.value.wikiPages.map((page) => page.slug))
+  const picked = new Set(manualWiki.value)
+  return [...picked].filter((slug) => known.has(slug) && !offWiki.value.includes(slug))
+})
+
 /** 一共勾了多少条 */
 const totalChecked = computed(
   () =>
     manualAgents.value.length +
     checkedSkills.value.length +
     checkedMcp.value.length +
-    checkedExtensions.value.length,
+    checkedExtensions.value.length +
+    checkedWiki.value.length,
 )
 
 /** 勾选 / 取消一个条目。 */
-const toggle = (group: 'skill' | 'mcpServer' | 'extension', key: string): void => {
+const toggle = (group: 'skill' | 'mcpServer' | 'extension' | 'wiki', key: string): void => {
   if (group === 'skill') {
     if (checkedSkills.value.includes(key)) {
       manualSkills.value = manualSkills.value.filter((name) => name !== key)
@@ -246,12 +270,23 @@ const toggle = (group: 'skill' | 'mcpServer' | 'extension', key: string): void =
     }
     return
   }
-  if (checkedExtensions.value.includes(key)) {
-    manualExtensions.value = manualExtensions.value.filter((name) => name !== key)
-    offExtensions.value = [...offExtensions.value, key]
+  if (group === 'extension') {
+    if (checkedExtensions.value.includes(key)) {
+      manualExtensions.value = manualExtensions.value.filter((name) => name !== key)
+      offExtensions.value = [...offExtensions.value, key]
+    } else {
+      manualExtensions.value = [...manualExtensions.value, key]
+      offExtensions.value = offExtensions.value.filter((name) => name !== key)
+    }
+    return
+  }
+  // wiki
+  if (checkedWiki.value.includes(key)) {
+    manualWiki.value = manualWiki.value.filter((slug) => slug !== key)
+    offWiki.value = [...offWiki.value, key]
   } else {
-    manualExtensions.value = [...manualExtensions.value, key]
-    offExtensions.value = offExtensions.value.filter((name) => name !== key)
+    manualWiki.value = [...manualWiki.value, key]
+    offWiki.value = offWiki.value.filter((slug) => slug !== key)
   }
 }
 
@@ -263,15 +298,22 @@ const toggleAgent = (id: string): void => {
 }
 
 /** 分组内某个键当前是不是勾着的。 */
-const isChecked = (group: 'agent' | 'skill' | 'mcpServer' | 'extension', key: string): boolean => {
+const isChecked = (
+  group: 'agent' | 'skill' | 'mcpServer' | 'extension' | 'wiki',
+  key: string,
+): boolean => {
   if (group === 'agent') return manualAgents.value.includes(key)
   if (group === 'skill') return checkedSkills.value.includes(key)
   if (group === 'mcpServer') return checkedMcp.value.includes(key)
+  if (group === 'wiki') return checkedWiki.value.includes(key)
   return checkedExtensions.value.includes(key)
 }
 
 /** 全选 / 反选某个分组。 */
-const bulk = (group: 'agent' | 'skill' | 'mcpServer' | 'extension', invert: boolean): void => {
+const bulk = (
+  group: 'agent' | 'skill' | 'mcpServer' | 'extension' | 'wiki',
+  invert: boolean,
+): void => {
   const keys =
     group === 'agent'
       ? inventory.value.agents.map((agent) => agent.id)
@@ -279,7 +321,9 @@ const bulk = (group: 'agent' | 'skill' | 'mcpServer' | 'extension', invert: bool
         ? inventory.value.skills.map((skill) => skill.name)
         : group === 'mcpServer'
           ? inventory.value.mcpServers.map((server) => server.id)
-          : inventory.value.extensions.map((extension) => extension.name)
+          : group === 'wiki'
+            ? inventory.value.wikiPages.map((page) => page.slug)
+            : inventory.value.extensions.map((extension) => extension.name)
 
   if (group === 'agent') {
     manualAgents.value = invert ? keys.filter((id) => !manualAgents.value.includes(id)) : [...keys]
@@ -308,12 +352,23 @@ const bulk = (group: 'agent' | 'skill' | 'mcpServer' | 'extension', invert: bool
     return
   }
 
+  if (group === 'extension') {
+    if (invert) {
+      manualExtensions.value = keys.filter((name) => !checkedExtensions.value.includes(name))
+      offExtensions.value = keys.filter((name) => checkedExtensions.value.includes(name))
+    } else {
+      manualExtensions.value = [...keys]
+      offExtensions.value = []
+    }
+    return
+  }
+  // wiki
   if (invert) {
-    manualExtensions.value = keys.filter((name) => !checkedExtensions.value.includes(name))
-    offExtensions.value = keys.filter((name) => checkedExtensions.value.includes(name))
+    manualWiki.value = keys.filter((slug) => !checkedWiki.value.includes(slug))
+    offWiki.value = keys.filter((slug) => checkedWiki.value.includes(slug))
   } else {
-    manualExtensions.value = [...keys]
-    offExtensions.value = []
+    manualWiki.value = [...keys]
+    offWiki.value = []
   }
 }
 
@@ -329,7 +384,7 @@ const load = async (): Promise<void> => {
     inventory.value = await listBackupInventory()
   } catch (error) {
     message.error(`读取可导出的数据失败：${error instanceof Error ? error.message : String(error)}`)
-    inventory.value = { agents: [], skills: [], mcpServers: [], extensions: [] }
+    inventory.value = { agents: [], skills: [], mcpServers: [], extensions: [], wikiPages: [] }
   } finally {
     loading.value = false
   }
@@ -345,9 +400,10 @@ const doExport = async (): Promise<void> => {
       skillNames: checkedSkills.value,
       mcpServerIds: checkedMcp.value,
       extensionNames: checkedExtensions.value,
+      wikiSlugs: checkedWiki.value,
     })
     message.success(
-      `已导出 ${result.fileName}：智能体 ${result.counts.agents} · Skills ${result.counts.skills} · MCP ${result.counts.mcpServers} · 扩展 ${result.counts.extensions}（${result.zipPath}）`,
+      `已导出 ${result.fileName}：智能体 ${result.counts.agents} · Skills ${result.counts.skills} · MCP ${result.counts.mcpServers} · 扩展 ${result.counts.extensions} · Wiki ${result.counts.wiki}（${result.zipPath}）`,
     )
     emit('close')
   } catch (error) {
@@ -529,6 +585,49 @@ watch(
               </button>
             </li>
             <li v-if="!mcpRows.length" class="empty">没有 MCP server</li>
+          </ul>
+        </section>
+
+        <!-- Wiki 页面 -->
+        <section class="group">
+          <header class="group-head">
+            <button
+              type="button"
+              class="group-toggle"
+              :aria-expanded="!collapsed.wiki"
+              @click="toggleCollapse('wiki')"
+            >
+              <NIcon :size="14">
+                <ChevronDown v-if="!collapsed.wiki" />
+                <ChevronRight v-else />
+              </NIcon>
+              <span class="group-title">Wiki 页面</span>
+              <span class="group-count tnum">{{ checkedWiki.length }} / {{ wikiRows.length }}</span>
+            </button>
+            <span class="group-bulk">
+              <button type="button" class="link" @click="bulk('wiki', false)">全选</button>
+              <button type="button" class="link" @click="bulk('wiki', true)">反选</button>
+            </span>
+          </header>
+          <ul v-if="!collapsed.wiki" class="rows">
+            <li v-for="row in wikiRows" :key="row.key">
+              <button
+                type="button"
+                class="row"
+                :class="{ checked: isChecked('wiki', row.key) }"
+                :aria-pressed="isChecked('wiki', row.key)"
+                @click="toggle('wiki', row.key)"
+              >
+                <span class="row-text">
+                  <span class="row-label">{{ row.label }}</span>
+                  <span class="row-hint">{{ row.hint }}</span>
+                </span>
+                <span class="row-check" :class="{ on: isChecked('wiki', row.key) }">
+                  <Check v-if="isChecked('wiki', row.key)" :size="13" />
+                </span>
+              </button>
+            </li>
+            <li v-if="!wikiRows.length" class="empty">没有 wiki 页面</li>
           </ul>
         </section>
 
