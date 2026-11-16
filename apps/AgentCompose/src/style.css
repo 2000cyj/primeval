@@ -179,18 +179,13 @@ html {
  * top 必须是顶栏高度：顶栏自己也是 sticky 的（top: 0），标题要排在它下面，
  * 不然会被盖住一半。
  *
- * 背景那两行 shadow 是为了盖住缝：
- * - 上方 20px：.page 的 padding-top，head 吸顶后这里会露出滚过的内容
- * - 下方 16px：head 与下一块之间是 margin / gap，不是盒子，内容会从缝里透出
- *
- * 用 shadow 而不是 padding/margin 补偿 —— shadow 不占布局，视觉位置不变。
+ * 只要背景色，不要用 box-shadow 往下延伸 —— 吸顶元素的内容不会跑到它上面
+ * （z-index 已经挡住了），延伸反而会盖住紧跟在标题下面的那块
+ * （MCP 页的 tab 行就是这么被切掉一半的）。
  */
 .page-head {
   position: sticky;
   top: var(--h-header);
   z-index: 5;
   background: var(--c-bg);
-  box-shadow:
-    0 16px 0 var(--c-bg),
-    0 -20px 0 var(--c-bg);
 }
