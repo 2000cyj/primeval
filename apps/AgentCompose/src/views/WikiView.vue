@@ -19,10 +19,9 @@ import {
   Search,
   Trash2,
 } from 'lucide-vue-next'
-import { MdEditor, type ToolbarNames } from 'md-editor-v3'
+
 // md-editor-v3 的样式不在包内自动引入，漏了这一句编辑器就是一堆没样式的标签
-import 'md-editor-v3/lib/style.css'
-import MarkdownView from '@/components/MarkdownView.vue'
+import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import {
   createWikiPage,
   deleteWikiPage,
@@ -58,31 +57,6 @@ const savedContent = ref('')
 
 /** 折叠起来的节点（存 slug） */
 const collapsed = ref<Set<string>>(new Set())
-
-/**
- * 编辑器工具栏。
- *
- * 只留常用的一批 —— 预览、目录、GitHub 那些按钮在这个页面里没有意义
- * （预览我们自己用 MarkdownView 渲染）。
- */
-const EDITOR_TOOLBARS: ToolbarNames[] = [
-  'bold',
-  'italic',
-  'strikeThrough',
-  'title',
-  'quote',
-  'unorderedList',
-  'orderedList',
-  'task',
-  'codeRow',
-  'code',
-  'link',
-  'table',
-  'revoke',
-  'next',
-  '-',
-  'fullscreen',
-]
 
 /** 搜索词 */
 const query = ref('')
@@ -537,31 +511,8 @@ onMounted(() => {
           </label>
         </div>
 
-        <div class="panes">
-          <!--
-            编辑区：md-editor-v3。
-            预览关掉 —— 我们用下面的 MarkdownView 自己渲染，
-            那边的输出一定经过 DOMPurify。
-          -->
-          <div class="pane pane-editor">
-            <MdEditor
-              v-model="content"
-              class="md-host"
-              :preview="false"
-              :footers="[]"
-              :toolbars="EDITOR_TOOLBARS"
-              :no-upload-img="true"
-              placeholder="用 Markdown 写正文…"
-            />
-          </div>
-
-          <div class="pane pane-preview">
-            <div class="pane-title">实时预览</div>
-            <div class="preview-scroll">
-              <MarkdownView :source="content" />
-            </div>
-          </div>
-        </div>
+        <!-- 编辑区 + 实时预览（跟 skill 编辑器共用同一个组件） -->
+        <MarkdownEditor v-model="content" class="panes" placeholder="用 Markdown 写正文…" />
       </template>
 
       <!-- 没打开页面时的空态 -->
@@ -872,55 +823,11 @@ onMounted(() => {
   width: 240px;
 }
 
-/* 编辑区 + 预览 */
+/* 编辑区 + 预览（组件自己的样式在 MarkdownEditor 里，这里只管占位） */
 .panes {
-  display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
-}
-
-.pane {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.pane-editor {
-  border-right: 1px solid var(--c-border);
-}
-
-/*
- * md-editor-v3 自带高度（500px），这里让它跟着面板撑满 ——
- * 面板是 flex 容器，不给高度的话编辑器就固定 500px，下面留一片空白。
- *
- * md-editor 的根元素就是 .md-editor（同时带了我们传的 md-host），
- * 所以直接改 .md-host 就行，不用再往里套一层。
- */
-.md-host {
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-  border: none;
-  border-radius: 0;
-}
-
-.pane-title {
-  flex: none;
-  padding: 8px 16px;
-  font-size: 11px;
-  color: var(--c-text-3);
-  border-bottom: 1px solid var(--c-border);
-}
-
-.preview-scroll {
-  flex: 1;
-  min-height: 0;
-  padding: 16px;
-  overflow-y: auto;
 }
 
 /* 没打开页面时的空态 */

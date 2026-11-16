@@ -17,7 +17,7 @@ import {
 import SkillRowMenu, { type SkillMenuAction } from '@/components/SkillRowMenu.vue'
 import SkillDetailDrawer from '@/components/SkillDetailDrawer.vue'
 import SkillCreateModal, { type CreateMethod } from '@/components/SkillCreateModal.vue'
-import SkillEditModal from '@/components/SkillEditModal.vue'
+import SkillEditorModal from '@/components/SkillEditorModal.vue'
 import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
 import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
@@ -365,6 +365,18 @@ const openCreate = () => {
   showCreate.value = true
 }
 
+/**
+ * 手动创建完了 → 直接打开大页面写正文。
+ *
+ * 小弹窗只管名字，正文得在一个能好好写的地方写。
+ */
+const onManualCreated = (info: SkillInfo) => {
+  skillList.value = [toDisplaySkill(info), ...skillList.value]
+  editTarget.value = info.name
+  showEdit.value = true
+  message.success(`已创建：${info.name} —— 写正文吧`)
+}
+
 /** 添加成功：插入到列表头部 */
 const onCreated = (info: SkillInfo) => {
   skillList.value = [toDisplaySkill(info), ...skillList.value]
@@ -548,6 +560,7 @@ const onDuplicated = (info: SkillInfo) => {
       :initial-method="createMethod"
       @close="showCreate = false"
       @created="onCreated"
+      @edit="onManualCreated"
     />
 
     <SkillDetailDrawer
@@ -567,8 +580,8 @@ const onDuplicated = (info: SkillInfo) => {
       "
     />
 
-    <SkillEditModal
-      v-model:show="showEdit"
+    <!-- 大页面编辑器：写 SKILL.md 正文 -->
+    <SkillEditorModal
       :skill-name="editTarget"
       @close="showEdit = false"
       @saved="(info: SkillInfo) => onSaved(info, editTarget ?? info.name)"

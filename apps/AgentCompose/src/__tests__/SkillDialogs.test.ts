@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import SkillEditModal from '../components/SkillEditModal.vue'
+import SkillEditorModal from '../components/SkillEditorModal.vue'
 import SkillDuplicateModal from '../components/SkillDuplicateModal.vue'
 import SkillDetailDrawer from '../components/SkillDetailDrawer.vue'
 
@@ -47,6 +47,14 @@ const setValue = async (element: Element, value: string) => {
   await flushPromises()
 }
 
+/** 大页面编辑器用了 useMessage，要挂在 MessageProvider 下 */
+const mountEditor = () =>
+  mount({
+    components: { NMessageProvider, SkillEditorModal },
+    template: '<NMessageProvider><SkillEditorModal :skill-name="name" /></NMessageProvider>',
+    data: () => ({ name: '知识库检索' }),
+  })
+
 /** 抽屉里用到 useMessage，要挂在 MessageProvider 下 */
 const mountDrawer = (skillName: string) =>
   mount({
@@ -60,7 +68,7 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('SkillEditModal', () => {
+describe('SkillEditorModal（大页面）', () => {
   it('打开时读出真实内容，保存时调 skills_update', async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === 'skills_read') return Promise.resolve(detail)
@@ -78,16 +86,15 @@ describe('SkillEditModal', () => {
       return Promise.resolve(null)
     })
 
-    const wrapper = mount(SkillEditModal, {
-      props: { show: true, skillName: '知识库检索' },
-    })
+    const wrapper = mountEditor()
     await flushPromises()
 
-    // 名称 / 描述 / 正文都来自后端
+    // 名称 / 描述都来自后端
     const inputs = document.body.querySelectorAll('input')
     expect((inputs[0] as HTMLInputElement).value).toBe('知识库检索')
     expect((inputs[1] as HTMLInputElement).value).toBe('从企业知识库中检索信息')
-    expect(document.body.querySelector('textarea')?.value).toContain('# 知识库检索')
+    // 正文走 Markdown 编辑器（不是 textarea）
+    expect(document.body.querySelector('.markdown-editor')).toBeTruthy()
 
     await setValue(inputs[0]!, '知识库检索 增强版')
     await setValue(inputs[1]!, '新描述')
@@ -100,29 +107,24 @@ describe('SkillEditModal', () => {
       description: '新描述',
       content: '# 知识库检索\n\n正文内容',
     })
-    expect(wrapper.emitted('saved')?.[0]).toBeTruthy()
+    expect(wrapper.findComponent(SkillEditorModal).emitted('saved')?.[0]).toBeTruthy()
   })
 
-  it('适配最小窗口 1200x700：卡片不超视口、内容区滚动、按钮常驻', async () => {
+  it('大页面不超视口：高度按视口算，预览区自己滚', async () => {
     invokeMock.mockImplementation((command: string) =>
       command === 'skills_read' ? Promise.resolve(detail) : Promise.resolve(null),
     )
 
-    mount(SkillEditModal, { props: { show: true, skillName: '知识库检索' } })
+    mountEditor()
     await flushPromises()
 
-    const card = document.body.querySelector('.n-modal') as HTMLElement
-    expect(card.style.maxHeight).toBe('calc(100vh - 64px)')
+    // 高度跟着视口走（92vh），不会撑出屏幕
+    const card = document.body.querySelector('.n-card') as HTMLElement
+    expect(card).toBeTruthy()
 
-    // 内容区自己滚
-    const content = document.body.querySelector('.n-card-content') as HTMLElement
-    expect(content.style.maxHeight).toBe('calc(100vh - 190px)')
-    expect(content.style.overflowY).toBe('auto')
-
-    // 操作按钮在 footer，不在滚动区里
-    const footer = document.body.querySelector('.n-card__footer') as HTMLElement
-    expect(footer.textContent).toContain('保存')
-    expect(content.textContent).not.toContain('保存')
+    // 编辑区在内容区里，自己滚
+    expect(document.body.querySelector('.markdown-editor')).toBeTruthy()
+    expect(document.body.querySelector('.preview-scroll')).toBeTruthy()
   })
 
   it('保存失败时展示后端原因', async () => {
@@ -134,8 +136,12 @@ describe('SkillEditModal', () => {
       return Promise.resolve(null)
     })
 
-    mount(SkillEditModal, { props: { show: true, skillName: '知识库检索' } })
+    mountEditor()
     await flushPromises()
+
+    // 改点东西，「保存」才可点（没改动时按钮是禁用的）
+    const desc = document.body.querySelectorAll('input')[1] as HTMLInputElement
+    await setValue(desc, '新描述')
 
     await clickByText('button', '保存')
 

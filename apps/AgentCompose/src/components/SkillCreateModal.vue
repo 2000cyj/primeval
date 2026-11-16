@@ -44,6 +44,13 @@ const visible = defineModel<boolean>('show', { default: false })
 const emit = defineEmits<{
   close: []
   created: [skill: SkillInfo]
+  /**
+   * 手动创建完了，去大页面写正文。
+   *
+   * 小弹窗只管名字 —— 正文得在一个能好好写的地方写，
+   * 那就是 skill 编辑器的大页面。
+   */
+  edit: [skill: SkillInfo]
 }>()
 
 /** 弹窗内的步骤：chooser 是方式选择，其余四种是具体表单 */
@@ -295,13 +302,23 @@ const back = () => {
 }
 
 /** 统一的提交包装：处理 loading、错误提示与成功回调 */
-const run = async (action: () => Promise<SkillInfo>) => {
+/**
+ * 跑一个创建动作。
+ *
+ * `onDone` 用来决定创建完干什么 —— 手动创建要去大页面写正文，
+ * 其它方式（导入 URL / 本地目录）建完就成了，不用再管。
+ */
+const run = async (action: () => Promise<SkillInfo>, onDone?: (skill: SkillInfo) => void) => {
   if (busy.value) return
   busy.value = true
   error.value = ''
   try {
     const skill = await action()
-    emit('created', skill)
+    if (onDone) {
+      onDone(skill)
+    } else {
+      emit('created', skill)
+    }
     visible.value = false
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -316,7 +333,11 @@ const submitManual = () => {
     error.value = '请填写 skill 名称'
     return
   }
-  void run(() => createManualSkill(trimmedName, description.value.trim()))
+  // 创建完直接去大页面写正文 —— 中间这一步没意义
+  void run(
+    () => createManualSkill(trimmedName, ''),
+    (skill) => emit('edit', skill),
+  )
 }
 
 const submitUrl = () => {
@@ -446,7 +467,7 @@ watch(
       </li>
     </ul>
 
-    <!-- 手动创建 -->
+    <!-- 手动创建：只填名字，正文去大页面写 -->
     <form v-else-if="step === 'manual'" class="form" @submit.prevent="submitManual">
       <label class="field">
         <span class="field-label">名称</span>
@@ -460,21 +481,10 @@ watch(
         />
         <small class="field-hint">
           规范上限 64 字符；同步到 Claude Code / Codex 时须为
-          kebab-case（仅小写字母、数字、连字符）， 且与目录名一致。
+          kebab-case（仅小写字母、数字、连字符），且与目录名一致。
         </small>
       </label>
-      <label class="field">
-        <span class="field-label">描述</span>
-        <NInput
-          v-model:value="description"
-          type="textarea"
-          :autosize="{ minRows: 3, maxRows: 6 }"
-          maxlength="1024"
-          show-count
-          placeholder="简要描述该 skill 可以完成什么任务"
-        />
-        <small class="field-hint">规范上限 1024 字符，建议 100–200 词。</small>
-      </label>
+      <p class="field-hint">下一步会打开一个大页面写正文 —— 描述也在那里定。</p>
     </form>
 
     <!-- URL 导入 -->
@@ -673,7 +683,7 @@ watch(
             <FilePlus2 />
           </NIcon>
         </template>
-        创建 skill
+        下一步：写正文
       </NButton>
       <NButton
         v-else-if="step === 'url'"

@@ -80,15 +80,12 @@ describe('SkillCreateModal', () => {
     expect(text).toContain('从运行时复制')
   })
 
-  it('输入框上限按规范：名称 64、描述 1024', async () => {
+  it('输入框上限按规范：名称 64（描述挪到大页面了）', async () => {
     invokeMock.mockResolvedValue(null)
     await mountModal('manual')
 
     const nameInput = document.body.querySelector('input') as HTMLInputElement
     expect(nameInput.getAttribute('maxlength')).toBe('64')
-
-    const textarea = document.body.querySelector('textarea') as HTMLTextAreaElement
-    expect(textarea.getAttribute('maxlength')).toBe('1024')
   })
 
   it('只有一个关闭按钮（用卡片自带的，不自己再画一个）', async () => {
@@ -132,14 +129,15 @@ describe('SkillCreateModal', () => {
     const wrapper = await mountModal('manual')
 
     await setInput(0, '市场报告生成器')
-    await clickByText('button', '创建 skill')
+    await clickByText('button', '下一步：写正文')
 
     expect(calledCommand('skills_create_manual')).toBeTruthy()
     expect(invokeMock.mock.calls[0]).toEqual([
       'skills_create_manual',
       { name: '市场报告生成器', description: '' },
     ])
-    expect(wrapper.emitted('created')?.[0]).toEqual([skillInfo])
+    // 创建完不是「created」而是「edit」—— 直接去大页面写正文
+    expect(wrapper.emitted('edit')?.[0]).toEqual([skillInfo])
   })
 
   it('URL 导入会调 skills_import_url', async () => {
