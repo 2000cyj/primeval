@@ -33,3 +33,4 @@ reqwest = { version = "0.13", features = ["json", "socks"] }
 url = "2"
 tauri-plugin-dialog = "2.8.4"
 flate2 = "1.1.11"
+chrono = { version = "0.4", features = ["clock"] }

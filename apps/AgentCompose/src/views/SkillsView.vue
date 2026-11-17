@@ -21,6 +21,7 @@ import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
 import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
+import { formatDateTime } from '@/utils/datetime'
 
 /**
  * 编辑器是**独立视图**（占 Skills 页的位置），不是弹窗 ——
@@ -248,8 +249,6 @@ const agentNamesFor = (relativePath: string): string[] =>
 
 /** 把后端返回的 skill 转成列表里展示的结构 */
 const toDisplaySkill = (info: SkillInfo): Skill => {
-  const updated = new Date(info.updatedAtMs)
-  const pad = (value: number) => String(value).padStart(2, '0')
   return {
     name: info.name,
     // 真实 skill 没有「分类」概念，用来源代替。
@@ -260,7 +259,8 @@ const toDisplaySkill = (info: SkillInfo): Skill => {
     description: info.description || '（暂无描述）',
     // 使用者 = 绑定了这个 skill 的智能体名称（按相对路径引用匹配）
     agentNames: agentNamesFor(info.relativePath),
-    updated: `${updated.getFullYear()}-${pad(updated.getMonth() + 1)}-${pad(updated.getDate())} ${pad(updated.getHours())}:${pad(updated.getMinutes())}:${pad(updated.getSeconds())}`,
+    // 取不到文件修改时间时后端给 0 —— 那是「未知」，不是 1970 年
+    updated: info.updatedAtMs ? formatDateTime(info.updatedAtMs) : '—',
     icon: sourceIcon(info.source),
     iconBg,
     iconColor,

@@ -6,6 +6,7 @@ import { useNotifications } from '@/composables/useNotifications'
 import { useWindowChrome } from '@/composables/useWindowChrome'
 import HelpModal from '@/components/HelpModal.vue'
 import WindowControls from '@/components/WindowControls.vue'
+import { formatDateTime } from '@/utils/datetime'
 
 const { notices, runningCount, dismiss, clear } = useNotifications()
 
@@ -18,18 +19,8 @@ const helpOpen = ref(false)
 /** 角标上的数字：没有就不显示 */
 const badge = computed(() => (notices.value.length > 99 ? '99+' : String(notices.value.length)))
 
-/** 时间显示：今天的只写时分，更早的补上日期 */
-const timeText = (timestamp: number): string => {
-  const date = new Date(timestamp)
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mm = String(date.getMinutes()).padStart(2, '0')
-  const today = new Date()
-  const sameDay =
-    date.getFullYear() === today.getFullYear() &&
-    date.getMonth() === today.getMonth() &&
-    date.getDate() === today.getDate()
-  return sameDay ? `${hh}:${mm}` : `${date.getMonth() + 1}/${date.getDate()} ${hh}:${mm}`
-}
+/** 时间显示：统一走 utils/datetime，跟其它页面一致（YYYY-MM-DD HH:mm:ss） */
+const timeText = (timestamp: number): string => formatDateTime(timestamp)
 </script>
 
 <template>

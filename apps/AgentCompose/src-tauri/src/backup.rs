@@ -352,53 +352,45 @@ pub fn backup_pick_import_zip(app: AppHandle) -> Option<String> {
     picked.into_path().ok().map(|p| p.to_string_lossy().to_string())
 }
 
-/// 默认的导出文件名（带时间戳）。
+/// 默认的导出文件名（带本地时间戳）。
+///
+/// 时间戳用**本地时区** —— 用户在文件对话框里看到的时间，
+/// 要跟自己电脑上的时钟对得上。手算 epoch 天数只能得到 UTC，
+/// 东八区会差 8 小时，所以这里用 chrono 的 `Local`。
 fn default_export_name() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // 手动转成本地时间戳 —— 不引 chrono 只为格式化一个文件名不划算。
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    let (hour, minute, second) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let mut year = 1970i64;
-    let mut remaining = days;
-    loop {
-        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-        let year_days = if leap { 366 } else { 365 };
-        if remaining < year_days {
-            break;
-        }
-        remaining -= year_days;
-        year += 1;
+    chrono::Local::now()
+        .format("AgentSpace-export-%Y%m%d-%H%M%S.zip")
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 导出文件名里的时间戳要和**本地时钟**对得上。
+    ///
+    /// 以前手算 epoch 天数，只能得到 UTC —— 东八区会差 8 小时，
+    /// 用户在文件对话框里看到的时间跟自己电脑上的钟不一致。
+    #[test]
+    fn export_name_uses_local_time() {
+        let name = default_export_name();
+        assert!(
+            name.starts_with("AgentSpace-export-"),
+            "文件名格式不对：{name}"
+        );
+        assert!(name.ends_with(".zip"), "文件名格式不对：{name}");
+
+        // 解析出文件名里的时间，跟本机现在的本地时间比
+        let stamp = &name["AgentSpace-export-".len()..name.len() - ".zip".len()];
+        let parsed = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d-%H%M%S")
+            .expect("文件名里的时间戳解析不了");
+        let local = chrono::Local::now().naive_local();
+
+        // 允许 2 分钟误差 —— 测试跑的时候时间会往前走
+        let drift = (local - parsed).num_seconds().abs();
+        assert!(
+            drift <= 120,
+            "文件名时间戳 {parsed} 跟本地时间 {local} 差了 {drift} 秒（应为本地时区）"
+        );
     }
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let month_days = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut month = 1i64;
-    let mut day = 1i64;
-    for (index, len) in month_days.iter().enumerate() {
-        if remaining < *len as i64 {
-            month = index as i64 + 1;
-            day = remaining + 1;
-            break;
-        }
-        remaining -= *len as i64;
-    }
-    format!(
-        "AgentSpace-export-{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}.zip"
-    )
 }

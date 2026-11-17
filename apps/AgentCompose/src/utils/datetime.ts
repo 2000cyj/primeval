@@ -1,23 +1,15 @@
 /**
- * 时间格式化。
+ * 时间格式化 —— 全应用唯一入口。
  *
- * Release 的 pub_date 是 ISO8601（如 `2026-11-14T05:50:25Z`）——
- * 直接显示就是一串机器格式。这里转成「2026-11-14 13:50」这种能读的。
+ * 标准：**绝对时间一律「YYYY-MM-DD HH:mm:ss」（本地时区，带秒）**。
+ *
+ * 以前每个页面各写各的字符串拼接：有的带秒有的不带，
+ * 有的用 `M/D` 有的用 `Y-M-D`，同一条时间在不同页面长得不一样。
+ * 现在统一走这里 —— 要改格式只改这一处。
  */
 
-/**
- * 把 ISO8601 时间转成「YYYY-MM-DD HH:mm:ss」。
- *
- * 按**本地时区**显示 —— 用户看到的是自己所在时区的发布时刻。
- * 解析不了就原样返回（不显示成空白，也不显示成 Invalid Date）。
- */
-export const formatDateTime = (iso: string): string => {
-  const trimmed = iso.trim()
-  if (!trimmed) return ''
-
-  const date = new Date(trimmed)
-  if (Number.isNaN(date.getTime())) return trimmed
-
+/** 把 Date 拼成「YYYY-MM-DD HH:mm:ss」（本地时区）。 */
+const toLocalText = (date: Date): string => {
   const pad = (value: number): string => String(value).padStart(2, '0')
   const y = date.getFullYear()
   const m = pad(date.getMonth() + 1)
@@ -29,15 +21,34 @@ export const formatDateTime = (iso: string): string => {
 }
 
 /**
- * 把 ISO8601 时间转成「多久之前」。
+ * 绝对时间：ISO8601 字符串或 epoch 毫秒 → 「YYYY-MM-DD HH:mm:ss」。
  *
- * 刚发布说「刚刚」，一天内说「3 小时前」，更久就直接给日期。
+ * 按**本地时区**显示 —— 用户看到的是自己所在时区的时刻。
+ * 字符串解析不了就原样返回（不显示成空白，也不显示成 Invalid Date）。
  */
-export const formatRelativeTime = (iso: string): string => {
-  const trimmed = iso.trim()
+export const formatDateTime = (value: string | number): string => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return ''
+    return toLocalText(new Date(value))
+  }
+
+  const trimmed = value.trim()
   if (!trimmed) return ''
 
   const date = new Date(trimmed)
+  if (Number.isNaN(date.getTime())) return trimmed
+
+  return toLocalText(date)
+}
+
+/**
+ * 相对时间：ISO8601 字符串或 epoch 毫秒 → 「多久之前」。
+ *
+ * 刚发布说「刚刚」，一天内说「3 小时前」，
+ * 超过 30 天回落到绝对格式 —— 「45 天前」不如直接给日期。
+ */
+export const formatRelativeTime = (value: string | number): string => {
+  const date = typeof value === 'number' ? new Date(value) : new Date(value.trim())
   if (Number.isNaN(date.getTime())) return ''
 
   const diffMs = Date.now() - date.getTime()
@@ -51,5 +62,5 @@ export const formatRelativeTime = (iso: string): string => {
   const diffDay = Math.floor(diffHour / 24)
   if (diffDay < 30) return `${diffDay} 天前`
 
-  return formatDateTime(trimmed)
+  return formatDateTime(value)
 }

@@ -6,6 +6,7 @@ import { agentIcons } from '@/data/agentIcons'
 import { useCreatedAgents, type CreatedAgent } from '@/data/createdAgents'
 import AgentRunMenu, { type AgentRunMenuAction } from '@/components/AgentRunMenu.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
+import { formatRelativeTime } from '@/utils/datetime'
 
 const emit = defineEmits<{ create: []; edit: [id: string] }>()
 
@@ -18,17 +19,8 @@ const { createdAgents, remove } = useCreatedAgents()
 /** 智能体跑在 Pi 上，所以图标就用 Pi 的 */
 const iconOf = (): string => agentIcons.pi
 
-/** 创建时间 → 「刚刚 / N 分钟前 / …」 */
-const sinceText = (timestamp: number): string => {
-  const diff = Date.now() - timestamp
-  const minute = 60_000
-  const hour = 60 * minute
-  const day = 24 * hour
-  if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
-  return `${Math.floor(diff / day)} 天前`
-}
+/** 创建时间 → 「刚刚 / N 分钟前 / …」，超过 30 天回落到完整时间戳 */
+const sinceText = (timestamp: number): string => formatRelativeTime(timestamp)
 
 const visibleRuns = computed(() => {
   const keyword = query.value.trim().toLowerCase()

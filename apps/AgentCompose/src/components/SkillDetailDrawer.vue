@@ -3,6 +3,7 @@ import { ref, watch } from 'vue'
 import { NButton, NDrawer, NDrawerContent, NIcon, NSwitch, useMessage } from 'naive-ui'
 import { FolderOpen, Pencil, Trash2 } from 'lucide-vue-next'
 import { readSkill, setSkillEnabled, type SkillDetail } from '@/api/skills'
+import { formatDateTime } from '@/utils/datetime'
 
 const props = defineProps<{
   /** 要查看的 skill 名；null 表示关闭 */
@@ -42,12 +43,10 @@ const formatSize = (bytes: number): string => {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** 时间格式化 */
+/** 时间格式化：统一走 utils/datetime，格式跟其它页面一致（带秒） */
 const formatTime = (ms: number): string => {
   if (!ms) return '—'
-  const date = new Date(ms)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return formatDateTime(ms)
 }
 
 const load = (name: string) => {
