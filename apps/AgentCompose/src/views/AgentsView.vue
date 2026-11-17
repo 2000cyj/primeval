@@ -608,7 +608,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
 
 .cell-new {
   font-size: 11px;
-  color: var(--c-accent);
+  color: var(--c-danger);
 }
 
 /* 操作进行中：版本列里的「安装中 / 升级中 / 卸载中」 */
