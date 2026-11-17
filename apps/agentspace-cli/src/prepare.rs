@@ -786,6 +786,134 @@ mod tests {
         let _ = fs::remove_dir_all(&home);
     }
 
+    // ── 端到端：绑定 → 落地 ──────────────────────────────
+
+    /// 临时 home + 项目目录。
+    fn temp_dirs(tag: &str) -> (Paths, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "agentspace-e2e-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(base.join(".agent-compose")).unwrap();
+        fs::create_dir_all(base.join("project")).unwrap();
+        (Paths::new(base.clone()), base.join("project"))
+    }
+
+    /// 整套链路：wiki 页面 → 图谱边 → 智能体绑定 → 落地 → 作用域文件。
+    #[test]
+    fn wiki_binding_flows_from_pages_to_landed_scope() {
+        let (paths, cwd) = temp_dirs("wiki");
+
+        // 造 wiki 页面
+        let ops = agentspace_core::wiki::create_page(&paths, "运维", None).unwrap();
+        let deploy =
+            agentspace_core::wiki::create_page(&paths, "部署", Some(ops.slug.clone())).unwrap();
+        let rollback =
+            agentspace_core::wiki::create_page(&paths, "回滚", Some(deploy.slug.clone())).unwrap();
+        let finance = agentspace_core::wiki::create_page(&paths, "财务", None).unwrap();
+
+        // 部署页引用回滚 —— 建立图的边
+        agentspace_core::wiki::save_page(
+            &paths,
+            &deploy.slug,
+            "部署",
+            "部署步骤见 [[回滚流程]]",
+            &["发布".into()],
+            Some(ops.slug.clone()),
+        )
+        .unwrap();
+
+        // 智能体绑定**入口页面** —— 整棵子树自动可见
+        let agent = CreatedAgent {
+            id: "kb".into(),
+            name: "知识助手".into(),
+            instruction: "只根据知识库回答".into(),
+            wiki_pages: vec![format!("wiki/{}", ops.slug)],
+            version: 1,
+            ..Default::default()
+        };
+
+        let runtime = PiRuntime::new();
+        let state = land_with(&runtime, &agent, &cwd, &paths, LandPolicy::Always);
+
+        // 指令里有知识库索引
+        let instructions = fs::read_to_string(cwd.join(".pi").join("AGENTS.md")).unwrap();
+        assert!(
+            instructions.contains("## Knowledge Base"),
+            "指令里要有知识库那一节：\n{instructions}"
+        );
+        assert!(
+            instructions.contains("slug: 部署"),
+            "索引里要列出子页面：\n{instructions}"
+        );
+        assert!(
+            !instructions.contains("财务"),
+            "范围外的页面不该出现在索引里：\n{instructions}"
+        );
+
+        // 作用域文件写出来了
+        let scope_path = cwd.join(".pi").join("wiki-scope.json");
+        assert!(scope_path.is_file(), "作用域文件要落地");
+        let scope: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&scope_path).unwrap()).unwrap();
+        let slugs: Vec<String> = scope["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|page| page["slug"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(slugs.contains(&ops.slug), "入口页面在作用域里");
+        assert!(slugs.contains(&deploy.slug), "子页面自动在作用域里");
+        assert!(slugs.contains(&rollback.slug), "孙页面也自动在作用域里");
+        assert!(!slugs.contains(&finance.slug), "范围外的进不来");
+        assert!(
+            scope["wikiRoot"].as_str().is_some(),
+            "作用域文件要带上 wiki 根目录"
+        );
+
+        // 落地记录里包含作用域文件
+        assert!(
+            state.files.iter().any(|file| file.contains("wiki-scope.json")),
+            "落地记录要记作用域文件：{:?}",
+            state.files
+        );
+
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    /// 解绑 wiki → 作用域文件要删掉，
+    /// 否则上次绑过、这次解绑了，页面还能读到。
+    #[test]
+    fn unbinding_wiki_removes_the_scope_file() {
+        let (paths, cwd) = temp_dirs("unbind");
+        let ops = agentspace_core::wiki::create_page(&paths, "运维", None).unwrap();
+
+        let mut agent = CreatedAgent {
+            id: "kb".into(),
+            name: "知识助手".into(),
+            wiki_pages: vec![format!("wiki/{}", ops.slug)],
+            version: 1,
+            ..Default::default()
+        };
+        let runtime = PiRuntime::new();
+        land_with(&runtime, &agent, &cwd, &paths, LandPolicy::Always);
+        assert!(cwd.join(".pi").join("wiki-scope.json").is_file());
+
+        agent.wiki_pages = Vec::new();
+        agent.version = 2;
+        land_with(&runtime, &agent, &cwd, &paths, LandPolicy::Always);
+        assert!(
+            !cwd.join(".pi").join("wiki-scope.json").is_file(),
+            "解绑后作用域文件要删掉"
+        );
+
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
     #[test]
     fn managed_block_new_file_writes_only_block() {
         let dir = std::env::temp_dir().join("agentspace-cli-block-new");

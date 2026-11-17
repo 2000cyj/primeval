@@ -359,7 +359,11 @@ export default function (pi: ExtensionAPI): void {
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const scope = loadScope(ctx.cwd)
       if (!scope || scope.pages.length === 0) {
-        return { content: [{ type: 'text', text: '这个智能体没有绑定知识库。' }], details: {} }
+        return {
+          isError: true,
+          content: [{ type: 'text', text: '这个智能体没有绑定知识库。' }],
+          details: {},
+        }
       }
       const query = typeof params.query === 'string' ? params.query : ''
       const limit = typeof params.limit === 'number' ? params.limit : 8
@@ -402,14 +406,23 @@ export default function (pi: ExtensionAPI): void {
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const scope = loadScope(ctx.cwd)
       if (!scope || scope.pages.length === 0) {
-        return { content: [{ type: 'text', text: '这个智能体没有绑定知识库。' }], details: {} }
+        return {
+          isError: true,
+          content: [{ type: 'text', text: '这个智能体没有绑定知识库。' }],
+          details: {},
+        }
       }
       const slug = typeof params.slug === 'string' ? params.slug.trim() : ''
       if (!slug) {
-        return { content: [{ type: 'text', text: '缺少参数：slug（页面标识）' }], details: {} }
+        return {
+          isError: true,
+          content: [{ type: 'text', text: '缺少参数：slug（页面标识）' }],
+          details: {},
+        }
       }
       if (!isVisible(scope, slug)) {
         return {
+          isError: true,
           content: [{ type: 'text', text: `页面不在此智能体的知识范围内：${slug}` }],
           details: {},
         }
@@ -455,14 +468,23 @@ export default function (pi: ExtensionAPI): void {
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const scope = loadScope(ctx.cwd)
       if (!scope || scope.pages.length === 0) {
-        return { content: [{ type: 'text', text: '这个智能体没有绑定知识库。' }], details: {} }
+        return {
+          isError: true,
+          content: [{ type: 'text', text: '这个智能体没有绑定知识库。' }],
+          details: {},
+        }
       }
       const slug = typeof params.slug === 'string' ? params.slug.trim() : ''
       if (!slug) {
-        return { content: [{ type: 'text', text: '缺少参数：slug（页面标识）' }], details: {} }
+        return {
+          isError: true,
+          content: [{ type: 'text', text: '缺少参数：slug（页面标识）' }],
+          details: {},
+        }
       }
       if (!isVisible(scope, slug)) {
         return {
+          isError: true,
           content: [{ type: 'text', text: `页面不在此智能体的知识范围内：${slug}` }],
           details: {},
         }
