@@ -42,10 +42,10 @@ const toggleStyle = computed(() => ({
 const navItems = [
   { key: 'skills' as const, label: 'Skills', icon: Blocks },
   { key: 'mcp' as const, label: 'MCP', icon: Server },
+  { key: 'wiki' as const, label: 'Wiki', icon: BookOpen },
   { key: 'agents' as const, label: 'Agents', icon: Network },
   { key: 'extensions' as const, label: 'Pi 扩展', icon: PiGlyph },
   { key: 'agentRuns' as const, label: '智能体', icon: Cpu },
-  { key: 'wiki' as const, label: 'Wiki', icon: BookOpen },
 ]
 
 /** Agents 的计数：本机真实装好的 CLI 数量（探测结果在模块级共享） */
