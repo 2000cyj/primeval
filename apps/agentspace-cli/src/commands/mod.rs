@@ -1,6 +1,8 @@
 //! CLI 的各个命令组。
 
 pub mod agent;
+pub mod app;
+pub mod backup;
 pub mod extension;
 pub mod install;
 pub mod mcp;
@@ -9,6 +11,8 @@ pub mod proxy;
 pub mod run;
 pub mod skill;
 pub mod tool;
+pub mod version;
+pub mod wiki;
 
 /// 在同步函数里跑一个 future。
 ///

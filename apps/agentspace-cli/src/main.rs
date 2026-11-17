@@ -8,6 +8,9 @@
 //! agentspace mcp list              看有哪些 MCP server
 //! agentspace extension list        看有哪些 Pi 扩展
 //! agentspace agent list            看有哪些智能体
+//! agentspace wiki list             看知识库里有哪些页面
+//! agentspace backup inventory      看有哪些数据可以导出
+//! agentspace version               看 AgentSpace 和工具箱里各工具的版本
 //! agentspace tool list             看本机装了哪些 CLI
 //! ```
 //!
@@ -33,6 +36,10 @@
 //! ├── skill                 Skill 仓库
 //! ├── mcp                   MCP server
 //! ├── extension             Pi 扩展（自带 / npm / 自定义）
+//! ├── wiki                  内部知识库（Wiki）
+//! ├── backup                数据管理（导入 / 导出）
+//! ├── app                   桌面端本身（查更新）
+//! ├── version               版本总览
 //! ├── tool                  本机 CLI 工具箱
 //! └── proxy                 全局出站代理
 //! ```
@@ -103,6 +110,23 @@ enum Command {
     #[command(subcommand)]
     Extension(commands::extension::ExtensionCmd),
 
+    /// 内部知识库（Wiki）
+    #[command(subcommand)]
+    Wiki(commands::wiki::WikiCmd),
+
+    /// 数据管理（导入 / 导出）
+    #[command(subcommand)]
+    Backup(commands::backup::BackupCmd),
+
+    /// 桌面端本身（查更新）
+    #[command(subcommand)]
+    App(commands::app::AppCmd),
+
+    /// 版本总览：AgentSpace 自己 + 工具箱里各 CLI 工具
+    ///
+    /// 也认 `-version` / `-v`（归一化在 `normalize_version_alias` 里）。
+    Version(commands::version::VersionArgs),
+
     /// 本机 CLI 工具箱
     #[command(subcommand)]
     Tool(commands::tool::ToolCmd),
@@ -113,7 +137,7 @@ enum Command {
 }
 
 fn main() -> std::process::ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(normalize_version_alias(std::env::args_os().collect()));
     let paths = Paths::from_env();
     let code = match cli.command {
         Command::Run { name, args } => commands::run::run(&paths, &name, &args),
@@ -123,8 +147,75 @@ fn main() -> std::process::ExitCode {
         Command::Skill(cmd) => cmd.run(&paths),
         Command::Mcp(cmd) => cmd.run(&paths),
         Command::Extension(cmd) => cmd.run(&paths),
+        Command::Wiki(cmd) => cmd.run(&paths),
+        Command::Backup(cmd) => cmd.run(&paths),
+        Command::App(cmd) => cmd.run(&paths),
+        Command::Version(args) => commands::version::run(&paths, args),
         Command::Tool(cmd) => cmd.run(&paths),
         Command::Proxy(cmd) => cmd.run(&paths),
     };
     std::process::ExitCode::from(code)
+}
+
+/// 把 `-version` / `-v` 归一成 `version`。
+///
+/// clap 原生只认两种写法：`--version`（长选项）和 `-V`（单字符短选项）。
+/// `-version` 这种**单横线多字符**的写法它不认 —— 但用户习惯里它很常见，
+/// `-v` 也常被当成 `version` 用。
+///
+/// 只改**子命令位置**上的那一个参数（`args[1]`）——
+/// 后面的参数是传给子命令的，`agentspace run 某智能体 -v` 不该被改。
+fn normalize_version_alias(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let mut args = args;
+    let is_alias = args
+        .get(1)
+        .map(|arg| arg == "-version" || arg == "-v")
+        .unwrap_or(false);
+    if is_alias {
+        args[1] = std::ffi::OsString::from("version");
+    }
+    args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(items: &[&str]) -> Vec<std::ffi::OsString> {
+        items.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn version_aliases_are_normalized() {
+        for spelling in ["-version", "-v"] {
+            let args = normalize_version_alias(argv(&["agentspace", spelling]));
+            assert_eq!(args[1], "version", "{spelling} 应该归一成 version");
+        }
+    }
+
+    #[test]
+    fn plain_version_is_untouched() {
+        let args = normalize_version_alias(argv(&["agentspace", "version"]));
+        assert_eq!(args[1], "version");
+    }
+
+    #[test]
+    fn only_the_subcommand_position_is_touched() {
+        // 子命令后面的 `-v` 是传给子命令的，不能改
+        let args = normalize_version_alias(argv(&["agentspace", "run", "某智能体", "-v"]));
+        assert_eq!(args[1], "run");
+        assert_eq!(args[3], "-v");
+    }
+
+    #[test]
+    fn all_three_spellings_parse_to_the_same_command() {
+        for spelling in ["version", "-version", "-v"] {
+            let args = normalize_version_alias(argv(&["agentspace", spelling]));
+            let parsed = Cli::parse_from(args);
+            assert!(
+                matches!(parsed.command, Command::Version(_)),
+                "{spelling} 应该解析成 version 子命令"
+            );
+        }
+    }
 }

@@ -29,6 +29,9 @@ pub enum AgentCmd {
     /// 管理绑定的 MCP
     #[command(subcommand)]
     Mcp(McpBindCmd),
+    /// 管理绑定的 Wiki 页面
+    #[command(subcommand)]
+    Wiki(WikiBindCmd),
 }
 
 #[derive(Args, Debug)]
@@ -196,6 +199,30 @@ pub enum McpBindCmd {
     },
 }
 
+/// 智能体绑定的 Wiki 页面。
+///
+/// 绑的是**入口页面** —— 它的子树会连带继承，
+/// 以后在入口下面加子页不用重新改智能体配置。
+#[derive(Subcommand, Debug)]
+pub enum WikiBindCmd {
+    /// 看绑了哪些 Wiki 页面
+    List(GetArgs),
+    /// 绑一个 Wiki 页面（slug 或 `wiki/<slug>`）
+    Add {
+        /// 智能体 id 或名称
+        key: String,
+        /// 页面 slug
+        slug: String,
+    },
+    /// 解绑一个 Wiki 页面
+    Remove {
+        /// 智能体 id 或名称
+        key: String,
+        /// 页面 slug
+        slug: String,
+    },
+}
+
 impl AgentCmd {
     pub fn run(self, paths: &Paths) -> u8 {
         match self {
@@ -208,6 +235,7 @@ impl AgentCmd {
             AgentCmd::Import(args) => import_agent(paths, args),
             AgentCmd::Skills(cmd) => skills(paths, cmd),
             AgentCmd::Mcp(cmd) => mcp(paths, cmd),
+            AgentCmd::Wiki(cmd) => wiki(paths, cmd),
         }
     }
 }
@@ -653,6 +681,102 @@ fn mcp(paths: &Paths, cmd: McpBindCmd) -> u8 {
                 }
             }
         }
+    }
+}
+
+/// 智能体绑定 Wiki 页面。
+///
+/// 绑定的是**入口页面** —— 它的子树连带继承。
+/// 引用统一存成 `wiki/<slug>`，跟 skills / mcp 的相对引用一个路子。
+fn wiki(paths: &Paths, cmd: WikiBindCmd) -> u8 {
+    match cmd {
+        WikiBindCmd::List(args) => {
+            let found = match agent::resolve(paths, &args.key) {
+                Some(item) => item,
+                None => {
+                    eprintln!("找不到智能体：{}", args.key);
+                    return 3;
+                }
+            };
+            if output::wants_json(args.format, args.json) {
+                output::json(&found.wiki_pages);
+                return 0;
+            }
+            if found.wiki_pages.is_empty() {
+                println!("这个智能体还没绑知识库。");
+                return 0;
+            }
+            output::lines(&found.wiki_pages);
+            0
+        }
+        WikiBindCmd::Add { key, slug } => {
+            let mut found = match resolve_one(paths, &key) {
+                Ok(item) => item,
+                Err(error) => {
+                    eprintln!("{error}");
+                    return 3;
+                }
+            };
+            // 页面得存在 —— 绑一个不存在的 slug，agent 到时候什么都读不到。
+            if agentspace_core::wiki::title_of(paths, &slug).is_none() {
+                eprintln!("知识库里没有这个页面：{slug}");
+                return 3;
+            }
+            let reference = wiki_reference(&slug);
+            if found.wiki_pages.contains(&reference) {
+                println!("已经绑过了：{slug}");
+                return 0;
+            }
+            found.wiki_pages.push(reference.clone());
+            match agent::save(paths, &found) {
+                Ok(saved) => {
+                    println!("已绑定 {slug}（v{}）", saved.version);
+                    0
+                }
+                Err(error) => {
+                    eprintln!("绑定失败：{error}");
+                    1
+                }
+            }
+        }
+        WikiBindCmd::Remove { key, slug } => {
+            let mut found = match resolve_one(paths, &key) {
+                Ok(item) => item,
+                Err(error) => {
+                    eprintln!("{error}");
+                    return 3;
+                }
+            };
+            let reference = wiki_reference(&slug);
+            let before = found.wiki_pages.len();
+            found.wiki_pages.retain(|item| item != &reference);
+            if found.wiki_pages.len() == before {
+                println!("没绑着：{slug}");
+                return 0;
+            }
+            match agent::save(paths, &found) {
+                Ok(saved) => {
+                    println!("已解绑 {slug}（v{}）", saved.version);
+                    0
+                }
+                Err(error) => {
+                    eprintln!("解绑失败：{error}");
+                    1
+                }
+            }
+        }
+    }
+}
+
+/// Wiki 页面引用的统一写法。
+///
+/// 允许写 `wiki/xxx` 或直接写 `xxx` —— 后者补上前缀。
+fn wiki_reference(slug: &str) -> String {
+    let slug = slug.trim();
+    if slug.starts_with("wiki/") {
+        slug.to_string()
+    } else {
+        format!("wiki/{slug}")
     }
 }
 

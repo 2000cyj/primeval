@@ -1035,6 +1035,27 @@ fn install_sidecar(app: &AppHandle) {
     }
 }
 
+/// 把应用自己的版本号写到 `~/.agent-compose/app-version`。
+///
+/// 桌面端和命令行是两个进程 —— 命令行那边要查「有没有新版本」，
+/// 得先知道本机装的是哪个版本，而它拿不到这里的版本号，只能从磁盘上读。
+///
+/// 单独一个文件而不是塞进 `settings.json`：那个文件归代理设置管，
+/// 写版本号会跟代理设置的读写逻辑搅在一起。
+fn write_app_version(app: &AppHandle) {
+    let version = app.package_info().version.to_string();
+    let path = paths::of(app).root().join("app-version");
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            eprintln!("创建目录失败（写版本号）：{error}");
+            return;
+        }
+    }
+    if let Err(error) = std::fs::write(&path, &version) {
+        eprintln!("写版本号失败：{error}");
+    }
+}
+
 /// 当前平台是不是「应用内标题栏」。
 ///
 /// Windows 上我们在 setup 里关掉了系统标题栏，前端据此画最小化/最大化/关闭。
@@ -1052,6 +1073,12 @@ pub fn run() {
             install_cli(app.handle());
             // sidecar 也装一份：CLI 靠它拉起 MCP 代理
             install_sidecar(app.handle());
+            // 把自己的版本号写到磁盘上。
+            //
+            // 桌面端和命令行是两个进程 —— 命令行那边要查「有没有新版本」，
+            // 得先知道本机装的是哪个版本，而它拿不到这里的版本号，
+            // 只能从磁盘上读。
+            write_app_version(app.handle());
             // Windows：关掉系统标题栏，改由应用自己画标题栏。
             // 不这么做的话，窗口上会出现「系统标题栏 + 应用顶栏」两层，
             // 应用名重复一次，两边高度/颜色也对不齐（cc-switch 也是这么干的）。

@@ -115,6 +115,61 @@ impl McpClient {
         self.request("GET", "/admin/status", None)
     }
 
+    /// 配置文件档列表。
+    pub fn profiles(&self) -> Result<Value, String> {
+        self.request("GET", "/admin/profiles", None)
+    }
+
+    /// 覆盖式保存配置文件档。
+    pub fn save_profiles(&self, profiles: &Value) -> Result<Value, String> {
+        let payload = serde_json::json!({ "profiles": profiles });
+        let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+        let raw = self.request_raw("PUT", "/admin/profiles", Some(body))?;
+        serde_json::from_str(&raw).map_err(|e| format!("返回的不是 JSON：{e}"))
+    }
+
+    /// 发起 OAuth 授权。
+    ///
+    /// 返回里通常带一个授权网址 —— 让用户在浏览器里点同意。
+    pub fn authorize_server(&self, id: &str) -> Result<Value, String> {
+        let path = format!("/admin/servers/{}/authorize", encode_component(id));
+        self.request("POST", &path, None)
+    }
+
+    /// 在官方目录里搜 MCP server。
+    ///
+    /// 目录的翻页用游标（`cursor`），不是页码 —— 跟 GitHub 搜索一个路子。
+    pub fn registry_search(&self, query: &str, cursor: Option<&str>) -> Result<Value, String> {
+        let mut path = format!("/admin/registry/search?query={}", encode_component(query));
+        if let Some(cursor) = cursor {
+            path.push_str(&format!("&cursor={}", encode_component(cursor)));
+        }
+        self.request("GET", &path, None)
+    }
+
+    /// 按名字取官方目录里的一条 server 定义。
+    ///
+    /// 导入包里只记了远程 server 的名字 —— 导入时得把定义现场取回来。
+    ///
+    /// 目录里没有这条（可能已下架）返回 `Ok(None)`，不是错误。
+    pub fn registry_entry(&self, name: &str) -> Result<Option<Value>, String> {
+        let path = format!("/admin/registry/entry?name={}", encode_component(name));
+        let (status, raw) = self.request_with_status("GET", &path, None)?;
+        if status == 404 {
+            return Ok(None);
+        }
+        if status >= 400 {
+            return Err(format!("目录服务返回 {status}：{raw}"));
+        }
+        let value: Value = serde_json::from_str(&raw).map_err(|e| format!("返回的不是 JSON：{e}"))?;
+        // 目录条目里带着能不能直接落地成上游定义的判断 —— 只有能落地才要定义。
+        Ok(value
+            .get("entry")
+            .and_then(|entry| entry.get("def"))
+            .filter(|def| !def.is_null())
+            .cloned())
+    }
+
     fn request(&self, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<Value, String> {
         let raw = self.request_raw(method, path, body)?;
         serde_json::from_str(&raw).map_err(|e| format!("返回的不是 JSON：{e}"))
@@ -122,6 +177,23 @@ impl McpClient {
 
     /// 发一个请求，返回响应体。
     fn request_raw(&self, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<String, String> {
+        let (status, text) = self.request_with_status(method, path, body)?;
+        if status >= 400 {
+            return Err(format!("HTTP {status}：{text}"));
+        }
+        Ok(text)
+    }
+
+    /// 发一个请求，返回状态码和响应体。
+    ///
+    /// 有些调用要自己判断状态码 —— 比如目录里查不到一条时 sidecar 回 404，
+    /// 那不是错误，是「这条没了」。
+    fn request_with_status(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<(u16, String), String> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.endpoint.port));
         let timeout = Duration::from_secs(30);
         let Ok(mut stream) = TcpStream::connect_timeout(&addr, timeout) else {
@@ -195,10 +267,7 @@ impl McpClient {
             body.extend_from_slice(&chunk[..read]);
         }
         let text = String::from_utf8_lossy(&body).into_owned();
-        if status >= 400 {
-            return Err(format!("HTTP {status}：{text}"));
-        }
-        Ok(text)
+        Ok((status, text))
     }
 }
 

@@ -1085,6 +1085,26 @@ pub fn inspect(
         }
     }
 
+    // Wiki 页面
+    //
+    // 之前漏了 —— 导入逻辑（import）会拦下重名的 wiki 页面，
+    // 但 inspect 不报冲突，界面上就没有「覆盖」那个勾，
+    // 用户只能干看着导入被跳过。
+    for item in &manifest.wiki {
+        let exists = crate::wiki::read_page(paths, &item.slug).is_ok();
+        if exists {
+            conflicts.push(Conflict {
+                kind: DataKind::Wiki,
+                key: item.slug.clone(),
+                label: item.title.clone(),
+                local_hint: "已存在同名页面".to_string(),
+                incoming_hint: format!("标签：{}", item.tags.join("、")),
+            });
+        } else {
+            fresh += 1;
+        }
+    }
+
     let summary = ExportCounts {
         agents: manifest.agents.len(),
         skills: manifest.skills.len(),
@@ -1093,7 +1113,14 @@ pub fn inspect(
         wiki: manifest.wiki.len(),
     };
 
-    if summary.skills == 0 && summary.agents == 0 && summary.mcp_servers == 0 && summary.extensions == 0 {
+    // 「空包」的判断要把 wiki 算进去 ——
+    // 只带 wiki 页面的包不是空的（早期漏了 wiki，导知识库会被说成空包）。
+    if summary.skills == 0
+        && summary.agents == 0
+        && summary.mcp_servers == 0
+        && summary.extensions == 0
+        && summary.wiki == 0
+    {
         warnings.push("这个包是空的 —— 里面没有任何数据".to_string());
     }
 
@@ -1712,6 +1739,67 @@ mod tests {
         // 再导出一次（同名）→ inspect 应该报冲突
         let report = inspect(&paths, &[], &zip_path).unwrap();
         assert_eq!(report.conflicts.len(), 2, "两个 skill 都该报冲突");
+        assert_eq!(report.fresh_count, 0);
+
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    /// 只带 wiki 页面的包**不是**空包。
+    ///
+    /// 「空包」的判断早期漏了 wiki —— 导知识库会被说成「里面没有任何数据」，
+    /// 跟实际内容对不上。
+    #[test]
+    fn wiki_only_package_is_not_reported_as_empty() {
+        let paths = temp_paths("wiki-only");
+
+        let page = crate::wiki::create_page(&paths, "部署手册", None).unwrap();
+        let zip_path = paths.root().join("wiki.zip");
+        let selection = ExportSelection {
+            wiki_slugs: vec![page.slug.clone()],
+            ..Default::default()
+        };
+        let result = export(&paths, &[], &selection, &zip_path).unwrap();
+        assert_eq!(result.counts.wiki, 1);
+
+        let report = inspect(&paths, &[], &zip_path).unwrap();
+        assert_eq!(report.summary.wiki, 1);
+        assert!(
+            !report.warnings.iter().any(|w| w.contains("空")),
+            "只带 wiki 的包不该被说成空包，实际警告：{:?}",
+            report.warnings
+        );
+
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    /// 包里的 wiki 页面本机已经有了 → 报冲突，且覆盖 key 是 `wiki:<slug>`。
+    ///
+    /// 之前 inspect 根本不报 wiki 冲突 —— 界面上就没有「覆盖」那个勾，
+    /// 用户只能干看着导入被跳过。
+    #[test]
+    fn wiki_page_conflict_is_reported_with_overwrite_key() {
+        let paths = temp_paths("wiki-conflict");
+
+        let page = crate::wiki::create_page(&paths, "部署手册", None).unwrap();
+        let zip_path = paths.root().join("wiki.zip");
+        let selection = ExportSelection {
+            wiki_slugs: vec![page.slug.clone()],
+            ..Default::default()
+        };
+        export(&paths, &[], &selection, &zip_path).unwrap();
+
+        let report = inspect(&paths, &[], &zip_path).unwrap();
+        let conflict = report
+            .conflicts
+            .iter()
+            .find(|c| c.kind == DataKind::Wiki)
+            .expect("本机已有这个页面，应该报冲突");
+        assert_eq!(conflict.key, page.slug);
+        // 覆盖 key 的格式跟 import 里认的一致
+        assert_eq!(
+            format!("{}:{}", conflict.kind.label(), conflict.key),
+            format!("wiki:{}", page.slug)
+        );
         assert_eq!(report.fresh_count, 0);
 
         let _ = fs::remove_dir_all(paths.home());

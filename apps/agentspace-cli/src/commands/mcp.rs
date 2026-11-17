@@ -7,7 +7,7 @@
 //!
 //! server 的定义、曝光配置、令牌都归 sidecar 管，CLI 不自己碰那些文件。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 use agentspace_core::{bridge, Paths};
@@ -47,6 +47,63 @@ pub enum McpCmd {
     Status(ListArgs),
     /// 测一个**还没保存**的 server 定义
     Probe(ProbeArgs),
+    /// 配置文件档（一组 server 的组合）
+    #[command(subcommand)]
+    Profiles(ProfileCmd),
+    /// 发起 OAuth 授权
+    Authorize(AuthorizeArgs),
+    /// 在官方目录里搜 MCP server
+    Registry(RegistryArgs),
+    /// 用系统默认浏览器打开一个网址
+    OpenUrl(OpenUrlArgs),
+}
+
+/// 配置文件档的命令组。
+///
+/// 配置档是一组 server 的组合 —— 换项目时整套换过去，
+/// 不用一个一个改。
+#[derive(Subcommand, Debug)]
+pub enum ProfileCmd {
+    /// 列出全部配置档
+    List(ListArgs),
+    /// 覆盖式保存配置档（从 JSON 文件读）
+    Save(SaveProfilesArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SaveProfilesArgs {
+    /// 配置档列表的 JSON 文件
+    file: PathBuf,
+}
+
+#[derive(Args, Debug)]
+pub struct AuthorizeArgs {
+    /// server id
+    id: String,
+    /// 授权成功后要打开的回调页（默认只打印授权网址）
+    #[arg(long)]
+    open: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct RegistryArgs {
+    /// 搜索关键词
+    query: String,
+    /// 翻页游标（从上一次的 nextCursor 拿）
+    #[arg(long)]
+    cursor: Option<String>,
+    /// 输出格式
+    #[arg(long, value_enum, default_value = "text")]
+    format: Format,
+    /// 输出 JSON（等价于 --format json）
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct OpenUrlArgs {
+    /// 要打开的网址
+    url: String,
 }
 
 #[derive(Args, Debug)]
@@ -198,6 +255,11 @@ impl McpCmd {
             McpCmd::RefreshToken => refresh_token(&client),
             McpCmd::Status(args) => status(&client, args),
             McpCmd::Probe(args) => probe(&client, args),
+            McpCmd::Profiles(cmd) => profiles(&client, cmd),
+            McpCmd::Authorize(args) => authorize(&client, args),
+            McpCmd::Registry(args) => registry(&client, args),
+            // 开浏览器不需要 sidecar —— 单独拿出来，不走 attach。
+            McpCmd::OpenUrl(args) => open_url(args),
         }
     }
 }
@@ -752,4 +814,198 @@ fn import(client: &McpClient, args: ImportArgs) -> u8 {
             1
         }
     }
+}
+
+fn profiles(client: &McpClient, cmd: ProfileCmd) -> u8 {
+    match cmd {
+        ProfileCmd::List(args) => {
+            let value = match client.profiles() {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("读配置档失败：{error}");
+                    return 1;
+                }
+            };
+            if output::wants_json(args.format, args.json) {
+                output::json(&value);
+                return 0;
+            }
+            // 配置档的形状由 sidecar 定，这里只把常见的字段摊开给人看。
+            let list = value
+                .get("profiles")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if list.is_empty() {
+                println!("还没有配置档。");
+                return 0;
+            }
+            let rows: Vec<Vec<String>> = list
+                .iter()
+                .map(|item| {
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(未命名)")
+                        .to_string();
+                    let servers = item
+                        .get("servers")
+                        .and_then(|v| v.as_array())
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<&str>>()
+                                .join("、")
+                        })
+                        .unwrap_or_default();
+                    vec![name, servers]
+                })
+                .collect();
+            output::table(&["配置档", "包含的 server"], &rows);
+            0
+        }
+        ProfileCmd::Save(args) => {
+            let raw = match std::fs::read_to_string(&args.file) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    eprintln!("读配置文件失败：{error}");
+                    return 1;
+                }
+            };
+            let value: serde_json::Value = match serde_json::from_str(&raw) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("配置文件不是 JSON：{error}");
+                    return 1;
+                }
+            };
+            // 文件里可以直接是数组，也可以是 { "profiles": [...] }。
+            let payload = if value.is_array() {
+                value
+            } else {
+                value.get("profiles").cloned().unwrap_or(value)
+            };
+            match client.save_profiles(&payload) {
+                Ok(_) => {
+                    println!("已保存配置档。");
+                    0
+                }
+                Err(error) => {
+                    eprintln!("保存配置档失败：{error}");
+                    1
+                }
+            }
+        }
+    }
+}
+
+fn authorize(client: &McpClient, args: AuthorizeArgs) -> u8 {
+    let result = match client.authorize_server(&args.id) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("发起授权失败：{error}");
+            return 1;
+        }
+    };
+    let url = result
+        .get("authorizeUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if url.is_empty() {
+        eprintln!("代理没返回授权网址。");
+        return 1;
+    }
+    println!("在浏览器里打开这个网址完成授权：");
+    println!("{url}");
+    if args.open {
+        if let Err(error) = open_in_browser(&url) {
+            eprintln!("打开浏览器失败：{error}");
+            return 1;
+        }
+        println!("已交给浏览器打开。");
+    }
+    0
+}
+
+fn registry(client: &McpClient, args: RegistryArgs) -> u8 {
+    let result = match client.registry_search(&args.query, args.cursor.as_deref()) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("搜官方目录失败：{error}");
+            return 1;
+        }
+    };
+    if output::wants_json(args.format, args.json) {
+        output::json(&result);
+        return 0;
+    }
+    let entries = result
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if entries.is_empty() {
+        println!("没找到相关的条目。");
+        return 0;
+    }
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|entry| {
+            let name = entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(未命名)")
+                .to_string();
+            let description = entry
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let installable = entry
+                .get("installable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            vec![
+                name,
+                if installable { "可安装".to_string() } else { "-".to_string() },
+                description,
+            ]
+        })
+        .collect();
+    output::table(&["条目", "能否直接装", "说明"], &rows);
+    if let Some(next) = result.get("nextCursor").and_then(|v| v.as_str()) {
+        println!("还有更多 —— 加 --cursor {next} 继续。");
+    }
+    0
+}
+
+fn open_url(args: OpenUrlArgs) -> u8 {
+    match open_in_browser(&args.url) {
+        Ok(()) => {
+            println!("已打开 {}", args.url);
+            0
+        }
+        Err(error) => {
+            eprintln!("打开失败：{error}");
+            1
+        }
+    }
+}
+
+/// 用系统默认浏览器打开一个网址。
+///
+/// 只借系统的 `open` / `start` —— 不引浏览器控制库，也不自己找浏览器路径。
+fn open_in_browser(url: &str) -> Result<(), String> {
+    let mut cmd = agentspace_core::proc::command(if cfg!(windows) { "cmd" } else { "xdg-open" });
+    if cfg!(windows) {
+        // `start` 是 cmd 的内建命令，得用 `cmd /c start "" <url>`。
+        cmd.arg("/c").arg("start").arg("").arg(url);
+    } else {
+        cmd.arg(url);
+    }
+    cmd.status()
+        .map(|_| ())
+        .map_err(|error| format!("启动浏览器失败：{error}"))
 }
