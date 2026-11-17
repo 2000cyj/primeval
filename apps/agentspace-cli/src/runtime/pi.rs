@@ -8,10 +8,14 @@
 //!
 //! 启动参数：
 //! - `--approve`：项目级 MCP 配置要项目受信任才读
+//! - `--mcp-project-servers allow`：项目里的 MCP server 本进程内免批准
 //! - `--extension <path>`：保底 —— 自动发现也要信任，`-e` 不受信任状态影响
 //!
 //! 信任本身写进 Pi 的 `~/.pi/agent/trust.json`，这样用户之后直接跑
 //! 普通 `pi` 也能拿到智能体指令和 MCP 工具。
+//!
+//! 起 Pi 的命令不能带 `CREATE_NO_WINDOW` —— Pi 是交互式 TUI，需要控制台。
+//! 详见 `PI_CREATION_FLAGS`。
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -194,6 +198,20 @@ impl Runtime for PiRuntime {
         if cwd.join(".pi").is_dir() {
             args.push("--approve".to_string());
         }
+        // `--approve` 只解决「项目本身信不信」，不解决「项目里的 MCP server 认不认」。
+        //
+        // Pi 的 MCP 适配器对项目级 MCP server 另有一道门禁：按
+        // 「项目路径 + server 名 + 定义哈希」记批准，定义一变（我们把上游端口
+        // 从 7801 换成 7802 就变了）批准就作废，服务全被禁用 —— TUI 下表现为
+        // 弹批准框等输入，看着像卡死。
+        //
+        // 我们的条目是自己写进 `.pi/mcp.json` 的，定义由我们控制，所以直接
+        // 让它们在本进程内免批准。项目信任仍然照旧把关（适配器要求项目受信任
+        // 才放行），不影响安全性。
+        if cwd.join(".pi").join("mcp.json").is_file() {
+            args.push("--mcp-project-servers".to_string());
+            args.push("allow".to_string());
+        }
         // 扩展：`-e` 显式传，自动发现要信任才生效，`-e` 不受信任状态影响。
         // Pi 按解析后的绝对路径去重（`loader.js:676`），所以只加载一次。
         if let Some(asset) = self.extension() {
@@ -208,15 +226,10 @@ impl Runtime for PiRuntime {
 
     fn launch(&self, cwd: &Path, args: &[String]) -> Option<i32> {
         let binary = self.find_binary()?;
-        // 走 proc::command —— pi 在 Windows 上是 pi.cmd，Rust 会用 cmd.exe /c
-        // 包一层。不加 CREATE_NO_WINDOW 的话会弹出一个多余的 cmd 窗口。
-        let mut cmd = agentspace_core::proc::command(&binary);
+        let mut cmd = pi_command(&binary);
         cmd.args(self.launch_args(cwd));
         cmd.args(args);
         cmd.current_dir(cwd);
-        cmd.stdin(Stdio::inherit());
-        cmd.stdout(Stdio::inherit());
-        cmd.stderr(Stdio::inherit());
         match cmd.status() {
             Ok(status) => Some(status.code().unwrap_or(1)),
             Err(error) => {
@@ -225,6 +238,39 @@ impl Runtime for PiRuntime {
             }
         }
     }
+}
+
+/// Windows 上起 Pi 时的创建标志。
+///
+/// **必须是 0。**
+///
+/// 别用 `CREATE_NO_WINDOW`（`agentspace_core::proc::command` 用的就是它）：
+/// 那个标志的语义是「不给这个进程设置控制台句柄」—— 子进程虽然还能往
+/// 继承来的 stdout 写东西，但所有控制台 API 都用不了。
+///
+/// Pi 是交互式 TUI：它靠控制台 API 进 raw mode、查光标位置、画界面。
+/// 拿不到控制台就什么都不画 —— 终端里只剩我们打的那两行，看着像卡死了。
+///
+/// 「不弹黑框」和「不要控制台」是两件事：在终端里跑时 `cmd.exe` 继承父进程
+/// 的控制台，本来就不会多弹窗口；真要弹窗的是从 GUI 应用里起命令的场景，
+/// 那种场景 Pi 的 TUI 本来就没法用。
+#[cfg(windows)]
+const PI_CREATION_FLAGS: u32 = 0;
+
+/// 起 Pi 的命令。
+///
+/// 刻意**不用** `agentspace_core::proc::command` —— 理由见 `PI_CREATION_FLAGS`。
+fn pi_command(binary: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(binary);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(PI_CREATION_FLAGS);
+    }
+    cmd.stdin(Stdio::inherit());
+    cmd.stdout(Stdio::inherit());
+    cmd.stderr(Stdio::inherit());
+    cmd
 }
 
 /// MCP 配置里一个上游对应的条目名。
@@ -326,5 +372,53 @@ mod tests {
     fn entry_name_falls_back_when_empty() {
         assert_eq!(sanitize_entry_name(""), "agentspace");
         assert_eq!(sanitize_entry_name("a b"), "a-b");
+    }
+
+    #[test]
+    fn launch_args_allow_project_mcp_servers_without_approval() {
+        let runtime = PiRuntime::new();
+        let cwd = std::env::temp_dir().join(format!(
+            "agentspace-launch-args-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(cwd.join(".pi")).unwrap();
+
+        // 没写 mcp.json → 不带这个旗标
+        let args = runtime.launch_args(&cwd);
+        assert!(!args.contains(&"--mcp-project-servers".to_string()));
+
+        // 写了 mcp.json → 项目级 server 本进程免批准
+        std::fs::write(cwd.join(".pi").join("mcp.json"), "{}").unwrap();
+        let args = runtime.launch_args(&cwd);
+        let index = args
+            .iter()
+            .position(|a| a == "--mcp-project-servers")
+            .expect("要带免批准旗标");
+        assert_eq!(args[index + 1], "allow");
+        // 项目信任仍然要带上
+        assert!(args.contains(&"--approve".to_string()));
+
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    /// 起 Pi 时不能设 `CREATE_NO_WINDOW`。
+    ///
+    /// 那个标志不给子进程设置控制台句柄 —— Pi 的 TUI 拿不到控制台就画不出
+    /// 任何东西，终端里只剩两行输出，看着像卡死。
+    ///
+    /// 这条断言看着轻，但它守的是「起 Pi 的命令别再走
+    /// `agentspace_core::proc::command`」—— 那个 helper 带的就是这个标志，
+    /// 用起来很顺，所以特别容易被改回去。
+    #[cfg(windows)]
+    #[test]
+    fn pi_launch_keeps_the_console() {
+        assert_eq!(
+            PI_CREATION_FLAGS, 0,
+            "起 Pi 不能设 CREATE_NO_WINDOW —— 子进程拿不到控制台，TUI 画不出来"
+        );
     }
 }
