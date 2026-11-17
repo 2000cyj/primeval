@@ -2,13 +2,32 @@
 /**
  * 帮助中心弹窗。
  *
- * 两大块：命令行操作与界面说明。内容来自 `@/data/help` —— 数据驱动，
- * 搜索与筛选都靠它。
+ * 三大块：命令行操作、界面说明、版本与更新。前两块内容来自 `@/data/help` ——
+ * 数据驱动，搜索与筛选都靠它；版本那块是应用自己的状态。
  */
-import { computed, ref, watch } from 'vue'
-import { NIcon, NInput, NModal, NTabPane, NTabs } from 'naive-ui'
-import { Search, Terminal, LayoutPanelTop } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { NButton, NIcon, NInput, NModal, NProgress, NTabPane, NTabs, useMessage } from 'naive-ui'
+import {
+  Search,
+  Terminal,
+  LayoutPanelTop,
+  Package,
+  RefreshCw,
+  Download,
+  ExternalLink,
+} from 'lucide-vue-next'
+import { getVersion } from '@tauri-apps/api/app'
 import { commandConventions, commandGroups, helpTopics, pageConventions, pages } from '@/data/help'
+import {
+  checkAppUpdate,
+  installUpdateAndRestart,
+  onUpdateDownloadProgress,
+  type AppUpdateInfo,
+  type UpdateDownloadProgress,
+} from '@/api/updater'
+import { openExternal } from '@/api/extensions'
+import { formatDateTime } from '@/utils/datetime'
+import MarkdownView from '@/components/MarkdownView.vue'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ 'update:show': [value: boolean] }>()
@@ -17,14 +36,6 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 const keyword = ref('')
 /** 当前页签 */
 const tab = ref('command')
-
-// 打开时清掉上次的搜索 —— 免得带着旧词进来看到空结果
-watch(
-  () => props.show,
-  (open) => {
-    if (open) keyword.value = ''
-  },
-)
 
 const needle = computed(() => keyword.value.trim().toLowerCase())
 
@@ -67,8 +78,179 @@ const hitCount = computed(() => {
   if (tab.value === 'command') {
     return filteredGroups.value.reduce((sum, group) => sum + group.commands.length, 0)
   }
-  return filteredPages.value.length
+  if (tab.value === 'page') return filteredPages.value.length
+  return 0
 })
+
+// ── 版本与更新 ────────────────────────────────────────────────
+
+/**
+ * 应用版本。
+ *
+ * 从 Tauri 拿（读的是 `tauri.conf.json` 里的 version），
+ * 拿不到时用这个兜底值。跟「系统设置」页同一套。
+ */
+const FALLBACK_VERSION = '1.0.0'
+/** 当前版本 */
+const currentVersion = ref(FALLBACK_VERSION)
+
+/** 读当前版本（本地读，不联网） */
+const loadCurrentVersion = async (): Promise<void> => {
+  try {
+    currentVersion.value = await getVersion()
+  } catch {
+    currentVersion.value = FALLBACK_VERSION
+  }
+}
+
+/**
+ * 版本检测。
+ *
+ * 检测逻辑在 Rust 侧（`src-tauri/src/updater.rs`）—— 版本号怎么比、
+ * 哪个附件是安装包，那边说了算。这边只负责按钮状态和提示。
+ *
+ * 注意：**打开弹窗不自动检查** —— 那是网络请求，等用户点了再查。
+ */
+type UpdateState = 'idle' | 'checking' | 'latest' | 'update'
+
+const updateState = ref<UpdateState>('idle')
+/** 检测结果 */
+const updateInfo = ref<AppUpdateInfo | null>(null)
+/** 检查失败时的提示（页面里也显示一份，不依赖全局消息） */
+const checkError = ref('')
+/** 发布说明是不是展开的 */
+const notesExpanded = ref(false)
+
+const hasUpdate = computed(() => updateState.value === 'update')
+const isLatest = computed(() => updateState.value === 'latest')
+/** 最新版本号（没查到就空着） */
+const latestVersion = computed(() => updateInfo.value?.latestVersion ?? '')
+/** 新版本发布说明 */
+const updateNotes = computed(() => updateInfo.value?.notes ?? '')
+/** 新版本发布日期（转成能读的本地时间） */
+const updatePublishedAt = computed(() => formatDateTime(updateInfo.value?.publishedAt ?? ''))
+
+/** 正在下载安装（进度条阶段） */
+const installing = ref(false)
+/** 下载进度（null = 还没开始或已结束） */
+const downloadProgress = ref<UpdateDownloadProgress | null>(null)
+/** 进度监听的取消函数 */
+let unlistenProgress: (() => void) | undefined = undefined
+
+/** 断开下载进度监听 —— 别在弹窗关了之后还收事件 */
+const cleanupProgress = (): void => {
+  unlistenProgress?.()
+  unlistenProgress = undefined
+}
+
+/** 下载百分比（服务端没给总量就不知道，显示不确定态） */
+const downloadPercent = computed(() => {
+  const progress = downloadProgress.value
+  if (!progress || progress.total <= 0) return null
+  return Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
+})
+
+/** 已下载多少 MB */
+const downloadedMb = computed(() => {
+  const progress = downloadProgress.value
+  if (!progress) return '0.0'
+  return (progress.downloaded / 1024 / 1024).toFixed(1)
+})
+
+/** 总共多少 MB */
+const totalMb = computed(() => {
+  const progress = downloadProgress.value
+  if (!progress || progress.total <= 0) return ''
+  return (progress.total / 1024 / 1024).toFixed(1)
+})
+
+/**
+ * 消息提示。
+ *
+ * 弹窗正常挂在 `<n-message-provider>` 下面；但组件也可能被单独挂载
+ * （比如单测），那时 useMessage 会抛错 —— 兜住，提示就退回到页签里的行内文字。
+ */
+const message = (() => {
+  try {
+    return useMessage()
+  } catch {
+    return null
+  }
+})()
+
+/** 检查最新版本 */
+const checkLatestVersion = async (): Promise<void> => {
+  updateState.value = 'checking'
+  checkError.value = ''
+  try {
+    const info = await checkAppUpdate()
+    updateInfo.value = info
+    currentVersion.value = info.currentVersion || currentVersion.value
+    updateState.value = info.hasUpdate ? 'update' : 'latest'
+    if (updateState.value === 'latest') {
+      message?.success(`当前已是最新版本 ${currentVersion.value}`)
+    }
+  } catch (error) {
+    updateState.value = 'idle'
+    const text = `检查版本失败：${error instanceof Error ? error.message : String(error)}`
+    checkError.value = text
+    message?.error(text)
+  }
+}
+
+/** 开始更新：应用内下载 → 验签 → 安装器接手 → 重启 */
+const startUpdate = async (): Promise<void> => {
+  if (installing.value) return
+  installing.value = true
+  downloadProgress.value = null
+  unlistenProgress = await onUpdateDownloadProgress((progress) => {
+    downloadProgress.value = progress
+  })
+  try {
+    const started = await installUpdateAndRestart()
+    // Windows 上安装器起来后进程就退出了，走到这里说明没有更新可装
+    if (!started) {
+      message?.info('当前已是最新版本')
+      updateState.value = 'latest'
+    }
+  } catch (error) {
+    message?.error(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    installing.value = false
+    cleanupProgress()
+  }
+}
+
+/** 打开 Release 页面看完整发布说明 */
+const openReleaseNotes = async (): Promise<void> => {
+  const url = updateInfo.value?.releaseUrl
+  if (!url) return
+  try {
+    await openExternal(url)
+  } catch (error) {
+    const text = `打不开发布说明：${error instanceof Error ? error.message : String(error)}`
+    checkError.value = text
+    message?.error(text)
+  }
+}
+
+onBeforeUnmount(cleanupProgress)
+
+// 打开时清掉上次的搜索 —— 免得带着旧词进来看到空结果
+watch(
+  () => props.show,
+  (open) => {
+    if (open) {
+      keyword.value = ''
+      // 版本号是本地读的，不发网络请求；检查更新等用户点了再说
+      void loadCurrentVersion()
+    } else {
+      // 弹窗关了就不收下载进度事件
+      cleanupProgress()
+      checkError.value = ''
+    }
+  },
+)
 </script>
 
 <template>
@@ -177,11 +359,139 @@ const hitCount = computed(() => {
           <p v-else class="empty">没有匹配的功能</p>
         </div>
       </NTabPane>
+
+      <NTabPane name="version">
+        <template #tab>
+          <span class="tab-label">
+            <NIcon :size="13">
+              <Package />
+            </NIcon>
+            版本
+          </span>
+        </template>
+
+        <div class="body">
+          <div class="groups">
+            <section class="group">
+              <header class="group-head">
+                <span class="group-title">当前版本</span>
+                <span class="group-hint">AgentSpace 桌面端</span>
+              </header>
+              <ul class="points">
+                <li>
+                  已安装版本：<code class="cmd-code">{{ currentVersion }}</code>
+                </li>
+                <li>更新在应用内完成 —— 下载、验签、装完自动重启，不用你手动操作。</li>
+              </ul>
+
+              <!--
+                按钮三态：
+                - 未检查   → 「检查最新版本」
+                - 有新版本 → 「更新到 X.Y.Z」
+                - 已是最新 → 「已是最新版本」，禁用
+              -->
+              <div class="version-actions">
+                <NButton
+                  v-if="!hasUpdate"
+                  type="primary"
+                  size="small"
+                  :loading="updateState === 'checking'"
+                  :disabled="isLatest"
+                  @click="checkLatestVersion"
+                >
+                  <template #icon>
+                    <NIcon :size="13">
+                      <RefreshCw />
+                    </NIcon>
+                  </template>
+                  {{ isLatest ? '已是最新版本' : '检查最新版本' }}
+                </NButton>
+
+                <NButton
+                  v-else
+                  type="primary"
+                  size="small"
+                  :loading="installing"
+                  @click="startUpdate"
+                >
+                  <template #icon>
+                    <NIcon :size="13">
+                      <Download />
+                    </NIcon>
+                  </template>
+                  {{ installing ? '正在下载…' : `更新到 ${latestVersion}` }}
+                </NButton>
+              </div>
+
+              <p v-if="checkError" class="version-error">{{ checkError }}</p>
+            </section>
+
+            <!-- 下载中：进度条（下载在应用内完成，不跳出浏览器） -->
+            <section v-if="installing" class="group">
+              <header class="group-head">
+                <span class="group-title">正在下载</span>
+                <span class="group-hint">
+                  <template v-if="downloadPercent !== null">{{ downloadPercent }}%</template>
+                  <template v-else>大小未知</template>
+                </span>
+              </header>
+              <NProgress
+                type="line"
+                :percentage="downloadPercent ?? undefined"
+                :indeterminate="downloadPercent === null"
+                :height="4"
+                :show-indicator="false"
+                processing
+              />
+              <ul class="points">
+                <li>
+                  已下载 {{ downloadedMb }}<template v-if="totalMb"> / {{ totalMb }}</template> MB
+                </li>
+                <li>下载完会自动安装并重启。</li>
+              </ul>
+            </section>
+
+            <!-- 有新版本：说清楚是什么版本、什么时候发的、改了什么 -->
+            <section v-if="hasUpdate" class="group">
+              <header class="group-head">
+                <span class="group-title">有新版本</span>
+                <span class="group-hint">
+                  {{ latestVersion }}
+                  <template v-if="updatePublishedAt">· 发布于 {{ updatePublishedAt }}</template>
+                </span>
+              </header>
+
+              <div v-if="updateNotes" class="notes" :class="{ expanded: notesExpanded }">
+                <MarkdownView class="notes-body" :source="updateNotes" />
+              </div>
+
+              <div class="version-actions">
+                <NButton text size="tiny" @click="openReleaseNotes">
+                  <template #icon>
+                    <NIcon :size="12">
+                      <ExternalLink />
+                    </NIcon>
+                  </template>
+                  查看发布说明
+                </NButton>
+                <NButton
+                  v-if="updateNotes.length > 200"
+                  text
+                  size="tiny"
+                  @click="notesExpanded = !notesExpanded"
+                >
+                  {{ notesExpanded ? '收起' : '展开全部' }}
+                </NButton>
+              </div>
+            </section>
+          </div>
+        </div>
+      </NTabPane>
     </NTabs>
 
     <template #footer>
       <div class="footer">
-        <span v-if="needle" class="hit">找到 {{ hitCount }} 条</span>
+        <span v-if="needle && tab !== 'version'" class="hit">找到 {{ hitCount }} 条</span>
         <span v-else class="hit">{{ helpTopics.map((item) => item.label).join(' · ') }}</span>
         <button type="button" class="close" @click="emit('update:show', false)">关闭</button>
       </div>
@@ -316,6 +626,34 @@ const hitCount = computed(() => {
   font-size: 12px;
   color: var(--c-text-4);
   text-align: center;
+}
+
+/* 版本页签里的按钮行 —— 贴着内容排，不另起一整套卡片 */
+.version-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* 发布说明：默认只露一屏，看不下去再展开 */
+.notes {
+  max-height: 160px;
+  overflow: hidden;
+}
+
+.notes.expanded {
+  max-height: none;
+}
+
+.notes-body {
+  font-size: 12px;
+}
+
+.version-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--c-danger);
 }
 
 .footer {

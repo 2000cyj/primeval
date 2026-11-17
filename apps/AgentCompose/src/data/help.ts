@@ -35,7 +35,7 @@ export type HelpPage = {
 export type HelpTopic = {
   key: string
   label: string
-  kind: 'command' | 'page'
+  kind: 'command' | 'page' | 'version'
 }
 
 // ── 命令行 ────────────────────────────────────────────────────
@@ -75,6 +75,11 @@ export const commandGroups: HelpGroup[] = [
       { cmd: 'agent import <目录>', desc: '从 pi 项目一键导入：skill、mcp、指令、绑定关系' },
       { cmd: 'agent skills list|add|remove', desc: '管理绑定的 Skill' },
       { cmd: 'agent mcp list|add|remove', desc: '管理绑定的 MCP' },
+      {
+        cmd: 'agent wiki list|add|remove',
+        desc: '管理绑定的 Wiki 页面（绑入口页面，子树连带继承）',
+        example: 'agentspace agent wiki add 知识助手 部署手册',
+      },
     ],
   },
   {
@@ -116,6 +121,11 @@ export const commandGroups: HelpGroup[] = [
       { cmd: 'mcp exposure', desc: '看对外暴露的配置' },
       { cmd: 'mcp set-exposure', desc: '设对外暴露的配置（--all-tools 全放开）' },
       { cmd: 'mcp refresh-token', desc: '刷新访问令牌' },
+      { cmd: 'mcp profiles list', desc: '列出配置文件档（一组 server 的组合）' },
+      { cmd: 'mcp profiles save <文件>', desc: '覆盖式保存配置文件档' },
+      { cmd: 'mcp authorize <名称>', desc: '发起 OAuth 授权（打印授权网址）' },
+      { cmd: 'mcp registry <关键词>', desc: '在官方目录里搜 MCP server' },
+      { cmd: 'mcp open-url <网址>', desc: '用系统默认浏览器打开一个网址' },
     ],
   },
   {
@@ -145,6 +155,58 @@ export const commandGroups: HelpGroup[] = [
       { cmd: 'tool install <命令>', desc: '装一个' },
       { cmd: 'tool upgrade <命令>', desc: '升级一个' },
       { cmd: 'tool uninstall <命令>', desc: '卸一个' },
+    ],
+  },
+  {
+    title: '知识库（Wiki）',
+    hint: '内部知识库 —— 页面、标签与页面之间的关联',
+    commands: [
+      { cmd: 'wiki list', desc: '列出知识库里的全部页面' },
+      {
+        cmd: 'wiki get <slug>',
+        desc: '看一个页面的元信息和正文',
+        example: 'agentspace wiki get 部署手册',
+      },
+      { cmd: 'wiki create <标题>', desc: '新建一个页面（slug 由标题生成）' },
+      { cmd: 'wiki update <slug>', desc: '改页面的标题、正文、标签或父页面' },
+      { cmd: 'wiki delete <slug>', desc: '删一个页面' },
+      { cmd: 'wiki search <关键词>', desc: '检索页面' },
+      { cmd: 'wiki tags', desc: '列出用过的全部标签' },
+      {
+        cmd: 'wiki neighbors <slug>',
+        desc: '查一个页面的关联页面（引用它的、引用它的、子页面、同标签）',
+      },
+      { cmd: 'wiki publish <slug>', desc: '把一个页面发布成 Skill' },
+    ],
+  },
+  {
+    title: '备份与迁移',
+    hint: '把本机数据打包带走，或把别处的数据搬进来',
+    commands: [
+      { cmd: 'backup inventory', desc: '看本机有哪些数据可以导出' },
+      {
+        cmd: 'backup export --out <zip>',
+        desc: '导出成 zip 包（--all 全带走，可按 agent/skill/mcp/extension/wiki 挑）',
+        example: 'agentspace backup export --out backup.zip --all',
+      },
+      { cmd: 'backup inspect <zip>', desc: '看导入包里有什么、会跟本机撞上什么' },
+      {
+        cmd: 'backup import <zip>',
+        desc: '导入一个 zip 包（--overwrite <key> 覆盖冲突项，--dry-run 只看不动）',
+        example: 'agentspace backup import backup.zip --dry-run',
+      },
+    ],
+  },
+  {
+    title: '桌面端自身',
+    hint: '跟 AgentSpace 桌面端有关的事',
+    commands: [
+      { cmd: 'app update', desc: '查桌面端有没有新版本' },
+      {
+        cmd: 'version',
+        desc: '版本总览：AgentSpace 自己 + 工具箱里各 CLI 工具的版本（也认 -version / -v）',
+        example: 'agentspace version --check',
+      },
     ],
   },
   {
@@ -186,6 +248,19 @@ export const pages: HelpPage[] = [
     ],
   },
   {
+    title: 'Wiki',
+    desc: '内部知识库。Markdown 页面，页面之间可以互相引用，智能体能绑定它当知识库。',
+    points: [
+      '左边页面树，按父子关系分组；新建页面时可以指定父页面',
+      '正文用 Markdown 编辑，右边实时预览',
+      '搜索：在正文里全文找，命中给出所在行与片段',
+      '标签：给页面打标签，用来筛选和找相关页面',
+      '页面之间用 [[slug]] 引用 —— 这些引用就是知识图谱的边',
+      '「发布为 Skill」：把一页变成 Skill，别的智能体也能用',
+      '智能体绑定 Wiki 入口页面后，它的子树连带继承 —— 以后加子页不用改智能体配置',
+    ],
+  },
+  {
     title: 'Agents',
     desc: '本机装了哪些 agent CLI，以及怎么装。',
     points: [
@@ -211,20 +286,23 @@ export const pages: HelpPage[] = [
     title: '智能体',
     desc: '我们创建的智能体。可绑定能力后交给智能体执行。',
     points: [
-      '新建：起名、写指令，绑定 Skill、MCP、Pi 扩展',
+      '新建：起名、写指令，绑定 Skill、MCP、Pi 扩展、Wiki 页面',
       '名称唯一 —— 它就是 `agentspace run <名称>` 的业务主键，不允许同名也不允许改名',
-      '版本自动管理：新建为 1，每次保存 +1；绑定的 Skill / MCP / 扩展变了也跟着 +1',
+      '版本自动管理：新建为 1，每次保存 +1；绑定的 Skill / MCP / 扩展 / Wiki 变了也跟着 +1',
       '列表显示 Skill 数、MCP 数、版本',
       '「复制启动命令」：把 agentspace run 那行拷走直接用',
     ],
   },
   {
     title: '系统设置',
-    desc: '应用信息与版本更新。',
+    desc: '命令行安装、数据导入导出、出站代理与应用版本。',
     points: [
+      '命令行：显示 `agentspace` 装没装、装在哪 —— 终端里敲不到命令时看这里',
+      '数据管理：把智能体、Skills、MCP server、Pi 扩展、Wiki 页面打包导出，也能从别的机器导进来',
+      '导出时可选要带走哪些；导入时重名的默认不覆盖，勾了「覆盖」才替换本机那份',
+      '网络：全局出站代理 —— 技能下载、版本检查、MCP 目录搜索都经它；留空即直连',
       '显示当前应用版本',
-      '「检查最新版本」：有新版时按钮变成「更新到 X.Y.Z」',
-      '没配版本检测地址时点了会提示 —— 发布地址后续再填',
+      '「检查最新版本」：有新版时按钮变成「更新到 X.Y.Z」，下载与安装都在应用内完成，装完自动重启',
     ],
   },
 ]
@@ -243,12 +321,14 @@ export const commandConventions: string[] = [
 export const pageConventions: string[] = [
   '数据都落在 ~/.agent-compose/ 下 —— 桌面端与命令行操作的是同一份',
   '智能体绑定的是相对引用：skill 存 skills/<目录名>，MCP 存 mcp/servers.json#<id>，扩展存 extensions/<来源>/<目录名>。改名只改一处',
-  '智能体版本自动管理：新建为 1，每次保存 +1；绑定的 Skill / MCP / 扩展变了也跟着 +1',
+  '智能体版本自动管理：新建为 1，每次保存 +1；绑定的 Skill / MCP / 扩展 / Wiki 变了也跟着 +1',
   'MCP 令牌固定是 AgentSpace，可在 MCP 页随时刷新',
+  'Wiki 页面存在 ~/.agent-compose/wiki/<slug>/ —— 正文是 page.md，元信息在 .meta.json',
   '右上角铃铛是操作通知 —— 安装、升级、删除的进度与结果都在那里',
 ]
 
 export const helpTopics: HelpTopic[] = [
   { key: 'command', label: '命令行', kind: 'command' },
   { key: 'page', label: '界面', kind: 'page' },
+  { key: 'version', label: '版本', kind: 'version' },
 ]
