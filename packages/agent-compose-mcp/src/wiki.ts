@@ -19,7 +19,8 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import type { LocalTool } from './session.ts'
-import { wikiDir } from './config.ts'
+import { agentsDir, wikiDir } from './config.ts'
+import { searchPages, type SearchHit } from './wiki-search.ts'
 
 /** 正文文件名 */
 const PAGE_FILE = 'page.md'
@@ -27,11 +28,8 @@ const PAGE_FILE = 'page.md'
 /** 元信息文件名 */
 const META_FILE = '.meta.json'
 
-/** 命中片段的最大字符数（超了截中间，前后加省略号） */
-const SNIPPET_MAX_CHARS = 120
-
-/** 一页最多给几条正文命中（免得一大段重复内容刷屏） */
-const MAX_HITS_PER_PAGE = 3
+/** 正文读取上限 —— 防止一篇超长文档把 agent 的上下文撑爆。 */
+const MAX_CONTENT_CHARS = 20000
 
 /** 一个页面的元信息（与 Rust 侧的 WikiPageMeta 对齐） */
 export type WikiPageMeta = {
@@ -43,6 +41,8 @@ export type WikiPageMeta = {
   tags: string[]
   /** 父页面 slug；null = 顶层 */
   parent: string | null
+  /** 本页引用的其它页面（正文里的 `[[引用]]`）。 */
+  links: string[]
   /** 创建时间（epoch 毫秒） */
   createdAt: number
   /** 最后修改时间（epoch 毫秒） */
@@ -67,6 +67,22 @@ export type WikiSearchHit = {
   line: number
 }
 
+/** 一个页面的关联页面（知识图谱的邻接关系）。 */
+export type WikiNeighbors = {
+  /** 页面 slug。 */
+  slug: string
+  /** 本页引用的页面（出边）。 */
+  outgoing: string[]
+  /** 引用了本页的页面（入边）。 */
+  incoming: string[]
+  /** 父页面。 */
+  parent: string | null
+  /** 直接子页面。 */
+  children: string[]
+  /** 同标签的其它页面。 */
+  siblings: string[]
+}
+
 /** 判断是不是普通对象（解析 JSON 后的元信息可能什么都得有） */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -83,6 +99,7 @@ function normalizeMeta(raw: unknown, slug: string): WikiPageMeta {
   const title = typeof record['title'] === 'string' ? record['title'] : ''
   const rawTags = Array.isArray(record['tags']) ? record['tags'] : []
   const rawParent = record['parent']
+  const rawLinks = Array.isArray(record['links']) ? record['links'] : []
   const createdAt = record['createdAt']
   const updatedAt = record['updatedAt']
 
@@ -92,6 +109,7 @@ function normalizeMeta(raw: unknown, slug: string): WikiPageMeta {
     title: title.trim() === '' ? slug : title,
     tags: rawTags.filter((tag): tag is string => typeof tag === 'string'),
     parent: typeof rawParent === 'string' && rawParent.trim() !== '' ? rawParent : null,
+    links: rawLinks.filter((link): link is string => typeof link === 'string'),
     createdAt: typeof createdAt === 'number' ? createdAt : 0,
     updatedAt: typeof updatedAt === 'number' ? updatedAt : 0,
   }
@@ -171,45 +189,83 @@ export async function readWikiPage(root: string, slug: string): Promise<WikiPage
 }
 
 /** 命中行的片段 —— 太长的行截中间，前后加省略号 */
-function snippetOf(line: string): string {
-  const trimmed = line.trim()
-  const chars = [...trimmed]
-  if (chars.length <= SNIPPET_MAX_CHARS) return trimmed
-  const start = Math.max(0, Math.floor(chars.length / 2) - 30)
-  const end = Math.min(chars.length, start + 60)
-  return `…${chars.slice(start, end).join('')}…`
-}
+// （snippetOf 从 wiki-search.ts 来，两边实现必须一致）
 
 /**
  * 搜索标题和正文。
  *
- * 规则与桌面端一致：大小写不敏感的子串匹配；标题命中优先（且不再看正文），
- * 正文命中给出行号与片段，一页最多 3 条。
+ * 中文用 bigram 分词、英文按词切，命中后按得分排序
+ * —— 标题命中权重最高，正文命中给出行号与片段。
+ *
+ * `scope` 传了就只搜范围内的页面。
  */
-export async function searchWiki(root: string, query: string): Promise<WikiSearchHit[]> {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return []
-
-  const hits: WikiSearchHit[] = []
-  for (const meta of await listWikiPages(root)) {
-    if (meta.title.toLowerCase().includes(needle)) {
-      hits.push({ slug: meta.slug, title: meta.title, snippet: meta.title, line: 1 })
-      continue
-    }
+export async function searchWiki(
+  root: string,
+  query: string,
+  scope?: Set<string> | null,
+): Promise<WikiSearchHit[]> {
+  const metas = await listWikiPages(root)
+  const pages = []
+  for (const meta of metas) {
+    if (scope && !scope.has(meta.slug)) continue
     const page = await readWikiPage(root, meta.slug)
     if (!page) continue
-
-    let count = 0
-    const lines = page.content.split(/\r?\n/)
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index] ?? ''
-      if (!line.toLowerCase().includes(needle)) continue
-      hits.push({ slug: meta.slug, title: meta.title, snippet: snippetOf(line), line: index + 1 })
-      count += 1
-      if (count >= MAX_HITS_PER_PAGE) break
-    }
+    pages.push({
+      slug: page.slug,
+      title: page.title,
+      tags: page.tags,
+      content: page.content,
+    })
   }
-  return hits
+  const hits: SearchHit[] = searchPages(pages, query, Number.MAX_SAFE_INTEGER)
+  return hits.map((hit) => ({
+    slug: hit.slug,
+    title: hit.title,
+    snippet: hit.snippet,
+    line: hit.line,
+  }))
+}
+
+/**
+ * 某页面的邻居。
+ *
+ * 边的来源：`parent`（树形层级）、`links`（正文里的 `[[引用]]`）、`tags`（同标签）。
+ */
+export async function wikiNeighbors(
+  root: string,
+  slug: string,
+  scope?: Set<string> | null,
+): Promise<WikiNeighbors | null> {
+  const page = await readWikiPage(root, slug)
+  if (!page) return null
+  const all = await listWikiPages(root)
+  const visible = (target: string): boolean => !scope || scope.has(target)
+
+  const outgoing = page.links.filter((link) => visible(link))
+  const incoming = all
+    .filter((meta) => meta.slug !== slug && meta.links.includes(slug) && visible(meta.slug))
+    .map((meta) => meta.slug)
+  const children = all
+    .filter((meta) => meta.parent === slug && visible(meta.slug))
+    .map((meta) => meta.slug)
+  const siblings = all
+    .filter(
+      (meta) =>
+        meta.slug !== slug &&
+        visible(meta.slug) &&
+        page.tags.length > 0 &&
+        meta.tags.some((tag) => page.tags.includes(tag)),
+    )
+    .map((meta) => meta.slug)
+
+  return {
+    slug,
+    outgoing,
+    incoming,
+    parent: page.parent && visible(page.parent) ? page.parent : null,
+    children,
+    siblings,
+  }
 }
 
 /** 纯文本的工具结果 */
@@ -223,7 +279,7 @@ function errorResult(message: string): CallToolResult {
 }
 
 /** 列出页面的工具 */
-function wikiListTool(root: () => string): LocalTool {
+function wikiListTool(root: () => string, scope: () => Set<string> | null): LocalTool {
   return {
     name: 'wiki_list',
     description:
@@ -242,7 +298,10 @@ function wikiListTool(root: () => string): LocalTool {
     },
     execute: async (args) => {
       const parent = args['parent']
-      const pages = await listWikiPages(root())
+      const allowed = scope()
+      const pages = (await listWikiPages(root())).filter(
+        (page) => !allowed || allowed.has(page.slug),
+      )
       const filtered =
         typeof parent === 'string'
           ? parent.trim() === ''
@@ -255,7 +314,7 @@ function wikiListTool(root: () => string): LocalTool {
 }
 
 /** 读页面正文的工具 */
-function wikiReadTool(root: () => string): LocalTool {
+function wikiReadTool(root: () => string, scope: () => Set<string> | null): LocalTool {
   return {
     name: 'wiki_read',
     description:
@@ -279,15 +338,24 @@ function wikiReadTool(root: () => string): LocalTool {
       if (!isSafeSlug(slug)) {
         return errorResult(`非法的页面标识：${slug}`)
       }
+      const allowed = scope()
+      if (allowed && !allowed.has(slug)) {
+        return errorResult(`页面不在此智能体的知识范围内：${slug}`)
+      }
       const page = await readWikiPage(root(), slug)
       if (!page) {
         return errorResult(`页面不存在：${slug}`)
       }
       const { content, ...meta } = page
+      const truncated = content.length > MAX_CONTENT_CHARS
+      const body = truncated ? content.slice(0, MAX_CONTENT_CHARS) : content
+      const note = truncated
+        ? `\n\n（正文超过 ${MAX_CONTENT_CHARS} 字符，已截断。用 wiki_search 定位需要的段落。）`
+        : ''
       return {
         content: [
           { type: 'text', text: `页面信息：${JSON.stringify(meta)}` },
-          { type: 'text', text: content },
+          { type: 'text', text: `${body}${note}` },
         ],
       }
     },
@@ -295,12 +363,12 @@ function wikiReadTool(root: () => string): LocalTool {
 }
 
 /** 搜索页面的工具 */
-function wikiSearchTool(root: () => string): LocalTool {
+function wikiSearchTool(root: () => string, scope: () => Set<string> | null): LocalTool {
   return {
     name: 'wiki_search',
     description:
-      '在 AgentSpace 内置 Wiki 里搜索关键词，同时搜标题和正文（大小写不敏感的子串匹配），' +
-      '返回命中页面的 slug、标题、片段与行号。想知道「某个词在哪一页」时用它，再用 wiki_read 读全文。',
+      '在 AgentSpace 内置 Wiki 里搜索关键词，同时搜标题和正文（中文按二元组切词），' +
+      '返回命中页面的 slug、标题、片段与行号，按相关度排序。想知道「某个词在哪一页」时用它，再用 wiki_read 读全文。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -316,18 +384,131 @@ function wikiSearchTool(root: () => string): LocalTool {
       if (typeof query !== 'string' || query.trim() === '') {
         return errorResult('缺少参数：query（搜索关键词）')
       }
-      const hits = await searchWiki(root(), query)
+      const hits = await searchWiki(root(), query, scope())
       return textResult(JSON.stringify(hits, null, 2))
     },
   }
 }
 
+/** 查关联页面的工具 */
+function wikiNeighborsTool(root: () => string, scope: () => Set<string> | null): LocalTool {
+  return {
+    name: 'wiki_neighbors',
+    description:
+      '查 Wiki 里某个页面的关联页面：它引用的、引用它的、父子页面、同标签页面。' +
+      '用来顺着知识图谱扩展阅读范围 —— 读到一个页面后想知道还应该看什么时用它。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: {
+          type: 'string',
+          description: '页面 slug（wiki_list / wiki_search 的返回值）',
+        },
+      },
+      required: ['slug'],
+    },
+    execute: async (args) => {
+      const slug = args['slug']
+      if (typeof slug !== 'string' || slug.trim() === '') {
+        return errorResult('缺少参数：slug（页面标识）')
+      }
+      if (!isSafeSlug(slug)) {
+        return errorResult(`非法的页面标识：${slug}`)
+      }
+      const allowed = scope()
+      if (allowed && !allowed.has(slug)) {
+        return errorResult(`页面不在此智能体的知识范围内：${slug}`)
+      }
+      const result = await wikiNeighbors(root(), slug, allowed)
+      if (!result) {
+        return errorResult(`页面不存在：${slug}`)
+      }
+      return textResult(JSON.stringify(result, null, 2))
+    },
+  }
+}
+
 /**
- * 造出三个 Wiki 本地工具。
+ * 读某个智能体的 wiki 作用域。
+ *
+ * 作用域来自 `~/.agent-compose/agents/<id>/agent.json` 里的 `wikiPages` ——
+ * 绑定的是**入口页面**，整棵子树自动跟着可见。
+ *
+ * 返回 `null` = 不限制（没传 agent id，或智能体没绑 wiki）。
+ *
+ * 注意目录：这里用 `agentsDir()` 而不是 `appDataDir()` ——
+ * core 侧写 agent.json 用的是**固定的** `~/.agent-compose`，
+ * 不受 `AGENT_COMPOSE_DATA_DIR` 影响。两边必须读同一个地方，
+ * 否则 scope 算出来是空的。
+ */
+export async function resolveWikiScope(agentId: string): Promise<Set<string> | null> {
+  if (!agentId.trim() || agentId.includes('/') || agentId.includes('\\')) {
+    // id 会拼进文件路径 —— 挡住路径穿越
+    return null
+  }
+  let raw: string
+  try {
+    raw = await readFile(join(agentsDir(), agentId, 'agent.json'), 'utf8')
+  } catch {
+    return null
+  }
+  let doc: unknown
+  try {
+    doc = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isRecord(doc)) return null
+  const refs = doc['wikiPages']
+  if (!Array.isArray(refs)) return null
+  const roots = refs.filter((ref): ref is string => typeof ref === 'string')
+  if (roots.length === 0) return null
+
+  const pages = await listWikiPages(wikiDir())
+  const known = new Set(pages.map((page) => page.slug))
+  const childrenOf = new Map<string, string[]>()
+  for (const page of pages) {
+    if (!page.parent) continue
+    const list = childrenOf.get(page.parent) ?? []
+    list.push(page.slug)
+    childrenOf.set(page.parent, list)
+  }
+
+  const scope = new Set<string>()
+  const queue: string[] = []
+  for (const ref of roots) {
+    const bare = ref.replace(/^wiki\//, '').trim()
+    if (!bare || !known.has(bare) || scope.has(bare)) continue
+    scope.add(bare)
+    queue.push(bare)
+  }
+  while (queue.length > 0) {
+    const current = queue.pop() as string
+    for (const child of childrenOf.get(current) ?? []) {
+      if (scope.has(child)) continue
+      scope.add(child)
+      queue.push(child)
+    }
+  }
+  return scope
+}
+
+/**
+ * 造出 Wiki 本地工具。
  *
  * root 是个函数而不是字符串 —— 每次调用时才解析目录，
  * 这样 AGENT_COMPOSE_DATA_DIR 之类的覆盖在运行期也生效。
+ *
+ * scope 传了就只让 agent 看范围内的页面（按 agent 的 wiki 绑定展开）。
  */
-export function createWikiTools(root: () => string = () => wikiDir()): LocalTool[] {
-  return [wikiListTool(root), wikiReadTool(root), wikiSearchTool(root)]
+export function createWikiTools(
+  root: () => string = () => wikiDir(),
+  scope: () => Set<string> | null = () => null,
+): LocalTool[] {
+  return [
+    wikiListTool(root, scope),
+    wikiReadTool(root, scope),
+    wikiSearchTool(root, scope),
+    wikiNeighborsTool(root, scope),
+  ]
 }

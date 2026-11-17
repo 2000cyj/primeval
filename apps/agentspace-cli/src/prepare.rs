@@ -151,8 +151,74 @@ pub fn land_skill(skills_dir: &Path, skill_dir: &Path) -> std::io::Result<PathBu
     Ok(target)
 }
 
-/// 生成托管块内容：身份 + 指令 + 已装 skill 清单。
-pub fn build_block(agent: &CreatedAgent, skill_names: &[String]) -> String {
+/// 一条 wiki 作用域条目。
+///
+/// 写进两处：
+/// - 指令托管块（给 agent 看标题 + slug）
+/// - 作用域文件（给扩展算搜索和关系用）
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiScopeEntry {
+    /// 页面 slug（目录名）。
+    pub slug: String,
+    /// 页面标题。
+    pub title: String,
+    /// 标签。
+    pub tags: Vec<String>,
+    /// 父页面 slug。
+    pub parent: Option<String>,
+    /// 本页引用的其它页面（`[[链接]]`）。
+    pub links: Vec<String>,
+}
+
+/// 作用域文件的内容。
+///
+/// 扩展拿到它就知道「这个智能体能看到哪些页面」——
+/// 不用自己扫 wiki 目录，也不用自己判断权限。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiScopeFile {
+    /// wiki 根目录（绝对路径）。
+    pub wiki_root: String,
+    /// 可见页面（已展开子树）。
+    pub pages: Vec<WikiScopeEntry>,
+}
+
+/// 算出智能体可见的 wiki 页面（展开子树后的完整列表）。
+///
+/// 绑定的是**入口页面**，它的整棵子树自动跟着可见 ——
+/// 用户在 wiki 里新建子页面后，不用回头改智能体配置。
+pub fn wiki_scope_entries(paths: &Paths, roots: &[String]) -> Vec<WikiScopeEntry> {
+    let slugs = agentspace_core::wiki::expand_scope(paths, roots);
+    let mut out = Vec::new();
+    for slug in slugs {
+        let Ok(page) = agentspace_core::wiki::read_page(paths, &slug) else {
+            continue;
+        };
+        out.push(WikiScopeEntry {
+            slug: page.slug,
+            title: page.title,
+            tags: page.tags,
+            parent: page.parent,
+            links: page.links,
+        });
+    }
+    out
+}
+
+/// 生成托管块内容：身份 + 指令 + 已装 skill 清单 + 知识库索引。
+///
+/// 知识库那块**只注入标题 / slug / 标签**，不注入正文 ——
+/// 正文由 agent 自己调 `wiki_read` 拉。
+///
+/// 这跟 skill 的处理是同一个哲学：只告诉 agent「有什么」，
+/// 「内容是什么」让它自己去拿。全部正文一次性灌进 prompt
+/// 会把上下文吃光，而且 agent 根本不知道该看哪一篇。
+pub fn build_block(
+    agent: &CreatedAgent,
+    skill_names: &[String],
+    wiki_pages: &[WikiScopeEntry],
+) -> String {
     let mut out = String::new();
     out.push_str("## Agent Identity\n\n");
     out.push_str(&format!("**You are: {}**\n\n", agent.name.trim()));
@@ -169,7 +235,47 @@ pub fn build_block(agent: &CreatedAgent, skill_names: &[String]) -> String {
         }
         out.push_str("\n");
     }
+    if !wiki_pages.is_empty() {
+        out.push_str("## Knowledge Base\n\n");
+        out.push_str(
+            "你有一个内部知识库（AgentSpace Wiki），已绑定以下页面：\n\n",
+        );
+        for page in wiki_pages {
+            out.push_str(&format!("- **{}**（slug: {}）", page.title, page.slug));
+            if !page.tags.is_empty() {
+                out.push_str(&format!(" —— tags: {}", page.tags.join(", ")));
+            }
+            out.push('\n');
+        }
+        out.push_str("\n");
+        out.push_str(
+            "回答内部流程、约定、历史决策类问题前，先用 wiki_search 检索，\n\
+             再用 wiki_read 读全文；wiki_neighbors 可以查关联页面。\n\
+             引用知识库内容时注明页面标题。\n\n",
+        );
+    }
     out
+}
+
+/// 写 wiki 作用域文件。
+///
+/// 写的是**展开后的可见页面列表** —— 扩展不用自己算作用域，
+/// 也不用扫 wiki 目录判断权限。
+pub fn write_wiki_scope(
+    path: &Path,
+    wiki_root: &Path,
+    pages: &[WikiScopeEntry],
+) -> std::io::Result<()> {
+    let file = WikiScopeFile {
+        wiki_root: wiki_root.to_string_lossy().to_string(),
+        pages: pages.to_vec(),
+    };
+    let text = serde_json::to_string_pretty(&file)
+        .map_err(|e| std::io::Error::other(format!("序列化 wiki 作用域失败：{e}")))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, format!("{text}\n"))
 }
 
 /// 把内容写进（或替换掉）指令文件的托管块。
@@ -388,11 +494,33 @@ pub fn land_with(
     }
 
     // ── 指令 ──────────────────────────────────────────────
-    let block = build_block(agent, &skill_names);
+    //
+    // 知识库作用域先算出来：既进指令（给 agent 看索引），
+    // 也进作用域文件（给扩展做权限裁剪）。
+    let wiki_pages = wiki_scope_entries(paths, &agent.wiki_pages);
+    let block = build_block(agent, &skill_names, &wiki_pages);
     let instructions = runtime.instructions_file(cwd);
     match write_managed_block(&instructions, &block) {
         Ok(()) => files.push(relative_to(cwd, &instructions)),
         Err(error) => eprintln!("写指令文件失败（{}）：{error}", instructions.display()),
+    }
+
+    // ── wiki 作用域 ──────────────────────────────────────
+    //
+    // 扩展靠它知道「这个智能体能看到哪些页面」——
+    // 作用域跟着工作目录走，天然按项目隔离。
+    if let Some(scope_path) = runtime.wiki_scope_file(cwd) {
+        if wiki_pages.is_empty() {
+            // 没绑 wiki —— 把旧的作用域文件删掉，
+            // 否则上次绑过、这次解绑了，页面还能读到。
+            let _ = fs::remove_file(&scope_path);
+        } else {
+            let wiki_root = agentspace_core::wiki::wiki_root(paths);
+            match write_wiki_scope(&scope_path, &wiki_root, &wiki_pages) {
+                Ok(()) => files.push(relative_to(cwd, &scope_path)),
+                Err(error) => eprintln!("写 wiki 作用域失败（{}）：{error}", scope_path.display()),
+            }
+        }
     }
 
     // ── 扩展 ──────────────────────────────────────────────
@@ -576,6 +704,86 @@ mod tests {
     #[test]
     fn always_policy_skips_version_question() {
         assert_ne!(LandPolicy::Always, LandPolicy::AskOnVersionChange);
+    }
+
+    // ── 知识库注入 ──────────────────────────────────────
+
+    /// 造一个带 wiki 绑定的智能体。
+    fn wiki_agent() -> CreatedAgent {
+        CreatedAgent {
+            id: "a1".into(),
+            name: "知识助手".into(),
+            instruction: "只根据知识库回答".into(),
+            wiki_pages: vec!["wiki/运维".into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn block_lists_wiki_pages_but_not_their_bodies() {
+        let pages = vec![WikiScopeEntry {
+            slug: "部署手册".into(),
+            title: "部署手册".into(),
+            tags: vec!["发布".into(), "运维".into()],
+            parent: None,
+            links: vec![],
+        }];
+        let block = build_block(&wiki_agent(), &[], &pages);
+
+        assert!(block.contains("## Knowledge Base"), "要有知识库这一节");
+        assert!(block.contains("部署手册"), "要列出页面标题");
+        assert!(block.contains("slug: 部署手册"), "要给出 slug");
+        assert!(block.contains("发布, 运维"), "要带标签");
+        assert!(block.contains("wiki_search"), "要告诉 agent 怎么用");
+        // 正文不注入 —— 只注入元信息
+        assert!(!block.contains("第一步"), "正文不能进指令");
+    }
+
+    #[test]
+    fn block_omits_knowledge_base_when_nothing_bound() {
+        let block = build_block(&wiki_agent(), &[], &[]);
+        assert!(!block.contains("## Knowledge Base"), "没绑 wiki 就不该有这节");
+    }
+
+    #[test]
+    fn wiki_scope_file_writes_readable_json() {
+        let dir = std::env::temp_dir().join("agentspace-cli-wiki-scope");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wiki-scope.json");
+
+        let pages = vec![WikiScopeEntry {
+            slug: "部署手册".into(),
+            title: "部署手册".into(),
+            tags: vec!["运维".into()],
+            parent: None,
+            links: vec!["回滚流程".into()],
+        }];
+        write_wiki_scope(&path, Path::new("/tmp/wiki"), &pages).unwrap();
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(doc["wikiRoot"], "/tmp/wiki");
+        assert_eq!(doc["pages"][0]["slug"], "部署手册");
+        assert_eq!(doc["pages"][0]["tags"][0], "运维");
+        assert_eq!(doc["pages"][0]["links"][0], "回滚流程");
+    }
+
+    #[test]
+    fn wiki_scope_entries_expand_descendants() {
+        let home = std::env::temp_dir().join("agentspace-cli-wiki-entries");
+        let _ = fs::remove_dir_all(&home);
+        let paths = Paths::new(home.clone());
+        let root = agentspace_core::wiki::create_page(&paths, "运维", None).unwrap();
+        let child = agentspace_core::wiki::create_page(&paths, "部署", Some(root.slug.clone())).unwrap();
+        let other = agentspace_core::wiki::create_page(&paths, "财务", None).unwrap();
+
+        let entries = wiki_scope_entries(&paths, &[format!("wiki/{}", root.slug)]);
+        let slugs: Vec<String> = entries.iter().map(|entry| entry.slug.clone()).collect();
+        assert!(slugs.contains(&root.slug));
+        assert!(slugs.contains(&child.slug), "子页面自动进作用域");
+        assert!(!slugs.contains(&other.slug), "范围外的进不来");
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

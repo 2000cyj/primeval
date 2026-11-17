@@ -126,6 +126,10 @@ impl Runtime for PiRuntime {
         Some(cwd.join(".pi").join("mcp.json"))
     }
 
+    fn wiki_scope_file(&self, cwd: &Path) -> Option<PathBuf> {
+        Some(cwd.join(".pi").join("wiki-scope.json"))
+    }
+
     fn extension(&self) -> Option<ExtensionAsset> {
         Some(ExtensionAsset {
             relative_path: EXTENSION_RELATIVE_PATH,

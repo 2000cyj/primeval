@@ -43,6 +43,19 @@ export function wikiDir(): string {
 }
 
 /**
+ * 已创建智能体的目录（app data 下的 `agents/` 子目录）。
+ *
+ * **固定在默认位置，不受 `AGENT_COMPOSE_DATA_DIR` 影响。**
+ *
+ * 跟 core 侧（`agentspace-core/src/paths.rs` 的 `agents_root()`）保持一致 ——
+ * core 那边也是 `~/.agent-compose/agents`，不认那个环境变量。
+ * 两边读的地方不一样，wiki 作用域就算空了。
+ */
+export function agentsDir(): string {
+  return join(homedir(), '.agent-compose', 'agents')
+}
+
+/**
  * 运行时信息目录：port 与 token 落在这里。
  *
  * **固定在默认位置，不受 `AGENT_COMPOSE_DATA_DIR` 影响。**

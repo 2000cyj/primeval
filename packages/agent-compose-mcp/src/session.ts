@@ -19,6 +19,7 @@ import { hasStaticToken } from './upstream.ts'
 import type { McpProfile, McpSelection, McpServerDef } from './types.ts'
 import { MCP_NS_SEPARATOR } from './types.ts'
 import { createWikiTools } from './wiki.ts'
+import { wikiDir } from './config.ts'
 
 /** 一个视图里对外可见的工具 */
 export type ViewTool = {
@@ -58,6 +59,10 @@ export type McpView = {
    * 本地工具不走 registry 转发：tools/call 先查这里，命中就本地执行。
    */
   localTools: Map<string, LocalTool>
+  /**
+   * 本次会话的 wiki 作用域（可见的 slug 集合）。null = 不限制。
+   */
+  wikiScope: Set<string> | null
 }
 
 /**
@@ -187,8 +192,15 @@ export class SessionManager {
    *
    * registry 的全局工具集（带前缀）由配置变更时重建；这里只做**视图过滤与改名**，
    * 不触碰 registry 的路由表。
+   *
+   * `wikiScope` 限定 wiki 的可见范围 —— agent 只能读它绑定了的知识库页面。
+   * null = 不限制。
    */
-  buildView(selection: McpSelection, profiles: McpProfile[]): McpView {
+  buildView(
+    selection: McpSelection,
+    profiles: McpProfile[],
+    wikiScope: Set<string> | null = null,
+  ): McpView {
     const { ids, prefixed } = resolveServerIds(selection, profiles)
     const all = this.registry.list()
 
@@ -197,8 +209,17 @@ export class SessionManager {
     const tools: ViewTool[] = []
 
     // 本地工具先占住名字：撞名时让上游工具改名（本地工具优先）
+    //
+    // 有作用域时重建 wiki 工具 —— 作用域是**每个会话**的
+    // （不同 agent 连同一个端点，能看到的页面不一样）。
     const localTools = new Map<string, LocalTool>()
-    for (const tool of this.localTools) {
+    const scoped = wikiScope
+      ? createWikiTools(
+          () => wikiDir(),
+          () => wikiScope,
+        )
+      : this.localTools
+    for (const tool of scoped) {
       localTools.set(tool.name, tool)
     }
 
@@ -228,7 +249,7 @@ export class SessionManager {
       })
     }
 
-    return { selection, tools, outwardToExposed, localTools }
+    return { selection, tools, outwardToExposed, localTools, wikiScope }
   }
 
   /**

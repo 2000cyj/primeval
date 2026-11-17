@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { NIcon, NInput } from 'naive-ui'
-import { Plus } from 'lucide-vue-next'
+import { BookOpen, Plus } from 'lucide-vue-next'
 import SkillPickerModal from '@/components/SkillPickerModal.vue'
 import McpPickerModal from '@/components/McpPickerModal.vue'
 import ExtensionPickerModal from '@/components/ExtensionPickerModal.vue'
+import WikiPickerModal from '@/components/WikiPickerModal.vue'
 import ToolboxIcon from '@/components/ToolboxIcon.vue'
 
 /**
@@ -19,10 +20,17 @@ const skills = defineModel<string[]>('skills', { required: true })
 const mcpServers = defineModel<string[]>('mcpServers', { required: true })
 /** 绑定的 Pi 扩展（相对引用，如 `extensions/npm/pi-mcp-adapter`） */
 const extensions = defineModel<string[]>('extensions', { required: true })
+/**
+ * 绑定的 wiki 页面（引用格式 `wiki/<slug>`）。
+ *
+ * 绑定的是入口页面，它下面的子页面自动跟着可见。
+ */
+const wikiPages = defineModel<string[]>('wikiPages', { required: true })
 
 const showSkillPicker = ref(false)
 const showMcpPicker = ref(false)
 const showExtensionPicker = ref(false)
+const showWikiPicker = ref(false)
 
 const descriptionLength = computed(() => description.value.length)
 const descriptionMax = 255
@@ -96,6 +104,19 @@ const descriptionMax = 255
         <span>已选 {{ extensions.length }} 个 —— 点击修改</span>
       </button>
     </div>
+
+    <div class="field">
+      <div class="field-label">
+        知识库
+        <span class="field-hint">
+          绑定 Wiki 页面后，这个智能体才能检索它们；子页面自动跟着可见。
+        </span>
+      </div>
+      <button type="button" class="skills-toggle" @click="showWikiPicker = true">
+        <BookOpen :size="14" />
+        <span>已选 {{ wikiPages.length }} 个 —— 点击修改</span>
+      </button>
+    </div>
   </section>
 
   <SkillPickerModal
@@ -117,6 +138,13 @@ const descriptionMax = 255
     :selected="extensions"
     @update:selected="extensions = $event"
     @close="showExtensionPicker = false"
+  />
+
+  <WikiPickerModal
+    :show="showWikiPicker"
+    :selected="wikiPages"
+    @update:selected="wikiPages = $event"
+    @close="showWikiPicker = false"
   />
 </template>
 

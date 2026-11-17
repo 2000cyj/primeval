@@ -54,6 +54,18 @@ pub struct WikiPageMeta {
     pub tags: Vec<String>,
     /// 父页面 slug；`None` = 顶层。
     pub parent: Option<String>,
+    /// 本页正文里 `[[slug]]` 引用的其它页面。
+    ///
+    /// **多值** —— 这是「图」与「树」的分界线。
+    ///
+    /// `parent` 是单值的（一页只能有一个父节点），所以只靠它的话
+    /// wiki 是一棵树；有了这一列，同一个页面可以被多页引用，
+    /// 关系网才成其为图。
+    ///
+    /// 用 `[[wiki-link]]` 语法而不是让用户在界面上勾选 ——
+    /// 写文档时自然产生的引用直接就是图的边，不用另外维护一份关系表。
+    #[serde(default)]
+    pub links: Vec<String>,
     /// 创建时间（epoch 毫秒）。
     pub created_at: u64,
     /// 最后修改时间（epoch 毫秒）。
@@ -67,6 +79,7 @@ impl Default for WikiPageMeta {
             title: String::new(),
             tags: Vec::new(),
             parent: None,
+            links: Vec::new(),
             created_at: 0,
             updated_at: 0,
         }
@@ -81,6 +94,9 @@ pub struct WikiPage {
     pub title: String,
     pub tags: Vec<String>,
     pub parent: Option<String>,
+    /// 本页引用的其它页面（`[[slug]]`）。
+    #[serde(default)]
+    pub links: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
     /// 正文（Markdown 源码）。
@@ -94,6 +110,7 @@ impl Default for WikiPage {
             title: String::new(),
             tags: Vec::new(),
             parent: None,
+            links: Vec::new(),
             created_at: 0,
             updated_at: 0,
             content: String::new(),
@@ -109,6 +126,7 @@ impl WikiPage {
             title: self.title.clone(),
             tags: self.tags.clone(),
             parent: self.parent.clone(),
+            links: self.links.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -203,6 +221,189 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
+/// 从正文里提取 `[[slug]]` 引用。
+///
+/// 只认行内的 `[[...]]`，取 `[[名称|显示文字]]` 里的名称部分。
+///
+/// 指向不存在页面的引用直接丢掉 —— 引用了不存在的页面是笔误，
+/// 留着会让图里出现悬空节点（查询时找不到对应页面）。
+///
+/// 自己引自己不算数（自己指向自己没有信息量）。
+pub fn extract_links(content: &str, known_slugs: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let chars: Vec<char> = content.chars().collect();
+    let mut i = 0usize;
+    while i + 1 < chars.len() {
+        if chars[i] != '[' || chars[i + 1] != '[' {
+            i += 1;
+            continue;
+        }
+        // 找匹配的 `]]`
+        let mut j = i + 2;
+        let mut end = None;
+        while j + 1 < chars.len() {
+            if chars[j] == ']' && chars[j + 1] == ']' {
+                end = Some(j);
+                break;
+            }
+            j += 1;
+        }
+        let Some(end) = end else {
+            // 没有闭合的 `[[` —— 不是引用，当普通文本
+            i += 1;
+            continue;
+        };
+        let inner: String = chars[i + 2..end].iter().collect();
+        // `名称|显示文字` —— 取名称
+        let name = inner.split('|').next().unwrap_or("").trim();
+        i = end + 2;
+        if name.is_empty() {
+            continue;
+        }
+        if !known_slugs.iter().any(|s| s == name) {
+            continue;
+        }
+        if !out.iter().any(|s: &String| s == name) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// Wiki 里现有的全部 slug。
+fn known_slugs(paths: &Paths) -> Vec<String> {
+    list_pages(paths).into_iter().map(|meta| meta.slug).collect()
+}
+
+/// 一个页面的关联页面。
+///
+/// 这是「知识图谱」的查询入口 —— agent 读到一个页面后，
+/// 靠它知道**还应该看什么**。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WikiNeighbors {
+    /// 本页 slug。
+    pub slug: String,
+    /// 本页引用到的页面（出边）。
+    pub outgoing: Vec<String>,
+    /// 引用了本页的页面（入边）。
+    pub incoming: Vec<String>,
+    /// 父页面。
+    pub parent: Option<String>,
+    /// 直接子页面。
+    pub children: Vec<String>,
+    /// 同标签的其它页面。
+    pub siblings: Vec<String>,
+}
+
+impl Default for WikiNeighbors {
+    fn default() -> Self {
+        WikiNeighbors {
+            slug: String::new(),
+            outgoing: Vec::new(),
+            incoming: Vec::new(),
+            parent: None,
+            children: Vec::new(),
+            siblings: Vec::new(),
+        }
+    }
+}
+
+/// 查一个页面的邻居。
+///
+/// 边的四种来源：
+/// - `outgoing` / `incoming` —— 正文里的 `[[链接]]`（有向）
+/// - `parent` / `children` —— 树形层级
+/// - `siblings` —— 同标签
+pub fn neighbors(paths: &Paths, slug: &str) -> Result<WikiNeighbors, String> {
+    let page = read_page(paths, slug)?;
+    let all = list_pages(paths);
+    let mut out = WikiNeighbors {
+        slug: slug.to_string(),
+        outgoing: page.links.clone(),
+        parent: page.parent.clone(),
+        ..WikiNeighbors::default()
+    };
+
+    for meta in &all {
+        if meta.slug == slug {
+            continue;
+        }
+        // 入边：谁引用了我
+        if meta.links.iter().any(|link| link == slug) {
+            out.incoming.push(meta.slug.clone());
+        }
+        // 子页面
+        if meta.parent.as_deref() == Some(slug) {
+            out.children.push(meta.slug.clone());
+        }
+        // 同标签
+        if !page.tags.is_empty()
+            && meta
+                .tags
+                .iter()
+                .any(|tag| page.tags.contains(tag))
+        {
+            out.siblings.push(meta.slug.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// 把一组入口页面展开成**可见页面集合**。
+///
+/// 入口页面 + 它的所有后代（子树）。
+///
+/// 为什么自动带后代：用户在 wiki 里新建一个子页面后，
+/// 它应该自动对绑了父页面的智能体可见 —— 否则每加一页都要回去
+/// 改一遍智能体配置，太蠢。
+///
+/// 返回的 slug 集合已去重、已排除不存在的入口。
+pub fn expand_scope(paths: &Paths, roots: &[String]) -> Vec<String> {
+    let all = list_pages(paths);
+    let known: Vec<String> = all.iter().map(|meta| meta.slug.clone()).collect();
+
+    // 先算出「父 → 子」的映射
+    let mut children_of: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for meta in &all {
+        if let Some(parent) = &meta.parent {
+            children_of
+                .entry(parent.clone())
+                .or_default()
+                .push(meta.slug.clone());
+        }
+    }
+
+    let mut result: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = Vec::new();
+    for root in roots {
+        let slug = root.trim();
+        // 引用格式：`wiki/<slug>`
+        let bare = slug.strip_prefix("wiki/").unwrap_or(slug);
+        if bare.is_empty() || !known.iter().any(|s| s == bare) {
+            continue;
+        }
+        if !result.iter().any(|s| s == bare) {
+            result.push(bare.to_string());
+        }
+        queue.push(bare.to_string());
+    }
+
+    // 广度遍历，把整棵子树收进来
+    while let Some(current) = queue.pop() {
+        if let Some(kids) = children_of.get(&current) {
+            for kid in kids {
+                if !result.iter().any(|s| s == kid) {
+                    result.push(kid.clone());
+                    queue.push(kid.clone());
+                }
+            }
+        }
+    }
+    result
+}
+
 /// 读元信息。
 fn read_meta(dir: &Path) -> WikiPageMeta {
     let raw = fs::read_to_string(dir.join(META_FILE)).unwrap_or_default();
@@ -262,6 +463,7 @@ pub fn read_page(paths: &Paths, slug: &str) -> Result<WikiPage, String> {
         },
         tags: meta.tags,
         parent: meta.parent,
+        links: meta.links,
         created_at: meta.created_at,
         updated_at: meta.updated_at,
         content,
@@ -290,6 +492,7 @@ pub fn create_page(
         title: title.to_string(),
         tags: Vec::new(),
         parent: parent.filter(|p| !p.trim().is_empty()),
+        links: Vec::new(),
         created_at: now,
         updated_at: now,
     };
@@ -297,11 +500,15 @@ pub fn create_page(
     let body = format!("# {}\n\n", meta.title);
     fs::write(dir.join(PAGE_FILE), &body).map_err(|e| format!("写入页面失败：{e}"))?;
 
+    // 新页面可能落在某个智能体的绑定范围里 → 版本号要动
+    crate::agent::bump_versions_for_wiki(paths);
+
     Ok(WikiPage {
         slug,
         title: meta.title,
         tags: meta.tags,
         parent: meta.parent,
+        links: meta.links,
         created_at: now,
         updated_at: now,
         content: body,
@@ -358,17 +565,26 @@ pub fn save_page(
         title,
         tags: clean_tags.clone(),
         parent: parent.clone(),
+        // 引用关系跟着正文走 —— 正文改了，图的边就得跟着变。
+        //
+        // 提取时只认**已存在的**页面：引用了不存在的页面是笔误，
+        // 留着会让图里出现悬空节点。
+        links: extract_links(content, &known_slugs(paths)),
         created_at: if old.created_at == 0 { now } else { old.created_at },
         updated_at: now,
     };
     write_meta(&dir, &meta)?;
     fs::write(dir.join(PAGE_FILE), content).map_err(|e| format!("写入页面失败：{e}"))?;
 
+    // 页面变了 → 绑着 wiki 的智能体要重新落地作用域
+    crate::agent::bump_versions_for_wiki(paths);
+
     Ok(WikiPage {
         slug: slug.to_string(),
         title: meta.title,
         tags: meta.tags,
         parent: meta.parent,
+        links: meta.links,
         created_at: meta.created_at,
         updated_at: now,
         content: content.to_string(),
@@ -396,6 +612,9 @@ pub fn delete_page(paths: &Paths, slug: &str) -> Result<(), String> {
             let _ = write_meta(&dir, &updated);
         }
     }
+
+    // 页面没了 → 绑着它的智能体要重新落地作用域
+    crate::agent::bump_versions_for_wiki(paths);
     Ok(())
 }
 
@@ -745,6 +964,136 @@ mod tests {
         let tags = all_tags(&paths);
         assert_eq!(tags[0], "运维", "出现最多的排前面");
         assert!(tags.contains(&"部署".to_string()));
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    // ── 图谱：[[链接]] 提取 ──────────────────────────────
+
+    #[test]
+    fn extract_links_finds_wiki_link_syntax() {
+        let known = vec!["部署手册".to_string(), "回滚流程".to_string()];
+        let content = "看 [[部署手册]] 里的步骤，详见 [[回滚流程]]。";
+        let links = extract_links(content, &known);
+        assert_eq!(links, vec!["部署手册".to_string(), "回滚流程".to_string()]);
+    }
+
+    #[test]
+    fn extract_links_takes_name_before_pipe() {
+        let known = vec!["部署手册".to_string()];
+        let links = extract_links("参考 [[部署手册|部署步骤]]", &known);
+        assert_eq!(links, vec!["部署手册".to_string()]);
+    }
+
+    #[test]
+    fn extract_links_drops_dangling_references() {
+        // 指向不存在页面的引用是笔误 —— 不能留成悬空节点
+        let known = vec!["部署手册".to_string()];
+        let links = extract_links("见 [[不存在的页面]] 和 [[部署手册]]", &known);
+        assert_eq!(links, vec!["部署手册".to_string()]);
+    }
+
+    #[test]
+    fn extract_links_deduplicates() {
+        let known = vec!["A".to_string()];
+        let links = extract_links("[[A]] 然后 [[A]] 再说 [[A]]", &known);
+        assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn extract_links_ignores_unclosed_bracket() {
+        let known = vec!["A".to_string()];
+        assert!(extract_links("[[A 没有闭合", &known).is_empty());
+        assert!(extract_links("普通方括号 [A]", &known).is_empty());
+    }
+
+    #[test]
+    fn saving_page_records_links_into_the_graph() {
+        let paths = temp_paths("links");
+        let a = create_page(&paths, "A", None).unwrap();
+        let b = create_page(&paths, "B", None).unwrap();
+        save_page(&paths, &a.slug, "A", "指向 [[B]]", &[], None).unwrap();
+
+        let page = read_page(&paths, &a.slug).unwrap();
+        assert_eq!(page.links, vec![b.slug]);
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    #[test]
+    fn editing_body_updates_the_graph_edges() {
+        let paths = temp_paths("links-update");
+        let a = create_page(&paths, "A", None).unwrap();
+        let b = create_page(&paths, "B", None).unwrap();
+        save_page(&paths, &a.slug, "A", "指向 [[B]]", &[], None).unwrap();
+        // 改正文 —— 边必须跟着变
+        save_page(&paths, &a.slug, "A", "不指了", &[], None).unwrap();
+        assert!(read_page(&paths, &a.slug).unwrap().links.is_empty());
+        assert!(read_page(&paths, &b.slug).is_ok(), "B 本身还在");
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    // ── 图谱：邻居查询 ──────────────────────────────────
+
+    #[test]
+    fn neighbors_reports_both_directions() {
+        let paths = temp_paths("neighbors");
+        let a = create_page(&paths, "A", None).unwrap();
+        let b = create_page(&paths, "B", None).unwrap();
+        let c = create_page(&paths, "C", None).unwrap();
+        // A → B
+        save_page(&paths, &a.slug, "A", "见 [[B]]", &[], None).unwrap();
+        // C → B
+        save_page(&paths, &c.slug, "C", "也见 [[B]]", &[], None).unwrap();
+
+        let n = neighbors(&paths, &b.slug).unwrap();
+        assert_eq!(n.outgoing.len(), 0, "B 没引用别人");
+        assert_eq!(n.incoming.len(), 2, "A 和 C 都引用了 B");
+        assert!(n.incoming.contains(&a.slug));
+        assert!(n.incoming.contains(&c.slug));
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    #[test]
+    fn neighbors_reports_tree_and_tag_edges() {
+        let paths = temp_paths("neighbors-tree");
+        let parent = create_page(&paths, "父", None).unwrap();
+        let child = create_page(&paths, "子", Some(parent.slug.clone())).unwrap();
+        let sib = create_page(&paths, "兄弟", None).unwrap();
+        save_page(&paths, &child.slug, "子", "x", &["运维".into()], Some(parent.slug.clone()))
+            .unwrap();
+        save_page(&paths, &sib.slug, "兄弟", "x", &["运维".into()], None).unwrap();
+
+        let n = neighbors(&paths, &child.slug).unwrap();
+        assert_eq!(n.parent.as_deref(), Some(parent.slug.as_str()));
+        assert!(n.children.is_empty());
+        assert!(n.siblings.contains(&sib.slug), "同标签算邻居");
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    // ── 作用域展开 ──────────────────────────────────────
+
+    #[test]
+    fn expand_scope_includes_descendants() {
+        let paths = temp_paths("scope");
+        let root = create_page(&paths, "运维", None).unwrap();
+        let child = create_page(&paths, "部署", Some(root.slug.clone())).unwrap();
+        let grand = create_page(&paths, "回滚", Some(child.slug.clone())).unwrap();
+        let other = create_page(&paths, "财务", None).unwrap();
+
+        let scope = expand_scope(&paths, &[format!("wiki/{}", root.slug)]);
+        assert!(scope.contains(&root.slug));
+        assert!(scope.contains(&child.slug), "子页面自动可见");
+        assert!(scope.contains(&grand.slug), "孙页面也自动可见");
+        assert!(!scope.contains(&other.slug), "范围外的进不来");
+        let _ = fs::remove_dir_all(paths.home());
+    }
+
+    #[test]
+    fn expand_scope_ignores_missing_roots() {
+        let paths = temp_paths("scope-missing");
+        let a = create_page(&paths, "A", None).unwrap();
+        let scope = expand_scope(&paths, &["wiki/不存在".to_string(), a.slug.clone()]);
+        assert_eq!(scope.len(), 1);
+        assert_eq!(scope[0], a.slug);
         let _ = fs::remove_dir_all(paths.home());
     }
 }

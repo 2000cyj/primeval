@@ -28,6 +28,8 @@ const skills = ref<string[]>([])
 const mcpServers = ref<string[]>([])
 /** 绑定的 Pi 扩展（相对扩展库的引用） */
 const extensions = ref<string[]>([])
+/** 绑定的 wiki 页面（引用格式 `wiki/<slug>`） */
+const wikiPages = ref<string[]>([])
 
 /** 把智能体的当前值灌进表单 */
 const load = (): void => {
@@ -39,6 +41,7 @@ const load = (): void => {
   skills.value = [...current.skills]
   mcpServers.value = [...current.mcpServers]
   extensions.value = [...(current.extensions ?? [])]
+  wikiPages.value = [...(current.wikiPages ?? [])]
 }
 
 watch(agent, load, { immediate: true })
@@ -67,6 +70,7 @@ const save = async (): Promise<void> => {
       skills: skills.value,
       mcpServers: mcpServers.value,
       extensions: extensions.value,
+      wikiPages: wikiPages.value,
     })
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))
@@ -119,6 +123,7 @@ const copyRunCommand = (): void => {
         v-model:skills="skills"
         v-model:mcp-servers="mcpServers"
         v-model:extensions="extensions"
+        v-model:wiki-pages="wikiPages"
       />
 
       <section class="card run-card">

@@ -99,6 +99,11 @@ pub struct CreateArgs {
     /// 绑定的 pi 扩展（相对引用，如 extensions/npm/pi-mcp-adapter，可重复）
     #[arg(long = "extension")]
     extension: Vec<String>,
+    /// 绑定的 wiki 页面（相对引用，如 `wiki/部署手册`，可重复）
+    ///
+    /// 绑定的是入口页面，**它的整棵子树自动跟着可见**。
+    #[arg(long = "wiki")]
+    wiki: Vec<String>,
     /// 跑在哪个 agent 上（现在只有 pi）
     #[arg(long, default_value = agent::DEFAULT_RUNTIME)]
     runtime: String,
@@ -129,6 +134,9 @@ pub struct UpdateArgs {
     /// 绑定的 pi 扩展（整体替换，可重复）
     #[arg(long = "extension")]
     extension: Option<Vec<String>>,
+    /// 绑定的 wiki 页面（整体替换，可重复）
+    #[arg(long = "wiki")]
+    wiki: Option<Vec<String>>,
 }
 
 #[derive(Args, Debug)]
@@ -337,6 +345,7 @@ fn create(paths: &Paths, args: CreateArgs) -> u8 {
             .map(|id| format!("mcp/servers.json#{id}"))
             .collect(),
         extensions: args.extension.clone(),
+        wiki_pages: args.wiki.iter().map(|slug| format!("wiki/{slug}")).collect(),
         runtime: args.runtime,
         version: 0,
         created_at: now_ms(),
@@ -416,6 +425,19 @@ fn update(paths: &Paths, args: UpdateArgs) -> u8 {
             })
             .collect();
     }
+    if let Some(value) = args.wiki {
+        found.wiki_pages = value
+            .iter()
+            .map(|reference| {
+                // 允许写 `wiki/xxx` 或直接写 `xxx` —— 后者补上前缀
+                if reference.starts_with("wiki/") {
+                    reference.clone()
+                } else {
+                    format!("wiki/{reference}")
+                }
+            })
+            .collect();
+    }
     match agent::save(paths, &found) {
         Ok(saved) => {
             println!("已更新智能体「{}」→ v{}", saved.name, saved.version);
@@ -477,6 +499,7 @@ fn copy(paths: &Paths, args: CopyArgs) -> u8 {
         skills: source.skills,
         mcp_servers: source.mcp_servers,
         extensions: source.extensions.clone(),
+        wiki_pages: source.wiki_pages.clone(),
         runtime: source.runtime,
         version: 0,
         created_at: now_ms(),
@@ -836,6 +859,7 @@ fn import_agent(paths: &Paths, args: ImportArgs) -> u8 {
         skills: skill_refs,
         mcp_servers: mcp_refs,
         extensions: extension_refs,
+        wiki_pages: Vec::new(),
         runtime: agent::DEFAULT_RUNTIME.to_string(),
         version: 0,
         created_at: now_ms(),

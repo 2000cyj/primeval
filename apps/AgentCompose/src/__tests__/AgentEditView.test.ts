@@ -62,6 +62,7 @@ const createAgent = async (
     skills: [],
     mcpServers: [],
     extensions: [],
+    wikiPages: [],
     ...agent,
   })
 }

@@ -23,6 +23,7 @@ import type { SessionManager } from './session.ts'
 import type { UpstreamPool } from './upstream.ts'
 import type { McpProfile, McpRuntimeStatus, McpServerDef } from './types.ts'
 import { parseSelection } from './session.ts'
+import { resolveWikiScope } from './wiki.ts'
 import { entryToServerDef, fetchRegistryEntry, searchRegistry } from './registry-client.ts'
 import { FIXED_TOKEN } from './config.ts'
 import type { OAuthManager } from './oauth.ts'
@@ -113,9 +114,14 @@ export class McpHttpServer {
     // 因此天然无状态 —— 粒度完全由 URL 决定，不需要 session 上下文。
     this.mcpHandler = createMcpHandler(async (ctx) => {
       const request = ctx.requestInfo
-      const pathname = request ? new URL(request.url).pathname : '/mcp'
+      const url = request ? new URL(request.url) : null
+      const pathname = url ? url.pathname : '/mcp'
       const selection = parseSelection(pathname)
-      const view = session.buildView(selection, store.getProfiles())
+      // `?agent=<id>` 限定 wiki 的可见范围 ——
+      // agent 只能读它自己绑定了的知识库页面。
+      const agentId = url ? url.searchParams.get('agent') : null
+      const wikiScope = agentId ? await resolveWikiScope(agentId) : null
+      const view = session.buildView(selection, store.getProfiles(), wikiScope)
       // 工具集随上游变化，路由表由 registry 统一维护
       registry.buildFromPool(store.getExposure())
       return session.createServer(view)

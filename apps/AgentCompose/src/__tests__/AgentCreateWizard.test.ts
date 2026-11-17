@@ -256,6 +256,7 @@ describe('新建智能体向导', () => {
       skills: [],
       mcpServers: [],
       extensions: [],
+      wikiPages: [],
     })
 
     const wrapper = await mountWizard()

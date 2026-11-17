@@ -107,6 +107,9 @@ pub struct ManifestAgent {
     pub mcp_servers: Vec<String>,
     /// 引用的扩展相对路径。
     pub extensions: Vec<String>,
+    /// 引用的 wiki 页面（`wiki/<slug>`）。
+    #[serde(default)]
+    pub wiki_pages: Vec<String>,
     /// 包里的文件（zip 内路径）。
     pub files: Vec<String>,
 }
@@ -317,6 +320,9 @@ pub struct AgentExportItem {
     pub skills: Vec<String>,
     pub mcp_servers: Vec<String>,
     pub extensions: Vec<String>,
+    /// 绑定的 wiki 页面（`wiki/<slug>`）。
+    #[serde(default)]
+    pub wiki_pages: Vec<String>,
 }
 
 /// 全部可导出的数据（界面勾选列表的数据源）。
@@ -354,6 +360,7 @@ pub fn inventory(paths: &Paths, mcp_servers: &[serde_json::Value]) -> Inventory 
             skills: agent.skills,
             mcp_servers: agent.mcp_servers,
             extensions: agent.extensions,
+            wiki_pages: agent.wiki_pages,
         });
     }
 
@@ -712,6 +719,7 @@ pub fn export(
             skills: agent.skills.clone(),
             mcp_servers: agent.mcp_servers.clone(),
             extensions: agent.extensions.clone(),
+            wiki_pages: agent.wiki_pages.clone(),
             files,
         });
     }

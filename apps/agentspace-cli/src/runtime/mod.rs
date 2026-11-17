@@ -73,6 +73,15 @@ pub trait Runtime {
     /// MCP 配置文件（完整路径）。返回 `None` = 这个运行时不支持项目级 MCP。
     fn mcp_config_file(&self, cwd: &Path) -> Option<PathBuf>;
 
+    /// wiki 作用域文件（完整路径）。返回 `None` = 这个运行时不支持项目级 wiki 作用域。
+    ///
+    /// 这个文件告诉扩展「这个智能体能看到哪些知识库页面」——
+    /// 作用域跟着**工作目录**走，天然按项目隔离，
+    /// 扩展不用知道自己正在为哪个智能体服务。
+    fn wiki_scope_file(&self, _cwd: &Path) -> Option<PathBuf> {
+        None
+    }
+
     /// 扩展资源。返回 `None` = 这个运行时没有扩展机制。
     fn extension(&self) -> Option<ExtensionAsset>;
 

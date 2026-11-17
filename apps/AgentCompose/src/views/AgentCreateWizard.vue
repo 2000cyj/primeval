@@ -110,6 +110,8 @@ const selectedSkills = ref<string[]>([])
 const selectedMcpServers = ref<string[]>([])
 /** 已选 Pi 扩展（相对扩展库的引用） */
 const selectedExtensions = ref<string[]>([])
+/** 已选 wiki 页面（引用格式 `wiki/<slug>`） */
+const selectedWikiPages = ref<string[]>([])
 
 const goNext = () => {
   if (!piInstalled.value) {
@@ -141,6 +143,7 @@ const submit = async (): Promise<void> => {
       skills: selectedSkills.value,
       mcpServers: selectedMcpServers.value,
       extensions: selectedExtensions.value,
+      wikiPages: selectedWikiPages.value,
       // 现在只支持 Pi（第一步只能选 Pi）
       runtime: 'pi',
     })
@@ -155,6 +158,7 @@ const submit = async (): Promise<void> => {
     skills: selectedSkills.value,
     mcpServers: selectedMcpServers.value,
     extensions: selectedExtensions.value,
+    wikiPages: selectedWikiPages.value,
   })
   message.success(`已创建智能体：${name.value.trim()}`)
 }
@@ -295,6 +299,7 @@ const submit = async (): Promise<void> => {
         v-model:skills="selectedSkills"
         v-model:mcp-servers="selectedMcpServers"
         v-model:extensions="selectedExtensions"
+        v-model:wiki-pages="selectedWikiPages"
       />
     </div>
 

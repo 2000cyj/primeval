@@ -28,6 +28,7 @@ async function writePage(
     title?: string
     tags?: string[]
     parent?: string | null
+    links?: string[]
     content?: string
     createdAt?: number
     updatedAt?: number
@@ -43,6 +44,7 @@ async function writePage(
     title: options.title ?? slug,
     tags: options.tags ?? [],
     parent: options.parent ?? null,
+    links: options.links ?? [],
     createdAt: options.createdAt ?? 1_700_000_000_000,
     updatedAt: options.updatedAt ?? 1_700_000_000_001,
   }
@@ -187,9 +189,14 @@ describe('Wiki：搜索', () => {
 })
 
 describe('Wiki：本地工具', () => {
-  it('提供 list / read / search 三个工具，描述能说明什么时候用', () => {
+  it('提供 list / read / search / neighbors 四个工具，描述能说明什么时候用', () => {
     const tools = createWikiTools(() => root)
-    expect(tools.map((tool) => tool.name)).toEqual(['wiki_list', 'wiki_read', 'wiki_search'])
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'wiki_list',
+      'wiki_read',
+      'wiki_search',
+      'wiki_neighbors',
+    ])
     for (const tool of tools) {
       expect(tool.description.length).toBeGreaterThan(10)
       expect(tool.inputSchema.type).toBe('object')
@@ -251,5 +258,118 @@ describe('Wiki：本地工具', () => {
     expect(hits).toHaveLength(1)
     expect(hits[0]?.slug).toBe('sign')
     expect(hits[0]?.line).toBe(2)
+  })
+})
+
+describe('Wiki：作用域', () => {
+  /** 造一个限定可见页面的作用域。 */
+  const scopeOf = (...slugs: string[]): Set<string> => new Set(slugs)
+
+  it('wiki_list 只列范围内的页面', async () => {
+    await writePage('visible', { title: '可见页' })
+    await writePage('hidden', { title: '不可见页' })
+
+    const list = createWikiTools(
+      () => root,
+      () => scopeOf('visible'),
+    ).find((tool) => tool.name === 'wiki_list')
+    const result = await list?.execute({})
+    const parsed = JSON.parse(texts(result as CallToolResult).join('\n')) as Array<{ slug: string }>
+    expect(parsed.map((page) => page.slug)).toEqual(['visible'])
+  })
+
+  it('wiki_read 越权时给出工具级错误', async () => {
+    await writePage('hidden', { title: '不可见页', content: '机密内容' })
+    const read = createWikiTools(
+      () => root,
+      () => scopeOf('other'),
+    ).find((tool) => tool.name === 'wiki_read')
+    const result = await read?.execute({ slug: 'hidden' })
+    expect(result?.isError).toBe(true)
+    expect(texts(result as CallToolResult).join('')).toContain('不在此智能体的知识范围内')
+    // 关键：越权时**不能**泄露正文
+    expect(texts(result as CallToolResult).join('')).not.toContain('机密内容')
+  })
+
+  it('wiki_search 只搜范围内的页面', async () => {
+    await writePage('visible', { title: '可见页', content: '共同关键词' })
+    await writePage('hidden', { title: '不可见页', content: '共同关键词' })
+
+    const search = createWikiTools(
+      () => root,
+      () => scopeOf('visible'),
+    ).find((tool) => tool.name === 'wiki_search')
+    const result = await search?.execute({ query: '共同关键词' })
+    const hits = JSON.parse(texts(result as CallToolResult).join('\n')) as Array<{ slug: string }>
+    expect(hits.every((hit) => hit.slug === 'visible')).toBe(true)
+  })
+
+  it('没有作用域时不限制', async () => {
+    await writePage('a', { title: 'A' })
+    await writePage('b', { title: 'B' })
+    const list = createWikiTools(() => root).find((tool) => tool.name === 'wiki_list')
+    const result = await list?.execute({})
+    const parsed = JSON.parse(texts(result as CallToolResult).join('\n')) as Array<{ slug: string }>
+    expect(parsed).toHaveLength(2)
+  })
+})
+
+describe('Wiki：图谱', () => {
+  it('读出页面里的引用边', async () => {
+    await writePage('a', { title: 'A', links: ['b'] })
+    await writePage('b', { title: 'B' })
+    const page = await readWikiPage(root, 'a')
+    expect(page?.links).toEqual(['b'])
+  })
+
+  it('wiki_neighbors 报出入边、父子、同标签', async () => {
+    await writePage('a', { title: 'A', links: ['b'], tags: ['运维'] })
+    await writePage('b', { title: 'B', links: ['c'], tags: ['运维'] })
+    await writePage('c', { title: 'C', parent: 'b' })
+
+    const neighbors = createWikiTools(() => root).find((tool) => tool.name === 'wiki_neighbors')
+    const result = await neighbors?.execute({ slug: 'b' })
+    const parsed = JSON.parse(texts(result as CallToolResult).join('\n')) as {
+      outgoing: string[]
+      incoming: string[]
+      children: string[]
+      siblings: string[]
+    }
+    expect(parsed.outgoing).toEqual(['c'])
+    expect(parsed.incoming).toEqual(['a'])
+    expect(parsed.children).toEqual(['c'])
+    expect(parsed.siblings).toContain('a')
+  })
+
+  it('wiki_neighbors 对越权页面报错', async () => {
+    await writePage('hidden', { title: '不可见页' })
+    const neighbors = createWikiTools(
+      () => root,
+      () => new Set<string>(),
+    ).find((tool) => tool.name === 'wiki_neighbors')
+    const result = await neighbors?.execute({ slug: 'hidden' })
+    expect(result?.isError).toBe(true)
+  })
+})
+
+describe('Wiki：检索质量', () => {
+  it('中文按二元组切词，换个说法也能召回', async () => {
+    // 搜「连接池」—— 文档写的是「数据库连接池配置」
+    await writePage('db', { title: '数据库配置', content: '这里讲数据库连接池怎么配' })
+    const hits = await searchWiki(root, '连接池')
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits[0]?.slug).toBe('db')
+  })
+
+  it('标题命中排在正文命中前面', async () => {
+    await writePage('title-hit', { title: '回滚流程', content: '无关内容' })
+    await writePage('body-hit', { title: '别的页面', content: '这里提到回滚流程' })
+    const hits = await searchWiki(root, '回滚流程')
+    expect(hits[0]?.slug).toBe('title-hit')
+  })
+
+  it('搜不到返回空', async () => {
+    await writePage('x', { title: 'X', content: '内容' })
+    expect(await searchWiki(root, '完全不相关的词')).toEqual([])
   })
 })

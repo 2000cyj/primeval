@@ -30,6 +30,13 @@ export type CreatedAgent = {
   mcpServers: string[]
   /** 绑定的 Pi 扩展：相对扩展库的路径，如 `extensions/npm/pi-mcp-adapter` */
   extensions: string[]
+  /**
+   * 绑定的 wiki 页面：`wiki/<slug>`。
+   *
+   * 绑定的是**入口页面**，它的整棵子树自动跟着可见 ——
+   * 在 Wiki 里新建子页面后，不用回头改智能体配置。
+   */
+  wikiPages: string[]
   /** 跑在哪个 agent 上（现在只有 `pi`） */
   runtime: string
   /** 配置版本：每次变更 +1（智能体改动 / 它绑的 skill 或 MCP 变了） */

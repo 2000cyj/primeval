@@ -60,6 +60,15 @@ pub struct CreatedAgent {
     pub mcp_servers: Vec<String>,
     /// 绑定的 Pi 扩展：相对扩展库的路径，如 `extensions/npm/pi-mcp-adapter`。
     pub extensions: Vec<String>,
+    /// 绑定的 wiki 页面：`wiki/<slug>`。
+    ///
+    /// 跟 skills 一样的引用风格 —— 相对 `~/.agent-compose`，
+    /// 在 Wiki 页改了标题不用跟着改智能体。
+    ///
+    /// 绑定的是**入口页面**，它的整棵子树自动跟着可见 ——
+    /// 用户在 wiki 里新建子页面后，不用回头改智能体配置。
+    #[serde(default)]
+    pub wiki_pages: Vec<String>,
     /// 跑在哪个 agent 上（`pi`）。启动脚本据此决定拉起谁。
     pub runtime: String,
     /// 配置版本：每次变更 +1（智能体改动 / 它绑的 skill 或 MCP 变了）。
@@ -80,6 +89,7 @@ impl Default for CreatedAgent {
             skills: Vec::new(),
             mcp_servers: Vec::new(),
             extensions: Vec::new(),
+            wiki_pages: Vec::new(),
             runtime: DEFAULT_RUNTIME.to_string(),
             version: 0,
             created_at: 0,
@@ -99,6 +109,9 @@ pub struct AgentMeta {
     /// 绑定的 Pi 扩展：相对扩展库的路径，如 `extensions/npm/pi-mcp-adapter`。
     #[serde(default)]
     pub extensions: Vec<String>,
+    /// 绑定的 wiki 页面：`wiki/<slug>`。
+    #[serde(default)]
+    pub wiki_pages: Vec<String>,
     pub runtime: String,
     pub version: u64,
     pub created_at: u64,
@@ -113,6 +126,7 @@ impl Default for AgentMeta {
             skills: Vec::new(),
             mcp_servers: Vec::new(),
             extensions: Vec::new(),
+            wiki_pages: Vec::new(),
             runtime: DEFAULT_RUNTIME.to_string(),
             version: 0,
             created_at: 0,
@@ -167,6 +181,7 @@ fn read_agent(dir: &Path) -> Option<CreatedAgent> {
         skills: meta.skills,
         mcp_servers: meta.mcp_servers,
         extensions: meta.extensions,
+        wiki_pages: meta.wiki_pages,
         runtime: meta.runtime,
         version: meta.version,
         created_at: meta.created_at,
@@ -203,6 +218,7 @@ pub fn save_at(root: &Path, agent: &CreatedAgent) -> Result<(), String> {
         skills: agent.skills.clone(),
         mcp_servers: agent.mcp_servers.clone(),
         extensions: agent.extensions.clone(),
+        wiki_pages: agent.wiki_pages.clone(),
         runtime: agent.runtime.clone(),
         version: agent.version,
         created_at: agent.created_at,
@@ -310,6 +326,28 @@ pub fn bump_versions(paths: &Paths, skills: &[String], mcp_ids: &[String]) {
                 .any(|id| item.ends_with(&format!("#{id}")))
         });
         if !skill_hit && !mcp_hit {
+            continue;
+        }
+        let mut updated = agent.clone();
+        updated.version = agent.version + 1;
+        let _ = save_at(&root, &updated);
+    }
+}
+
+/// 给绑定了这些 wiki 页面的智能体递增版本号。
+///
+/// wiki 页面新增 / 修改 / 删除 —— 绑着它的智能体看到的内容变了，
+/// 版本号必须跟着动，否则启动脚本不会重新落地那份作用域。
+///
+/// **宁可多 bump，不可漏 bump** —— 绑定的是入口页面 + 整棵子树，
+/// 判断某个页面是不是在范围内要展开子树。这里用保守做法：
+/// 只要智能体绑了任何 wiki 页面，就一律 bump。
+///
+/// 代价只是多跑一次 prepare（幂等），漏了才是真问题。
+pub fn bump_versions_for_wiki(paths: &Paths) {
+    let root = paths.agents_root();
+    for agent in list_at(&root) {
+        if agent.wiki_pages.is_empty() {
             continue;
         }
         let mut updated = agent.clone();
@@ -433,6 +471,7 @@ mod tests {
             skills: vec!["skills/kb".to_string()],
             mcp_servers: vec!["mcp/servers.json#filesystem".to_string()],
             extensions: vec!["extensions/npm/pi-mcp-adapter".to_string()],
+            wiki_pages: vec!["wiki/知识库".to_string()],
             runtime: DEFAULT_RUNTIME.to_string(),
             version: 1,
             created_at: 1,
