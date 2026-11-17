@@ -205,7 +205,8 @@ fn runtime_skill_dirs(paths: &Paths) -> Vec<(String, PathBuf)> {
 /// 调用方按「没有 frontmatter」处理。
 fn parse_frontmatter(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
     let text = raw.strip_prefix('\u{feff}').unwrap_or(raw);
-    let mut lines = text.lines();
+    let all: Vec<&str> = text.lines().collect();
+    let mut lines = all.iter().copied();
     match lines.next() {
         Some(first) if first.trim() == "---" => {}
         _ => return (None, text.to_string()),
@@ -234,11 +235,19 @@ fn parse_frontmatter(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
     // 用 YAML 解析 —— 块标量、折叠标量、引号都能正确还原
     let parsed: serde_yaml::Value = match serde_yaml::from_str(&yaml) {
         Ok(value) => value,
-        Err(_) => return (None, text.to_string()),
+        // 解析失败 → frontmatter 是坏的。
+        //
+        // 此时**不能把整个文件当正文** —— 那会让编辑器把坏 frontmatter
+        // 显示成正文，用户一保存又拼一段新的上去，文件越滚越长
+        // （「每次保存多一段 frontmatter」的雪球）。
+        //
+        // 正确做法：丢掉所有像 frontmatter 的块，只留真正的正文。
+        // 保存一次之后 patch_frontmatter 会重建干净的 frontmatter。
+        Err(_) => return (None, strip_broken_frontmatter(&all)),
     };
     let mapping = match parsed.as_mapping() {
         Some(map) => map,
-        None => return (None, text.to_string()),
+        None => return (None, strip_broken_frontmatter(&all)),
     };
 
     let mut out: BTreeMap<String, String> = BTreeMap::new();
@@ -251,6 +260,57 @@ fn parse_frontmatter(raw: &str) -> (Option<BTreeMap<String, String>>, String) {
     }
     let frontmatter = if out.is_empty() { None } else { Some(out) };
     (frontmatter, body_lines.join("\n"))
+}
+
+/// 丢掉文件里所有「像 frontmatter 的块」，返回剩下的正文。
+///
+/// frontmatter 坏了的时候用 —— 那些块是历史垃圾（每次保存追加一段的那种），
+/// 留着只会让编辑器显示一堆 `--- name: xxx ---` 碎片。
+///
+/// 「像 frontmatter」= `---` 包裹、且块内有 `key: value` 形式的行。
+/// 单独的 `---`（Markdown 的分隔线）不算 —— 那是正文的一部分。
+fn strip_broken_frontmatter(lines: &[&str]) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut i = 0usize;
+    while i < lines.len() {
+        if lines[i].trim() == "---" {
+            // 找块的结束，同时看块里有没有 key: value
+            let mut j = i + 1;
+            let mut has_key_value = false;
+            while j < lines.len() && lines[j].trim() != "---" {
+                if is_key_value_line(lines[j]) {
+                    has_key_value = true;
+                }
+                j += 1;
+            }
+            if j < lines.len() && has_key_value {
+                // 是 frontmatter 块 → 整个丢掉（含它后面的空行）
+                i = j + 1;
+                while i < lines.len() && lines[i].trim().is_empty() {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        out.push(lines[i]);
+        i += 1;
+    }
+    out.join("\n")
+}
+
+/// 一行是不是 `key: value` 形式。
+///
+/// key 得像个正常的 YAML 键 —— 否则正文里的 `http://example.com` 会被误判。
+fn is_key_value_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return false;
+    }
+    let Some((key, _)) = trimmed.split_once(':') else {
+        return false;
+    };
+    let key = key.trim();
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// YAML 标量 → 字符串。
@@ -2034,6 +2094,73 @@ fn name_from_url(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn broken_frontmatter_does_not_snowball() {
+        // 历史上有个 bug：补 description 行时少个换行，拼成了
+        // `name: xxxdescription: yyy` —— YAML 解析失败。
+        // 当时解析失败就把**整个文件**当正文，用户一保存又拼一段 frontmatter
+        // 上去，于是每存一次长一段（雪球）。
+        //
+        // 现在解析失败时会丢掉所有像 frontmatter 的块，只留真正的正文。
+        let broken = "---\nname: demo description: 一\n---\n\n---\nname: demo description: 二\n---\n\n# 正文\n";
+
+        let (frontmatter, body) = parse_frontmatter(broken);
+        // frontmatter 是坏的 → 读不出字段
+        assert!(frontmatter.is_none(), "坏 frontmatter 不该解析出字段");
+        // 但正文必须干净 —— 不能把 frontmatter 碎片显示给用户
+        assert_eq!(body.trim(), "# 正文");
+        assert!(!body.contains("description:"), "正文里不该有 frontmatter 碎片");
+    }
+
+    #[test]
+    fn broken_frontmatter_is_rebuilt_on_save() {
+        let dir = std::env::temp_dir().join(format!(
+            "agentspace-skill-repair-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join(".agent-compose")).unwrap();
+        let paths = Paths::new(dir.clone());
+
+        // 造一个坏文件（粘连的 frontmatter + 几段历史垃圾）
+        let skill_dir = paths.skills_root().join("demo");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: demodescription: 旧\n---\n\n---\nname: demodescription: 更旧\n---\n\n# 正文\n",
+        )
+        .unwrap();
+
+        // 读：正文干净，描述空
+        let detail = skills_read(&paths, "demo".into()).unwrap();
+        assert_eq!(detail.content.trim(), "# 正文");
+        assert_eq!(detail.description, "");
+
+        // 填描述保存 → 文件应该被修好
+        skills_update(
+            &paths,
+            "demo".into(),
+            None,
+            Some("新描述".into()),
+            Some(detail.content.clone()),
+        )
+        .unwrap();
+
+        let raw = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+        assert!(raw.contains("description: 新描述"), "实际：{raw:?}");
+        assert!(!raw.contains("demodescription"), "旧的粘连行应该没了：{raw:?}");
+
+        // 再读：描述和正文都对
+        let again = skills_read(&paths, "demo".into()).unwrap();
+        assert_eq!(again.description, "新描述");
+        assert!(!again.content.contains("description:"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn update_writes_description_without_breaking_frontmatter() {
