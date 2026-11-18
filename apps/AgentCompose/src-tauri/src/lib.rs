@@ -1068,6 +1068,69 @@ fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// 关掉系统标题栏，并把窗口尺寸调回配置里写的那个。
+///
+/// **为什么要调尺寸** —— Windows 上去掉标题栏（去掉 `WS_CAPTION`）时，
+/// 标题栏那点高度会被「让」给客户区：窗口还是那么大，但**内容区凭空长高了
+/// 一个标题栏**（实测配 700 高、实际内容区 730 高）。
+///
+/// 看起来只是多了几十像素，实际影响不小：
+/// - 内容区跟配置里写的尺寸对不上，布局按的高度算，底下会多出一截空白
+/// - 拖动窗口时，最小尺寸约束也是按内容区算的，同样跟着偏
+///
+/// 做法：去掉标题栏**之前**先记下客户区尺寸（那正是 `tauri.conf.json` 里写的），
+/// 去掉之后把它设回去。尺寸是量出来的，不写死 —— 标题栏高度跟系统主题和
+/// DPI 有关，写死会不准。
+#[cfg(target_os = "windows")]
+fn remove_system_titlebar(window: &tauri::WebviewWindow) {
+    // 先记下客户区尺寸 —— 那正是 tauri.conf.json 里写的尺寸。
+    let inner_before = match window.inner_size() {
+        Ok(size) => size,
+        Err(_) => return,
+    };
+    if window.set_decorations(false).is_err() {
+        return;
+    }
+    // 去掉标题栏后内容区长高了 —— 调回去。
+    let _ = window.set_size(tauri::PhysicalSize::new(
+        inner_before.width,
+        inner_before.height,
+    ));
+    fix_min_size_for_invisible_border(window, inner_before);
+}
+
+/// 把最小尺寸约束补上 Windows 的「隐形边框」。
+///
+/// **问题** —— 无边框窗口（去掉系统标题栏的）仍然有一圈不可见的 resize 边框
+/// （DWM 的阴影边框：左右各 8、下边 9 物理像素）。它不出现在画面上，但算尺寸
+/// 时得算进去。
+///
+/// 而适配器算最小尺寸时用的是 `AdjustWindowRectExForDpi`，对无边框窗口会把
+/// `WS_CAPTION` / `WS_SIZEBOX` 都摘掉再算 —— 算出来边框是 0，隐形那层没算。
+/// 于是「客户区最小 1200×700」变成了「**外框**最小 1200×700」，用户一拖，
+/// 客户区就只剩 1184×691 了。
+///
+/// **做法** —— 把隐形边框的实测值补进最小尺寸：外框被钳在 1216×709，
+/// 客户区正好还是 1200×700。
+///
+/// 边框宽度是量出来的（外框减客户区），不写死 —— 跟 DPI 和系统主题有关。
+#[cfg(target_os = "windows")]
+fn fix_min_size_for_invisible_border(window: &tauri::WebviewWindow, inner_before: tauri::PhysicalSize<u32>) {
+    let (inner_now, outer_now) = match (window.inner_size(), window.outer_size()) {
+        (Ok(inner), Ok(outer)) => (inner, outer),
+        _ => return,
+    };
+    let frame_width = outer_now.width.saturating_sub(inner_now.width);
+    let frame_height = outer_now.height.saturating_sub(inner_now.height);
+    if frame_width == 0 && frame_height == 0 {
+        return;
+    }
+    let _ = window.set_min_size(Some(tauri::PhysicalSize::new(
+        inner_before.width.saturating_add(frame_width),
+        inner_before.height.saturating_add(frame_height),
+    )));
+}
+
 /// 当前平台是不是「应用内标题栏」。
 ///
 /// Windows 上我们在 setup 里关掉了系统标题栏，前端据此画最小化/最大化/关闭。
@@ -1096,7 +1159,7 @@ pub fn run() {
             // 应用名重复一次，两边高度/颜色也对不齐（cc-switch 也是这么干的）。
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_decorations(false);
+                remove_system_titlebar(&window);
             }
             Ok(())
         })
