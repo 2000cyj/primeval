@@ -1,7 +1,8 @@
 import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from '../views/SettingsView.vue'
+import { resetUpdateState } from '@/composables/useAppUpdate'
 
 /**
  * 设置页的版本检测。
@@ -57,6 +58,12 @@ const mountView = async () => {
 /** 找按钮（按文字）。SettingsView 不 teleport，内容在 wrapper 里。 */
 const buttonByText = (wrapper: VueWrapper, text: string): DOMWrapper<Element> | undefined =>
   wrapper.findAll('button').find((el) => el.text().includes(text))
+
+beforeEach(() => {
+  // 更新状态是全应用共享的（见 `@/composables/useAppUpdate`）——
+  // 不重置的话，上一个用例留下的状态会串到下一个。
+  resetUpdateState()
+})
 
 afterEach(() => {
   invokeMock.mockReset()

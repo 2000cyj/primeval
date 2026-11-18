@@ -17,17 +17,7 @@ import {
   ExternalLink,
 } from 'lucide-vue-next'
 import { commandConventions, commandGroups, helpTopics, pageConventions, pages } from '@/data/help'
-import {
-  checkAppUpdate,
-  installUpdateAndRestart,
-  onUpdateDownloadProgress,
-  type AppUpdateInfo,
-  type UpdateDownloadProgress,
-} from '@/api/updater'
-import { openExternal } from '@/api/extensions'
-import { getAppVersion } from '@/api/app'
-import { formatDateTime } from '@/utils/datetime'
-import { APP_VERSION } from '@/utils/appVersion'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 import MarkdownView from '@/components/MarkdownView.vue'
 
 const props = defineProps<{ show: boolean }>()
@@ -86,84 +76,33 @@ const hitCount = computed(() => {
 // ── 版本与更新 ────────────────────────────────────────────────
 
 /**
- * 应用版本。
+ * 应用更新状态。
  *
- * 默认用编译期常量（见 `@/utils/appVersion`）；打开弹窗时再问一次后端，
- * 拿后端说的为准（后端跟安装包是同一个版本）。
+ * **全应用共享一份**（见 `@/composables/useAppUpdate`）——
+ * 帮助中心的页签切走时内容会被销毁（naive-ui 的 `display-directive` 默认
+ * `if`），局部 state 就没了；而且在「系统设置」里查过一次，这里直接显示结果，
+ * 不用再发一次网络请求。
  */
-const currentVersion = ref(APP_VERSION)
-
-/** 问后端要版本号 —— 问不到就留着编译期常量 */
-const loadCurrentVersion = async (): Promise<void> => {
-  try {
-    const version = await getAppVersion()
-    // 后端没给准话就别改 —— 宁可留着编译期常量，也别把版本号显示成空
-    if (typeof version === 'string' && version) currentVersion.value = version
-  } catch {
-    currentVersion.value = APP_VERSION
-  }
-}
-
-/**
- * 版本检测。
- *
- * 检测逻辑在 Rust 侧（`src-tauri/src/updater.rs`）—— 版本号怎么比、
- * 哪个附件是安装包，那边说了算。这边只负责按钮状态和提示。
- *
- * 注意：**打开弹窗不自动检查** —— 那是网络请求，等用户点了再查。
- */
-type UpdateState = 'idle' | 'checking' | 'latest' | 'update'
-
-const updateState = ref<UpdateState>('idle')
-/** 检测结果 */
-const updateInfo = ref<AppUpdateInfo | null>(null)
-/** 检查失败时的提示（页面里也显示一份，不依赖全局消息） */
-const checkError = ref('')
-/** 发布说明是不是展开的 */
-const notesExpanded = ref(false)
-
-const hasUpdate = computed(() => updateState.value === 'update')
-const isLatest = computed(() => updateState.value === 'latest')
-/** 最新版本号（没查到就空着） */
-const latestVersion = computed(() => updateInfo.value?.latestVersion ?? '')
-/** 新版本发布说明 */
-const updateNotes = computed(() => updateInfo.value?.notes ?? '')
-/** 新版本发布日期（转成能读的本地时间） */
-const updatePublishedAt = computed(() => formatDateTime(updateInfo.value?.publishedAt ?? ''))
-
-/** 正在下载安装（进度条阶段） */
-const installing = ref(false)
-/** 下载进度（null = 还没开始或已结束） */
-const downloadProgress = ref<UpdateDownloadProgress | null>(null)
-/** 进度监听的取消函数 */
-let unlistenProgress: (() => void) | undefined = undefined
-
-/** 断开下载进度监听 —— 别在弹窗关了之后还收事件 */
-const cleanupProgress = (): void => {
-  unlistenProgress?.()
-  unlistenProgress = undefined
-}
-
-/** 下载百分比（服务端没给总量就不知道，显示不确定态） */
-const downloadPercent = computed(() => {
-  const progress = downloadProgress.value
-  if (!progress || progress.total <= 0) return null
-  return Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
-})
-
-/** 已下载多少 MB */
-const downloadedMb = computed(() => {
-  const progress = downloadProgress.value
-  if (!progress) return '0.0'
-  return (progress.downloaded / 1024 / 1024).toFixed(1)
-})
-
-/** 总共多少 MB */
-const totalMb = computed(() => {
-  const progress = downloadProgress.value
-  if (!progress || progress.total <= 0) return ''
-  return (progress.total / 1024 / 1024).toFixed(1)
-})
+const {
+  updateState,
+  checkError,
+  notesExpanded,
+  installing,
+  hasUpdate,
+  isLatest,
+  latestVersion,
+  updateNotes,
+  updatePublishedAt,
+  downloadPercent,
+  downloadedMb,
+  totalMb,
+  currentVersion,
+  checkLatestVersion,
+  startUpdate,
+  openReleaseNotes,
+  cleanupProgress,
+  loadCurrentVersion,
+} = useAppUpdate()
 
 /**
  * 消息提示。
@@ -178,62 +117,6 @@ const message = (() => {
     return null
   }
 })()
-
-/** 检查最新版本 */
-const checkLatestVersion = async (): Promise<void> => {
-  updateState.value = 'checking'
-  checkError.value = ''
-  try {
-    const info = await checkAppUpdate()
-    updateInfo.value = info
-    currentVersion.value = info.currentVersion || currentVersion.value
-    updateState.value = info.hasUpdate ? 'update' : 'latest'
-    if (updateState.value === 'latest') {
-      message?.success(`当前已是最新版本 ${currentVersion.value}`)
-    }
-  } catch (error) {
-    updateState.value = 'idle'
-    const text = `检查版本失败：${error instanceof Error ? error.message : String(error)}`
-    checkError.value = text
-    message?.error(text)
-  }
-}
-
-/** 开始更新：应用内下载 → 验签 → 安装器接手 → 重启 */
-const startUpdate = async (): Promise<void> => {
-  if (installing.value) return
-  installing.value = true
-  downloadProgress.value = null
-  unlistenProgress = await onUpdateDownloadProgress((progress) => {
-    downloadProgress.value = progress
-  })
-  try {
-    const started = await installUpdateAndRestart()
-    // Windows 上安装器起来后进程就退出了，走到这里说明没有更新可装
-    if (!started) {
-      message?.info('当前已是最新版本')
-      updateState.value = 'latest'
-    }
-  } catch (error) {
-    message?.error(`更新失败：${error instanceof Error ? error.message : String(error)}`)
-  } finally {
-    installing.value = false
-    cleanupProgress()
-  }
-}
-
-/** 打开 Release 页面看完整发布说明 */
-const openReleaseNotes = async (): Promise<void> => {
-  const url = updateInfo.value?.releaseUrl
-  if (!url) return
-  try {
-    await openExternal(url)
-  } catch (error) {
-    const text = `打不开发布说明：${error instanceof Error ? error.message : String(error)}`
-    checkError.value = text
-    message?.error(text)
-  }
-}
 
 onBeforeUnmount(cleanupProgress)
 
@@ -398,7 +281,7 @@ watch(
                   size="small"
                   :loading="updateState === 'checking'"
                   :disabled="isLatest"
-                  @click="checkLatestVersion"
+                  @click="checkLatestVersion(message ?? undefined)"
                 >
                   <template #icon>
                     <NIcon :size="13">
@@ -413,7 +296,7 @@ watch(
                   type="primary"
                   size="small"
                   :loading="installing"
-                  @click="startUpdate"
+                  @click="startUpdate(message ?? undefined)"
                 >
                   <template #icon>
                     <NIcon :size="13">
@@ -467,7 +350,7 @@ watch(
               </div>
 
               <div class="version-actions">
-                <NButton text size="tiny" @click="openReleaseNotes">
+                <NButton text size="tiny" @click="openReleaseNotes(message ?? undefined)">
                   <template #icon>
                     <NIcon :size="12">
                       <ExternalLink />

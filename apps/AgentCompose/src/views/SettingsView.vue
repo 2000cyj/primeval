@@ -11,17 +11,7 @@ import {
   type ProxyInfo,
 } from '@/api/proxy'
 import { getCliStatus, type CliStatus } from '@/api/cli'
-import { APP_VERSION } from '@/utils/appVersion'
-import { getAppVersion } from '@/api/app'
-import {
-  checkAppUpdate,
-  installUpdateAndRestart,
-  onUpdateDownloadProgress,
-  type AppUpdateInfo,
-  type UpdateDownloadProgress,
-} from '@/api/updater'
-import { openExternal } from '@/api/extensions'
-import { formatDateTime } from '@/utils/datetime'
+import { useAppUpdate } from '@/composables/useAppUpdate'
 import agentspaceLogo from '@/assets/agentspace-logo.png'
 import MarkdownView from '@/components/MarkdownView.vue'
 import BackupExportModal from '@/components/BackupExportModal.vue'
@@ -30,117 +20,30 @@ import BackupImportModal from '@/components/BackupImportModal.vue'
 const message = useMessage()
 
 /**
- * 应用版本。
+ * 应用更新状态。
  *
- * 默认用编译期常量（见 `@/utils/appVersion`）；加载时再问一次后端，
- * 拿后端说的为准（后端跟安装包是同一个版本）。
+ * **全应用共享一份**（见 `@/composables/useAppUpdate`）——
+ * 这个页面是视图，切走时会被卸载，局部 state 会跟着没；
+ * 帮助中心那边也一样。两处共享，切来切去都还在。
  */
-const currentVersion = ref(APP_VERSION)
-
-/**
- * 版本检测。
- *
- * 后端去问 GitHub 的 latest release，拿回版本号、发布说明和附件地址，
- * 跟当前版本比完告诉我们有没有新版。详见 `src-tauri/src/updater.rs`。
- *
- * 检测逻辑在 Rust 侧 —— 版本号怎么比、哪个附件是安装包，那边说了算。
- */
-type UpdateState = 'idle' | 'checking' | 'latest' | 'update'
-
-const updateState = ref<UpdateState>('idle')
-/** 检测结果 */
-const updateInfo = ref<AppUpdateInfo | null>(null)
-
-const hasUpdate = computed(() => updateState.value === 'update')
-const isLatest = computed(() => updateState.value === 'latest')
-/** 最新版本号（没查到就空着） */
-const latestVersion = computed(() => updateInfo.value?.latestVersion ?? '')
-/** 新版本发布说明 */
-const updateNotes = computed(() => updateInfo.value?.notes ?? '')
-/** 新版本发布日期（转成能读的本地时间） */
-const updatePublishedAt = computed(() => formatDateTime(updateInfo.value?.publishedAt ?? ''))
-
-/** 发布说明是不是展开的 */
-const notesExpanded = ref(false)
-
-/** 正在下载安装（进度条阶段） */
-const installing = ref(false)
-/** 下载进度（null = 还没开始或已结束） */
-const downloadProgress = ref<UpdateDownloadProgress | null>(null)
-/** 进度监听的取消函数 */
-let unlistenProgress: (() => void) | undefined = undefined
-/** 下载百分比（服务端没给总量就不知道，显示不确定态） */
-const downloadPercent = computed(() => {
-  const progress = downloadProgress.value
-  if (!progress || progress.total <= 0) return null
-  return Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
-})
-
-/** 已下载多少 MB */
-const downloadedMb = computed(() => {
-  const progress = downloadProgress.value
-  if (!progress) return '0.0'
-  return (progress.downloaded / 1024 / 1024).toFixed(1)
-})
-
-/** 总共多少 MB */
-const totalMb = computed(() => {
-  const progress = downloadProgress.value
-  if (!progress || progress.total <= 0) return ''
-  return (progress.total / 1024 / 1024).toFixed(1)
-})
-
-/** 打开 Release 页面看完整发布说明 */
-const openReleaseNotes = async (): Promise<void> => {
-  const url = updateInfo.value?.releaseUrl
-  if (!url) return
-  try {
-    await openExternal(url)
-  } catch (error) {
-    message.error(`打不开发布说明：${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
-/** 检查最新版本 */
-const checkLatestVersion = async (): Promise<void> => {
-  updateState.value = 'checking'
-  try {
-    const info = await checkAppUpdate()
-    updateInfo.value = info
-    currentVersion.value = info.currentVersion || currentVersion.value
-    updateState.value = info.hasUpdate ? 'update' : 'latest'
-    if (updateState.value === 'latest') {
-      message.success(`当前已是最新版本 ${currentVersion.value}`)
-    }
-  } catch (error) {
-    updateState.value = 'idle'
-    message.error(`检查版本失败：${error instanceof Error ? error.message : String(error)}`)
-  }
-}
-
-/** 开始更新：应用内下载 → 验签 → 安装器接手 → 重启 */
-const startUpdate = async (): Promise<void> => {
-  if (installing.value) return
-  installing.value = true
-  downloadProgress.value = null
-  unlistenProgress = await onUpdateDownloadProgress((progress) => {
-    downloadProgress.value = progress
-  })
-  try {
-    const started = await installUpdateAndRestart()
-    // Windows 上安装器起来后进程就退出了，走到这里说明没有更新可装
-    if (!started) {
-      message.info('当前已是最新版本')
-      updateState.value = 'latest'
-    }
-  } catch (error) {
-    message.error(`更新失败：${error instanceof Error ? error.message : String(error)}`)
-  } finally {
-    installing.value = false
-    unlistenProgress?.()
-    unlistenProgress = undefined
-  }
-}
+const {
+  updateState,
+  notesExpanded,
+  installing,
+  hasUpdate,
+  isLatest,
+  latestVersion,
+  updateNotes,
+  updatePublishedAt,
+  downloadPercent,
+  downloadedMb,
+  totalMb,
+  currentVersion,
+  checkLatestVersion,
+  startUpdate,
+  openReleaseNotes,
+  loadCurrentVersion,
+} = useAppUpdate()
 
 // ── 数据管理 ──
 
@@ -212,13 +115,8 @@ const copyCliCommand = (): void => {
 }
 
 const load = async () => {
-  try {
-    const version = await getAppVersion()
-    // 后端没给准话就别改 —— 宁可留着编译期常量，也别把版本号显示成空
-    if (typeof version === 'string' && version) currentVersion.value = version
-  } catch {
-    currentVersion.value = APP_VERSION
-  }
+  // 当前版本（编译期常量 + 后端确认）
+  await loadCurrentVersion()
   try {
     cli.value = await getCliStatus()
   } catch {
@@ -337,7 +235,7 @@ onMounted(load)
           size="small"
           :loading="updateState === 'checking'"
           :disabled="isLatest"
-          @click="checkLatestVersion"
+          @click="checkLatestVersion(message)"
         >
           <template #icon>
             <NIcon :size="13">
@@ -347,7 +245,13 @@ onMounted(load)
           {{ isLatest ? '已是最新版本' : '检查最新版本' }}
         </NButton>
 
-        <NButton v-else type="primary" size="small" :loading="installing" @click="startUpdate">
+        <NButton
+          v-else
+          type="primary"
+          size="small"
+          :loading="installing"
+          @click="startUpdate(message)"
+        >
           <template #icon>
             <NIcon :size="13">
               <Download />
@@ -385,7 +289,7 @@ onMounted(load)
           <span class="note-text">检测到新版本</span>
           <span class="note-version tnum">{{ latestVersion }}</span>
           <span v-if="updatePublishedAt" class="note-date">发布于 {{ updatePublishedAt }}</span>
-          <NButton text size="tiny" @click="openReleaseNotes">查看发布说明</NButton>
+          <NButton text size="tiny" @click="openReleaseNotes(message)">查看发布说明</NButton>
           <!-- 展开/收起靠右 -->
           <NButton
             v-if="updateNotes.length > 200"
