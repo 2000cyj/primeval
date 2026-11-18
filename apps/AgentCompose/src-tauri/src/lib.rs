@@ -1155,6 +1155,9 @@ pub fn run() {
             // 得先知道本机装的是哪个版本，而它拿不到这里的版本号，
             // 只能从磁盘上读。
             write_app_version(app.handle());
+            // 自动备份：后台线程。启动时检查一次（补上关着的那段时间），
+            // 之后每 24 小时一次。
+            backup::spawn_auto_backup(app.handle().clone());
             // Windows：关掉系统标题栏，改由应用自己画标题栏。
             // 不这么做的话，窗口上会出现「系统标题栏 + 应用顶栏」两层，
             // 应用名重复一次，两边高度/颜色也对不齐（cc-switch 也是这么干的）。
@@ -1244,6 +1247,13 @@ pub fn run() {
             backup::backup_import,
             backup::backup_import_status,
             backup::backup_pick_import_zip,
+            backup::backup_list,
+            backup::backup_create,
+            backup::backup_delete,
+            backup::backup_restore,
+            backup::backup_settings_get,
+            backup::backup_settings_set,
+            backup::backup_open_folder,
             wiki::wiki_list,
             wiki::wiki_read,
             wiki::wiki_save,

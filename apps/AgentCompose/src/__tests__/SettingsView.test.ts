@@ -39,6 +39,15 @@ const stubCommands = (): void => {
           path: 'C:/Users/test/.local/bin/agentspace.exe',
           command: 'agentspace',
         })
+      case 'backup_list':
+        return Promise.resolve([])
+      case 'backup_settings_get':
+        return Promise.resolve({
+          autoBackupIntervalHours: 24,
+          keepCount: 10,
+          intervalOptions: [6, 12, 24, 48, 168],
+          keepOptions: [3, 5, 10, 15, 20, 30, 50],
+        })
       default:
         return Promise.resolve(null)
     }

@@ -9,14 +9,11 @@
 //! - 否则 → 用这个地址。
 
 use crate::paths::Paths;
+use crate::settings;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-
-/// 设置文件名（`~/.agent-compose/settings.json`）。
-const SETTINGS_FILE: &str = "settings.json";
+use serde::Serialize;
 
 /// 本机常见的代理端口：`(端口, 主要协议, 是否同时支持另一种协议)`。
 ///
@@ -32,14 +29,6 @@ const PROXY_PORTS: &[(u16, &str, bool)] = &[
     (10808, "socks5", false), // v2rayN SOCKS
     (10809, "http", false),   // v2rayN HTTP
 ];
-
-/// 落盘的设置。
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct ProxySettings {
-    /// 全局代理地址。`None` = 从未设置；`Some("")` = 强制直连。
-    global_proxy_url: Option<String>,
-}
 
 /// 代理是从哪儿来的。
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -98,29 +87,6 @@ pub struct DetectedProxy {
     pub port: u16,
 }
 
-/// 设置文件路径（`~/.agent-compose/settings.json`）。
-fn settings_path(paths: &Paths) -> PathBuf {
-    paths.root().join(SETTINGS_FILE)
-}
-
-/// 读设置。文件不存在或坏了都当默认值，别让界面因为一个坏 JSON 打不开。
-fn read_settings(paths: &Paths) -> ProxySettings {
-    let Ok(raw) = std::fs::read_to_string(settings_path(paths)) else {
-        return ProxySettings::default();
-    };
-    serde_json::from_str(&raw).unwrap_or_default()
-}
-
-/// 写设置。
-fn write_settings(paths: &Paths, settings: &ProxySettings) -> Result<(), String> {
-    let path = settings_path(paths);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
-    }
-    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(&path, raw).map_err(|e| format!("写入设置失败：{e}"))
-}
-
 /// 环境变量里的代理地址。
 fn env_proxy() -> Option<String> {
     for key in [
@@ -143,7 +109,7 @@ fn env_proxy() -> Option<String> {
 
 /// 解析当前该用哪个代理。
 pub fn resolve(paths: &Paths) -> Resolved {
-    match read_settings(paths).global_proxy_url {
+    match settings::read(paths).global_proxy_url {
         // 存了值：空串 = 强制直连，否则用它。
         Some(raw) => {
             let trimmed = raw.trim().to_string();
@@ -219,7 +185,7 @@ pub fn mask_url(raw: &str) -> String {
 pub fn proxy_get(paths: &Paths) -> ProxyInfo {
     let resolved = resolve(paths);
     ProxyInfo {
-        saved_url: read_settings(paths).global_proxy_url,
+        saved_url: settings::read(paths).global_proxy_url,
         // 生效地址里的密码打码：界面会直接显示它。
         effective_url: resolved.url.as_deref().map(mask_url),
         source: match resolved.source {
@@ -243,9 +209,9 @@ pub fn proxy_set(paths: &Paths, url: String) -> Result<(ProxyInfo, bool), String
 
     let before = resolve(paths).url;
 
-    let mut settings = read_settings(paths);
+    let mut settings = settings::read(paths);
     settings.global_proxy_url = Some(trimmed.to_string());
-    write_settings(paths, &settings)?;
+    settings::write(paths, &settings)?;
 
     // 代理是按环境变量传给 sidecar 的，只在它启动时生效 → 变了得重启它。
     // sidecar 是独立进程，agent 可能正在用它，别没事就重启。

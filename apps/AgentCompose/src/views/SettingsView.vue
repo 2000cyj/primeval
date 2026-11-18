@@ -1,7 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NButton, NIcon, NInput, NProgress, NTooltip, useMessage } from 'naive-ui'
-import { Copy, Download, Eye, EyeOff, Info, Search, TestTube2, Upload, X } from 'lucide-vue-next'
+import { NButton, NIcon, NInput, NModal, NProgress, NSelect, NTooltip, useMessage } from 'naive-ui'
+import {
+  Copy,
+  Download,
+  Eye,
+  EyeOff,
+  FolderOpen,
+  Info,
+  RotateCcw,
+  Save,
+  Search,
+  TestTube2,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-vue-next'
 import {
   getProxy,
   scanProxies,
@@ -11,7 +25,19 @@ import {
   type ProxyInfo,
 } from '@/api/proxy'
 import { getCliStatus, type CliStatus } from '@/api/cli'
+import {
+  createAutoBackup,
+  deleteAutoBackup,
+  getBackupSettings,
+  listAutoBackups,
+  openBackupFolder,
+  restoreAutoBackup,
+  setBackupSettings,
+  type BackupEntry,
+  type BackupSettings,
+} from '@/api/backup'
 import { useAppUpdate } from '@/composables/useAppUpdate'
+import { formatDateTime } from '@/utils/datetime'
 import agentspaceLogo from '@/assets/agentspace-logo.png'
 import MarkdownView from '@/components/MarkdownView.vue'
 import BackupExportModal from '@/components/BackupExportModal.vue'
@@ -44,6 +70,175 @@ const {
   openReleaseNotes,
   loadCurrentVersion,
 } = useAppUpdate()
+
+// ── 备份与恢复 ──
+
+/** 备份列表（新的在前）。 */
+const backups = ref<BackupEntry[]>([])
+/** 备份设置（后端给的全集）。 */
+const backupSettings = ref<BackupSettings | null>(null)
+/** 正在备份。 */
+const backingUp = ref(false)
+/** 正在恢复哪个备份（文件名）。 */
+const restoring = ref('')
+/** 恢复确认弹窗开着没。 */
+const restoreOpen = ref(false)
+/** 要恢复到哪个备份。 */
+const restoreTarget = ref<BackupEntry | null>(null)
+/** 恢复确认的结果（谁 resolve 谁）。 */
+let restoreResolve: ((ok: boolean) => void) | null = null
+
+/** 自动备份间隔（选中的值，单位小时）。 */
+const backupInterval = ref(24)
+/** 保留多少个备份。 */
+const backupKeepCount = ref(10)
+
+/** 间隔下拉的选项。 */
+const intervalOptions = computed(() =>
+  (backupSettings.value?.intervalOptions ?? []).map((hours) => ({
+    label: hours === 0 ? '关闭' : hours >= 168 ? `${hours / 24} 天` : `${hours} 小时`,
+    value: hours,
+  })),
+)
+
+/** 保留数量的选项。 */
+const keepOptions = computed(() =>
+  (backupSettings.value?.keepOptions ?? []).map((value) => ({ label: `${value} 个`, value })),
+)
+
+/** 读设置 + 列表。 */
+const loadBackups = async (): Promise<void> => {
+  try {
+    const [list, settings] = await Promise.all([listAutoBackups(), getBackupSettings()])
+    // 后端返回意外的值（null / 非数组）也不能让整页崩掉 —— 当空列表处理。
+    backups.value = Array.isArray(list) ? list : []
+    backupSettings.value = settings
+    backupInterval.value = settings?.autoBackupIntervalHours ?? 24
+    backupKeepCount.value = settings?.keepCount ?? 10
+  } catch (error) {
+    message.error(`读取备份设置失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** 改自动备份间隔。 */
+const onIntervalChange = async (value: number): Promise<void> => {
+  try {
+    const settings = await setBackupSettings({ autoBackupIntervalHours: value })
+    backupSettings.value = settings
+    message.success('已更新自动备份间隔')
+  } catch (error) {
+    message.error(`设置失败：${error instanceof Error ? error.message : String(error)}`)
+    // 改回原来的值
+    backupInterval.value = backupSettings.value?.autoBackupIntervalHours ?? 24
+  }
+}
+
+/** 改保留数量。 */
+const onKeepCountChange = async (value: number): Promise<void> => {
+  try {
+    const settings = await setBackupSettings({ keepCount: value })
+    backupSettings.value = settings
+    // 改少了就立刻清理超出的
+    await loadBackups()
+    message.success('已更新备份保留数量')
+  } catch (error) {
+    message.error(`设置失败：${error instanceof Error ? error.message : String(error)}`)
+    backupKeepCount.value = backupSettings.value?.keepCount ?? 10
+  }
+}
+
+/** 立刻备份。 */
+const backupNow = async (): Promise<void> => {
+  if (backingUp.value) return
+  backingUp.value = true
+  try {
+    const entry = await createAutoBackup()
+    message.success(`已备份：${formatDateTime(entry.createdAt)}`)
+    await loadBackups()
+  } catch (error) {
+    message.error(`备份失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    backingUp.value = false
+  }
+}
+
+/** 删掉一个备份。 */
+const deleteBackup = async (item: BackupEntry): Promise<void> => {
+  try {
+    await deleteAutoBackup(item.fileName)
+    message.success('已删除')
+    await loadBackups()
+  } catch (error) {
+    message.error(`删除失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** 用一个备份恢复。 */
+const restoreBackup = async (item: BackupEntry): Promise<void> => {
+  const confirmed = await confirmRestore(item)
+  if (!confirmed) return
+  restoring.value = item.fileName
+  try {
+    const result = await restoreAutoBackup(item.fileName)
+    // 恢复前存的那份底子 —— 告诉用户它在哪，需要时可以退回去。
+    const safety = result.safetyBackup ? `（原数据已存为 ${result.safetyBackup}）` : ''
+    if (result.failures.length) {
+      message.warning(`已恢复 ${result.restored} 项，${result.failures.length} 项失败${safety}`)
+    } else {
+      message.success(`已恢复 ${result.restored} 项${safety}`)
+    }
+    await loadBackups()
+  } catch (error) {
+    message.error(`恢复失败：${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    restoring.value = ''
+  }
+}
+
+/** 恢复前的确认 —— 恢复是覆盖动作，得说清楚。 */
+const confirmRestore = (item: BackupEntry): Promise<boolean> => {
+  restoreTarget.value = item
+  restoreOpen.value = true
+  return new Promise((resolve) => {
+    restoreResolve = resolve
+  })
+}
+
+/** 确认恢复。 */
+const confirmRestoreYes = (): void => {
+  restoreOpen.value = false
+  restoreResolve?.(true)
+  restoreResolve = null
+}
+
+/** 取消恢复。 */
+const confirmRestoreNo = (): void => {
+  restoreOpen.value = false
+  restoreResolve?.(false)
+  restoreResolve = null
+}
+
+/** 打开备份文件所在的文件夹。 */
+const showBackupPath = async (item: BackupEntry): Promise<void> => {
+  try {
+    await openBackupFolder(item.fileName)
+  } catch (error) {
+    message.error(`打不开：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** 备份路径只显示文件名部分 —— 完整路径太长。 */
+const formatBackupPath = (path: string): string => {
+  const parts = path.split(/[\\/]/)
+  return parts[parts.length - 1] ?? path
+}
+
+/** 文件大小。 */
+const formatSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 // ── 数据管理 ──
 
@@ -117,6 +312,8 @@ const copyCliCommand = (): void => {
 const load = async () => {
   // 当前版本（编译期常量 + 后端确认）
   await loadCurrentVersion()
+  // 备份列表与设置
+  await loadBackups()
   try {
     cli.value = await getCliStatus()
   } catch {
@@ -492,8 +689,148 @@ onMounted(load)
       </div>
     </section>
 
+    <section class="section">
+      <header class="section-head">
+        <h2 class="section-title">
+          备份与恢复
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NIcon :size="13" class="section-info">
+                <Info />
+              </NIcon>
+            </template>
+            定期把本机数据存一份快照，出问题可以回滚
+          </NTooltip>
+        </h2>
+        <p class="section-sub">自动备份的快照存在本机，可以随时恢复回去</p>
+      </header>
+
+      <div class="card">
+        <div class="row backup-settings">
+          <div class="backup-field">
+            <span class="field-label">自动备份间隔</span>
+            <NSelect
+              v-model:value="backupInterval"
+              :options="intervalOptions"
+              size="small"
+              @update:value="onIntervalChange"
+            />
+          </div>
+          <div class="backup-field">
+            <span class="field-label">备份保留数量</span>
+            <NSelect
+              v-model:value="backupKeepCount"
+              :options="keepOptions"
+              size="small"
+              @update:value="onKeepCountChange"
+            />
+          </div>
+        </div>
+
+        <div class="row backup-actions">
+          <span class="backup-sub">
+            备份内容：智能体、Skills、MCP server、Pi 扩展与 Wiki 页面
+          </span>
+          <NButton size="small" :loading="backingUp" @click="backupNow">
+            <template #icon>
+              <NIcon :size="14">
+                <Save />
+              </NIcon>
+            </template>
+            立即备份
+          </NButton>
+        </div>
+
+        <!-- 备份列表：新的在前 -->
+        <div v-if="backups.length" class="backup-list">
+          <div v-for="item in backups" :key="item.fileName" class="backup-item">
+            <div class="backup-info">
+              <span class="backup-time tnum">{{ formatDateTime(item.createdAt) }}</span>
+              <span class="backup-path mono">
+                {{ formatBackupPath(item.path) }} - {{ formatSize(item.size) }}
+              </span>
+            </div>
+            <div class="backup-buttons">
+              <NTooltip trigger="hover">
+                <template #trigger>
+                  <NButton quaternary circle size="tiny" @click="showBackupPath(item)">
+                    <template #icon>
+                      <NIcon :size="13">
+                        <FolderOpen />
+                      </NIcon>
+                    </template>
+                  </NButton>
+                </template>
+                打开所在文件夹
+              </NTooltip>
+              <NTooltip trigger="hover">
+                <template #trigger>
+                  <NButton
+                    quaternary
+                    circle
+                    size="tiny"
+                    :disabled="restoring === item.fileName"
+                    @click="restoreBackup(item)"
+                  >
+                    <template #icon>
+                      <NIcon :size="13">
+                        <RotateCcw />
+                      </NIcon>
+                    </template>
+                  </NButton>
+                </template>
+                用这个备份恢复
+              </NTooltip>
+              <NTooltip trigger="hover">
+                <template #trigger>
+                  <NButton quaternary circle size="tiny" @click="deleteBackup(item)">
+                    <template #icon>
+                      <NIcon :size="13">
+                        <Trash2 />
+                      </NIcon>
+                    </template>
+                  </NButton>
+                </template>
+                删掉这个备份
+              </NTooltip>
+            </div>
+          </div>
+        </div>
+        <p v-else class="backup-empty">还没有备份 —— 点「立即备份」存一份。</p>
+      </div>
+    </section>
+
     <BackupExportModal :show="exportModalOpen" @close="exportModalOpen = false" />
     <BackupImportModal :show="importModalOpen" @close="importModalOpen = false" />
+
+    <!-- 恢复是覆盖动作 —— 先说清楚会覆盖什么 -->
+    <NModal
+      :show="restoreOpen"
+      preset="card"
+      class="restore-modal"
+      :style="{ width: 'min(420px, calc(100vw - 48px))' }"
+      :bordered="false"
+      @update:show="(value: boolean) => !value && confirmRestoreNo()"
+    >
+      <template #header>
+        <span class="modal-title">用备份恢复</span>
+      </template>
+      <p class="restore-text">
+        恢复会用
+        <code class="mono">{{ restoreTarget ? formatDateTime(restoreTarget.createdAt) : '' }}</code>
+        这个备份<strong>覆盖</strong>本机现有的智能体、Skills、MCP server、Pi 扩展与 Wiki 页面。
+      </p>
+      <p class="restore-hint">
+        当前数据会被替换掉 —— 想保留现状的话，先「立即备份」存一份。
+        恢复前也会自动存一份底子，恢复完会告诉你它的名字。
+      </p>
+      <template #footer>
+        <div class="row">
+          <NButton size="small" @click="confirmRestoreNo">取消</NButton>
+          <NButton size="small" type="primary" @click="confirmRestoreYes">恢复</NButton>
+        </div>
+      </template>
+    </NModal>
   </section>
 </template>
 
@@ -673,6 +1010,103 @@ onMounted(load)
 .data-row {
   justify-content: flex-start;
   gap: 10px;
+}
+
+/* 备份设置：两个下拉并排 */
+.backup-settings {
+  justify-content: flex-start;
+  gap: 24px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.backup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.backup-field .field-label {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+/* 备份那行：左边说明，右边按钮 */
+.backup-actions {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.backup-sub {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+/* 备份列表 */
+.backup-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid var(--c-border);
+}
+
+.backup-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.backup-item:last-child {
+  border-bottom: none;
+}
+
+.backup-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.backup-time {
+  font-size: 13px;
+  color: var(--c-text);
+}
+
+.backup-path {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.backup-empty {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--c-text-4);
+}
+
+/* 恢复确认弹窗 */
+.restore-text {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.restore-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--c-text-3);
 }
 
 .field {

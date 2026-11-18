@@ -281,3 +281,85 @@ export const onBackupImportDone = (
   listen<BackupImportDone>('backup-import-done', (event) => {
     handler(event.payload)
   })
+
+// ── 自动备份与恢复 ─────────────────────────────────────────
+
+/** 一条备份记录。 */
+export interface BackupEntry {
+  /** 文件名 */
+  fileName: string
+  /** 完整路径 */
+  path: string
+  /** 备份时间（epoch 毫秒） */
+  createdAt: number
+  /** 文件大小（字节） */
+  size: number
+}
+
+/** 备份设置。 */
+export interface BackupSettings {
+  /** 自动备份间隔（小时）。0 = 关闭 */
+  autoBackupIntervalHours: number
+  /** 保留多少个 */
+  keepCount: number
+  /** 可选的间隔（小时） */
+  intervalOptions: number[]
+  /** 可选的保留数量 */
+  keepOptions: number[]
+}
+
+/** 恢复结果。 */
+export interface BackupRestoreResult {
+  /** 恢复了多少项 */
+  restored: number
+  /** 跳过的 */
+  skipped: number
+  /** 失败的条目 */
+  failures: string[]
+  /**
+   * 恢复**前**给当前数据做的安全备份文件名。
+   *
+   * 恢复是覆盖操作 —— 万一这个包不对，可以拿它退回去。
+   */
+  safetyBackup?: string | null
+}
+
+/** 列出所有自动备份（新的在前）。 */
+export const listAutoBackups = (): Promise<BackupEntry[]> => invoke<BackupEntry[]>('backup_list')
+
+/** 立刻备份一次。 */
+export const createAutoBackup = (): Promise<BackupEntry> => invoke<BackupEntry>('backup_create')
+
+/** 删掉一个备份。 */
+export const deleteAutoBackup = (fileName: string): Promise<void> =>
+  invoke<void>('backup_delete', { fileName })
+
+/**
+ * 用一个备份恢复数据。
+ *
+ * **覆盖**现有的 —— 恢复就是这个意思。
+ */
+export const restoreAutoBackup = (fileName: string): Promise<BackupRestoreResult> =>
+  invoke<BackupRestoreResult>('backup_restore', { fileName })
+
+/** 读备份设置。 */
+export const getBackupSettings = (): Promise<BackupSettings> =>
+  invoke<BackupSettings>('backup_settings_get')
+
+/** 改备份设置。 */
+export const setBackupSettings = (settings: {
+  autoBackupIntervalHours?: number
+  keepCount?: number
+}): Promise<BackupSettings> =>
+  invoke<BackupSettings>('backup_settings_set', {
+    autoBackupIntervalHours: settings.autoBackupIntervalHours,
+    keepCount: settings.keepCount,
+  })
+
+/**
+ * 打开备份文件所在的文件夹（并选中那个文件）。
+ *
+ * 只传文件名 —— 路径由后端自己拼。
+ */
+export const openBackupFolder = (fileName: string): Promise<void> =>
+  invoke<void>('backup_open_folder', { fileName })

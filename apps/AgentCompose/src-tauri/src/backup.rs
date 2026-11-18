@@ -32,6 +32,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
+use agentspace_core::autobackup::{self, BackupEntry, BackupSettings, RestoreResult};
 use agentspace_core::backup::{
     self, ConflictReport, ExportSelection, ExportResult, ImportResult, Inventory,
 };
@@ -361,6 +362,189 @@ fn default_export_name() -> String {
     chrono::Local::now()
         .format("AgentSpace-export-%Y%m%d-%H%M%S.zip")
         .to_string()
+}
+
+// ── 自动备份与恢复 ─────────────────────────────────────────
+
+/// 列出所有自动备份，新的在前。
+#[tauri::command]
+pub async fn backup_list(app: AppHandle) -> Result<Vec<BackupEntry>, String> {
+    Ok(autobackup::list(&paths(&app)))
+}
+
+/// 立刻备份一次。
+#[tauri::command]
+pub async fn backup_create(app: AppHandle) -> Result<BackupEntry, String> {
+    let servers = current_mcp_servers(&app).await;
+    let entry = autobackup::create(&paths(&app), &servers)?;
+    // 备份完顺手清理旧的 —— 保留数量是设置里定的。
+    // 刚建的那个不能被自己清掉。
+    let settings = autobackup::get_settings(&paths(&app));
+    let _ = autobackup::prune(&paths(&app), settings.keep_count, &[entry.file_name.clone()]);
+    Ok(entry)
+}
+
+/// 删掉一个备份。
+#[tauri::command]
+pub async fn backup_delete(app: AppHandle, file_name: String) -> Result<(), String> {
+    autobackup::remove(&paths(&app), &file_name)
+}
+
+/// 打开备份文件所在的文件夹（并选中那个文件）。
+///
+/// Windows 上用 `explorer /select` —— 直接把文件框出来，
+/// 比只打开文件夹更省事。不用 shell 插件 —— 为这个加一个依赖不划算。
+#[tauri::command]
+pub async fn backup_open_folder(app: AppHandle, file_name: String) -> Result<(), String> {
+    // 只认文件名 —— 路径由后端自己拼，别让前端传路径进来。
+    if file_name.contains('/') || file_name.contains('\\') {
+        return Err("文件名不合法".to_string());
+    }
+    let path = autobackup::backups_dir(&paths(&app)).join(&file_name);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        let mut cmd = Command::new("explorer.exe");
+        // `/select,` 后面紧跟路径 —— 中间不能有空格，得合成一个参数。
+        cmd.arg(format!("/select,{}", path.to_string_lossy()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(DETACHED_PROCESS);
+        cmd.spawn().map_err(|e| format!("打开文件夹失败：{e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = file_name;
+        Err("当前平台不支持打开文件夹".to_string())
+    }
+}
+
+/// 用一个备份恢复数据。
+///
+/// **覆盖**现有的 —— 恢复就是这个意思。
+#[tauri::command]
+pub async fn backup_restore(app: AppHandle, file_name: String) -> Result<RestoreResult, String> {
+    let mut servers = current_mcp_servers(&app).await;
+
+    // 远程来源的 MCP server（registry 装的）要去目录里拿回定义 ——
+    // 备份包里只记了条目名，定义得现场取。
+    let mut remote_defs: Vec<(String, Value)> = Vec::new();
+    for registry_name in
+        backup::remote_mcp_names(&autobackup::backups_dir(&paths(&app)).join(&file_name))
+    {
+        match fetch_registry_entry(&app, &registry_name).await {
+            Ok(Some(def)) => remote_defs.push((registry_name, def)),
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!("从 MCP 目录取「{registry_name}」失败：{error}"));
+            }
+        }
+    }
+
+    let result = autobackup::restore(&paths(&app), &mut servers, &file_name, &remote_defs)?;
+
+    // 恢复期间可能刚好触发一次自动备份 —— 那个清理不能把这两头删了：
+    // 正在恢复的源，和恢复前做的安全备份。
+    let settings = autobackup::get_settings(&paths(&app));
+    let mut protected = vec![file_name.clone()];
+    if let Some(safety) = &result.safety_backup {
+        protected.push(safety.clone());
+    }
+    let _ = autobackup::prune(&paths(&app), settings.keep_count, &protected);
+
+    Ok(result)
+}
+
+/// 读备份设置（自动备份间隔、保留数量）。
+#[tauri::command]
+pub fn backup_settings_get(app: AppHandle) -> BackupSettings {
+    autobackup::get_settings(&paths(&app))
+}
+
+/// 改备份设置。
+#[tauri::command]
+pub fn backup_settings_set(
+    app: AppHandle,
+    auto_backup_interval_hours: Option<i64>,
+    keep_count: Option<usize>,
+) -> Result<BackupSettings, String> {
+    autobackup::set_settings(&paths(&app), auto_backup_interval_hours, keep_count)
+}
+
+/// 自动备份的后台线程。
+///
+/// # 定时器怎么转
+///
+/// 固定 **24 小时** 一跳（跟 cc-switch 一样）。
+///
+/// 为什么不是按用户设的间隔来跳：那个间隔最短 6 小时，而「多久检查一次」
+/// 和「多久备份一次」是两件事 —— 检查只需要读个设置 + 列个目录，开销极小；
+/// 而定时器跳得密，机器空闲时也一直在醒。
+///
+/// 24 小时一跳 + 启动时立刻跳一次，行为上就等价于「按间隔备份」：
+/// 每次跳的时候看一眼「最新备份比间隔旧不旧」，旧了就备份。
+///
+/// # 客户端关着怎么办
+///
+/// 不备份 —— 没进程就没定时器。
+///
+/// 但**下次启动时**会补一次：`auto_backup_if_due` 只看「最新备份比间隔旧不旧」，
+/// 所以关了三天再开，**只补一份最新快照**，不会按错过的时间补一堆。
+///
+/// # 磁盘活怎么办
+///
+/// 备份要读写文件、可能拉远程仓库 —— 放 `spawn_blocking`，
+/// 别占着异步 worker。
+pub fn spawn_auto_backup(app: AppHandle) {
+    std::thread::spawn(move || {
+        // 启动时补一次 —— 客户端关着的那段时间就在这儿补上。
+        //
+        // 但 sidecar（MCP 进程）不一定已经起来了 —— 它的定义拿不到，
+        // 备份会缺一块。所以多试几次，给它起来的时间。
+        // 第一次成功就收工。
+        for delay in [0u64, 5, 15, 30, 60] {
+            if delay > 0 {
+                std::thread::sleep(std::time::Duration::from_secs(delay));
+            }
+            if run_auto_backup(&app) {
+                break;
+            }
+        }
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(24 * 60 * 60));
+            run_auto_backup(&app);
+        }
+    });
+}
+
+/// 跑一次自动备份检查。
+///
+/// 返回「这次检查有没有真的跑起来」（sidecar 没就绪就返回 false）。
+fn run_auto_backup(app: &AppHandle) -> bool {
+    // sidecar 没起来就拿不到 MCP server 的定义 —— 那这次备份会缺一块，
+    // 宁可不备，下次再试。
+    let servers = {
+        let app = app.clone();
+        match tauri::async_runtime::block_on(crate::mcp_list_servers(app)) {
+            Ok(list) => list.as_array().cloned().unwrap_or_default(),
+            Err(_) => {
+                eprintln!("自动备份：sidecar 还没就绪，这次先不备份");
+                return false;
+            }
+        }
+    };
+    if let Err(error) = autobackup::auto_backup_if_due(&paths(app), &servers) {
+        eprintln!("自动备份失败：{error}");
+    }
+    true
 }
 
 #[cfg(test)]

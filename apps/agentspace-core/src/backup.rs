@@ -826,6 +826,13 @@ fn collect_dir_files(
 
 /// 写一个 zip 文件。
 ///
+/// zip 的「通用标志位」—— bit 11 表示「文件名是 UTF-8」。
+///
+/// 不设这个位，中文路径就会被别的工具按本地代码页猜 —— 变成
+/// `µ╡ïΦ»ò` 这种乱码。写出去的时候名字本来就是 UTF-8 字节，
+/// 标一下就不会错。
+const FLAG_UTF8: u16 = 0x0800;
+
 /// 自己拼 zip 结构：本地已经有读 zip 的实现（skills.rs），但那是只读的。
 /// 用 `zip` crate 会多一个依赖 —— 这里手写反而更少依赖，且只需要 STORE 方式
 /// （不压缩）。skill 的文件大多是小文本，不压缩也够小。
@@ -848,7 +855,7 @@ fn write_zip(path: &Path, items: &[ZipItem]) -> Result<(), String> {
         let mut header = Vec::with_capacity(30 + name_bytes.len());
         header.extend_from_slice(&0x0403_4b50u32.to_le_bytes()); // 本地文件头签名
         header.extend_from_slice(&20u16.to_le_bytes()); // 解压所需版本
-        header.extend_from_slice(&0u16.to_le_bytes()); // 通用标志位
+        header.extend_from_slice(&FLAG_UTF8.to_le_bytes()); // 通用标志位：文件名是 UTF-8
         header.extend_from_slice(&0u16.to_le_bytes()); // 压缩方式：STORE
         header.extend_from_slice(&0u16.to_le_bytes()); // 修改时间
         header.extend_from_slice(&0u16.to_le_bytes()); // 修改日期
@@ -869,7 +876,7 @@ fn write_zip(path: &Path, items: &[ZipItem]) -> Result<(), String> {
         central.extend_from_slice(&0x0201_4b50u32.to_le_bytes()); // 中央目录签名
         central.extend_from_slice(&20u16.to_le_bytes()); // 生成版本
         central.extend_from_slice(&20u16.to_le_bytes()); // 解压所需版本
-        central.extend_from_slice(&0u16.to_le_bytes()); // 通用标志位
+        central.extend_from_slice(&FLAG_UTF8.to_le_bytes()); // 通用标志位：文件名是 UTF-8
         central.extend_from_slice(&0u16.to_le_bytes()); // 压缩方式
         central.extend_from_slice(&0u16.to_le_bytes()); // 修改时间
         central.extend_from_slice(&0u16.to_le_bytes()); // 修改日期
@@ -979,6 +986,19 @@ fn read_zip(path: &Path) -> Result<(Manifest, BTreeMap<String, Vec<u8>>), String
         ));
     }
     Ok((manifest, files))
+}
+
+/// 校验一个导出包能不能读。
+///
+/// 跟 cc-switch 的 `validate_sqlite_integrity` 一个位置：
+/// **发布之前**验一次（坏包不能进备份目录），
+/// **恢复之前**再验一次（坏包不能动现有数据）。
+///
+/// 只管「能不能读」—— 能解开、有清单、清单版本对得上，就算合格。
+/// **不因为内容空就拒** —— 一个数据集本来就是空的（没 skill 没智能体），
+/// 那也是一份合法的备份。
+pub fn validate_zip(zip_path: &Path) -> Result<(), String> {
+    read_zip(zip_path).map(|_| ())
 }
 
 /// 读一个导出包里所有远程 MCP server 的目录条目名。
@@ -1668,6 +1688,69 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "manifest.json");
         assert_eq!(entries[1].data, "你好，世界\n".as_bytes());
+        let _ = fs::remove_dir_all(dir.home());
+    }
+
+    #[test]
+    fn zip_keeps_chinese_paths_intact() {
+        let dir = temp_paths("zip-cn");
+        let zip_path = dir.root().join("out.zip");
+        let items = vec![
+            ZipItem {
+                name: "manifest.json".to_string(),
+                data: b"{\"version\":1}".to_vec(),
+            },
+            ZipItem {
+                name: "skills/测试技能/SKILL.md".to_string(),
+                data: "正文".as_bytes().to_vec(),
+            },
+            ZipItem {
+                name: "wiki/运维/page.md".to_string(),
+                data: "页面".as_bytes().to_vec(),
+            },
+        ];
+        write_zip(&zip_path, &items).unwrap();
+
+        // 自己读回来 —— 路径得一模一样。
+        let entries = crate::skills::read_zip_public(&zip_path).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[1].name, "skills/测试技能/SKILL.md");
+        assert_eq!(entries[2].name, "wiki/运维/page.md");
+
+        // 通用标志位得带 bit 11（UTF-8）——
+        // 不带的话，Windows 资源管理器、Python 的 zipfile 都会按本地代码页
+        // 猜文件名，中文变成 `µ╡ïΦ»ò` 一类的乱码。
+        let raw = fs::read(&zip_path).unwrap();
+        let eocd = raw
+            .windows(4)
+            .rposition(|w| w == 0x0605_4b50u32.to_le_bytes())
+            .unwrap();
+        let entry_count = u16::from_le_bytes([raw[eocd + 10], raw[eocd + 11]]) as usize;
+        let cd_offset = u32::from_le_bytes([
+            raw[eocd + 16],
+            raw[eocd + 17],
+            raw[eocd + 18],
+            raw[eocd + 19],
+        ]) as usize;
+
+        // 逐条查中央目录里的通用标志位。
+        let mut cursor = cd_offset;
+        let mut checked = 0;
+        for _ in 0..entry_count {
+            let flags = u16::from_le_bytes([raw[cursor + 8], raw[cursor + 9]]);
+            let name_len = u16::from_le_bytes([raw[cursor + 28], raw[cursor + 29]]) as usize;
+            let extra_len = u16::from_le_bytes([raw[cursor + 30], raw[cursor + 31]]) as usize;
+            let comment_len = u16::from_le_bytes([raw[cursor + 32], raw[cursor + 33]]) as usize;
+            assert_eq!(
+                flags & FLAG_UTF8,
+                FLAG_UTF8,
+                "中央目录里的通用标志位要带 UTF-8 位"
+            );
+            checked += 1;
+            cursor += 46 + name_len + extra_len + comment_len;
+        }
+        assert_eq!(checked, entry_count);
+
         let _ = fs::remove_dir_all(dir.home());
     }
 
