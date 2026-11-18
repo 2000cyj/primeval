@@ -16,7 +16,6 @@ import {
   Download,
   ExternalLink,
 } from 'lucide-vue-next'
-import { getVersion } from '@tauri-apps/api/app'
 import { commandConventions, commandGroups, helpTopics, pageConventions, pages } from '@/data/help'
 import {
   checkAppUpdate,
@@ -26,7 +25,9 @@ import {
   type UpdateDownloadProgress,
 } from '@/api/updater'
 import { openExternal } from '@/api/extensions'
+import { getAppVersion } from '@/api/app'
 import { formatDateTime } from '@/utils/datetime'
+import { APP_VERSION } from '@/utils/appVersion'
 import MarkdownView from '@/components/MarkdownView.vue'
 
 const props = defineProps<{ show: boolean }>()
@@ -87,19 +88,19 @@ const hitCount = computed(() => {
 /**
  * 应用版本。
  *
- * 从 Tauri 拿（读的是 `tauri.conf.json` 里的 version），
- * 拿不到时用这个兜底值。跟「系统设置」页同一套。
+ * 默认用编译期常量（见 `@/utils/appVersion`）；打开弹窗时再问一次后端，
+ * 拿后端说的为准（后端跟安装包是同一个版本）。
  */
-const FALLBACK_VERSION = '1.0.0'
-/** 当前版本 */
-const currentVersion = ref(FALLBACK_VERSION)
+const currentVersion = ref(APP_VERSION)
 
-/** 读当前版本（本地读，不联网） */
+/** 问后端要版本号 —— 问不到就留着编译期常量 */
 const loadCurrentVersion = async (): Promise<void> => {
   try {
-    currentVersion.value = await getVersion()
+    const version = await getAppVersion()
+    // 后端没给准话就别改 —— 宁可留着编译期常量，也别把版本号显示成空
+    if (typeof version === 'string' && version) currentVersion.value = version
   } catch {
-    currentVersion.value = FALLBACK_VERSION
+    currentVersion.value = APP_VERSION
   }
 }
 
@@ -242,7 +243,7 @@ watch(
   (open) => {
     if (open) {
       keyword.value = ''
-      // 版本号是本地读的，不发网络请求；检查更新等用户点了再说
+      // 版本号：先问后端（准），问不到就用编译期常量
       void loadCurrentVersion()
     } else {
       // 弹窗关了就不收下载进度事件

@@ -1056,6 +1056,18 @@ fn write_app_version(app: &AppHandle) {
     }
 }
 
+/// 当前应用版本号。
+///
+/// 前端要显示版本号时问这里 —— 它是权威来源（跟打包出来的安装包同一个值）。
+///
+/// 不用 `@tauri-apps/api/app` 的 `getVersion()`：那个走插件命令，要过 ACL 权限，
+/// 万一被拒就退化成写死的兜底值，界面上就会出现一个跟实际不符的版本号。
+/// 自家命令不走 ACL，没有这个坑。
+#[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// 当前平台是不是「应用内标题栏」。
 ///
 /// Windows 上我们在 setup 里关掉了系统标题栏，前端据此画最小化/最大化/关闭。
@@ -1094,6 +1106,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             cli_status,
+            app_version,
             agents::agents_scan,
             agents::agents_installations,
             agents::agents_check_updates,

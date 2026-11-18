@@ -11,7 +11,8 @@ import {
   type ProxyInfo,
 } from '@/api/proxy'
 import { getCliStatus, type CliStatus } from '@/api/cli'
-import { getVersion } from '@tauri-apps/api/app'
+import { APP_VERSION } from '@/utils/appVersion'
+import { getAppVersion } from '@/api/app'
 import {
   checkAppUpdate,
   installUpdateAndRestart,
@@ -31,12 +32,10 @@ const message = useMessage()
 /**
  * 应用版本。
  *
- * 从 Tauri 拿（读的是 `tauri.conf.json` 里的 version），
- * 拿不到时用这个兼底值。
+ * 默认用编译期常量（见 `@/utils/appVersion`）；加载时再问一次后端，
+ * 拿后端说的为准（后端跟安装包是同一个版本）。
  */
-const FALLBACK_VERSION = '1.0.0'
-/** 当前版本（从 Tauri 读，兼底值见上） */
-const currentVersion = ref(FALLBACK_VERSION)
+const currentVersion = ref(APP_VERSION)
 
 /**
  * 版本检测。
@@ -214,9 +213,11 @@ const copyCliCommand = (): void => {
 
 const load = async () => {
   try {
-    currentVersion.value = await getVersion()
+    const version = await getAppVersion()
+    // 后端没给准话就别改 —— 宁可留着编译期常量，也别把版本号显示成空
+    if (typeof version === 'string' && version) currentVersion.value = version
   } catch {
-    currentVersion.value = FALLBACK_VERSION
+    currentVersion.value = APP_VERSION
   }
   try {
     cli.value = await getCliStatus()

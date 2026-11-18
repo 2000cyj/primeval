@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import HelpModal from '../components/HelpModal.vue'
+import { APP_VERSION } from '@/utils/appVersion'
 
 /**
  * 帮助中心弹窗。
@@ -122,6 +123,9 @@ describe('帮助中心', () => {
     expect(text).toContain('版本')
     expect(text).toContain('当前版本')
     expect(text).toContain('检查最新版本')
+    // 显示的必须是真版本号 —— 曾经写死成 1.0.0，实际装的是 1.0.4
+    expect(text).toContain(APP_VERSION)
+    expect(text).not.toContain('1.0.0')
   })
 
   it('搜索能过滤命令', async () => {

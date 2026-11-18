@@ -30,10 +30,6 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
 }))
 
-vi.mock('@tauri-apps/api/app', () => ({
-  getVersion: vi.fn().mockResolvedValue('1.0.0'),
-}))
-
 const openUrlMock = vi.hoisted(() => vi.fn())
 vi.mock('@/api/extensions', () => ({
   openExternal: openUrlMock,
