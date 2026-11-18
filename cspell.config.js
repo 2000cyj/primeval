@@ -46,6 +46,7 @@ export default {
     'feff',
     'focusable',
     'flate2',
+    'frontmatter',
     'FIGUREMA',
     'Framelink',
     'getrandom',
