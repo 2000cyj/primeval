@@ -16,6 +16,7 @@ import {
   type BackupImportResult,
 } from '@/api/backup'
 import { useNotifications } from '@/composables/useNotifications'
+import { bumpMcp, bumpSkills, bumpWiki } from '@/data/dataRevision'
 
 /**
  * 导入弹窗：选一个导出的 zip → 看冲突 → 决定哪些要覆盖 → 导入。
@@ -302,6 +303,11 @@ const onImportDone = (done: {
     (done.result?.skipped.skills ?? 0) +
     (done.result?.skipped.mcpServers ?? 0) +
     (done.result?.skipped.extensions ?? 0)
+  // 告诉别的页面「数据变了」——
+  // 它们被 KeepAlive 缓存着，切回去时不会重新挂载，得靠这个信号才知道要重载。
+  if ((imported?.skills ?? 0) > 0) bumpSkills()
+  if ((imported?.mcpServers ?? 0) > 0) bumpMcp()
+  if ((imported?.wiki ?? 0) > 0) bumpWiki()
   const detail = `导入 ${total} 项，跳过 ${skipped} 项`
   finishNotice(noticeId.value, 'success', {
     title: '导入完成',

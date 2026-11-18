@@ -14,6 +14,7 @@ import { ArrowLeft, Save } from 'lucide-vue-next'
 
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import { readSkill, updateSkill, type SkillDetail, type SkillInfo } from '@/api/skills'
+import { bumpSkills } from '@/data/dataRevision'
 
 const props = defineProps<{
   /** 要编辑的 skill 名 */
@@ -110,6 +111,9 @@ const save = async (): Promise<void> => {
       description: info.description,
       content: content.value,
     }
+    // Skills 页被 KeepAlive 缓存着，切回去不会重新加载 ——
+    // 告诉它「数据变了」。
+    bumpSkills()
     emit('saved', info)
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))

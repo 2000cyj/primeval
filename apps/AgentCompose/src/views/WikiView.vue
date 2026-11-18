@@ -8,7 +8,7 @@
  * 正文是 Markdown 源码，预览用项目自己的 MarkdownView（marked + DOMPurify）渲染 ——
  * 不走 md-editor-v3 自带的预览，那条路的清洗策略不由我们控制。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSelect, useMessage } from 'naive-ui'
 import {
   BookOpen,
@@ -23,6 +23,7 @@ import {
 // md-editor-v3 的样式不在包内自动引入，漏了这一句编辑器就是一堆没样式的标签
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
+import { bumpSkills, wikiRevision } from '@/data/dataRevision'
 import {
   createWikiPage,
   deleteWikiPage,
@@ -41,6 +42,8 @@ const message = useMessage()
 const pages = ref<WikiPageMeta[]>([])
 /** 列表读取失败时的原因 —— 直接展示，不拿假数据充数 */
 const listError = ref('')
+/** 上次加载时 Wiki 数据的版本号 —— 激活时比对要不要重载。 */
+let loadedRevision = -1
 
 /** 当前打开的页面 slug（空 = 没打开任何页面） */
 const currentSlug = ref('')
@@ -249,6 +252,8 @@ const loadPages = async (): Promise<void> => {
   } catch (error) {
     listError.value = error instanceof Error ? error.message : String(error)
   }
+  // 记下这次读的是哪个版本的数据 —— 激活时靠它比对要不要重载
+  loadedRevision = wikiRevision.value
 }
 
 /** 打开一个页面（读正文，填进编辑区） */
@@ -305,6 +310,9 @@ const publishAsSkill = async (): Promise<void> => {
   try {
     const info = await publishWikiAsSkill(currentSlug.value)
     message.success(`已发布为 skill：${info.name}`)
+    // Skills 页被 KeepAlive 缓存着，切回去不会重新加载 ——
+    // 告诉它「数据变了」。
+    bumpSkills()
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))
   }
@@ -390,6 +398,18 @@ watch(query, () => {
 })
 
 onMounted(() => {
+  void loadPages()
+})
+
+/**
+ * 切回这个页面时看看要不要重新加载。
+ *
+ * 这个页面被 KeepAlive 缓存着（切走不卸载），所以**不会**再触发 onMounted。
+ * 数据可能从别的页面变 —— 目前只有设置页导入备份会带进新的 Wiki 页面，
+ * 那时候会 +1 版本号，这里比对到变了才重新加载。
+ */
+onActivated(() => {
+  if (wikiRevision.value === loadedRevision) return
   void loadPages()
 })
 </script>

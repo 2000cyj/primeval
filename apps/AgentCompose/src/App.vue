@@ -218,34 +218,50 @@ onBeforeUnmount(() => {
             看着像「滑轮顶到头部」。把滚动容器放到顶栏下面就没这问题。
           -->
           <div class="content">
-            <SkillsView v-if="activeView === 'skills'" @edit="onSkillEdit" />
-            <McpView v-else-if="activeView === 'mcp'" />
-            <AgentsView v-else-if="activeView === 'agents'" />
-            <ExtensionsView v-else-if="activeView === 'extensions'" />
-            <AgentRunsView
-              v-else-if="activeView === 'agentRuns'"
-              @create="navigate('agentCreate')"
-              @edit="onAgentEdit"
-            />
+            <!--
+              页面：缓存住 —— 切走再切回来，滚动位置、筛选条件、展开的行都还在，
+              也不会重新加载一遍。
+
+              数据变了要重新加载的话，靠 `dataRevision` 的信号（见 `@/data/dataRevision`）：
+              别的页面改了数据会 +1，这里激活时比对到变了才重载。
+            -->
+            <KeepAlive>
+              <SkillsView v-if="activeView === 'skills'" @edit="onSkillEdit" />
+              <McpView v-else-if="activeView === 'mcp'" />
+              <AgentsView v-else-if="activeView === 'agents'" />
+              <ExtensionsView v-else-if="activeView === 'extensions'" />
+              <AgentRunsView
+                v-else-if="activeView === 'agentRuns'"
+                @create="navigate('agentCreate')"
+                @edit="onAgentEdit"
+              />
+              <WikiView v-else-if="activeView === 'wiki'" />
+              <SettingsView v-else-if="activeView === 'settings'" />
+            </KeepAlive>
+
+            <!--
+              编辑器 / 向导：**不缓存**。
+
+              它们是临时表单 —— 每次进来都该是干净的。而且 skill 编辑器有
+              「未保存提醒」，缓存的实例带着上一轮没保存的草稿回来会让人迷糊。
+            -->
             <AgentCreateWizard
-              v-else-if="activeView === 'agentCreate'"
+              v-if="activeView === 'agentCreate'"
               @cancel="navigateBack()"
               @done="onAgentCreated"
             />
             <AgentEditView
-              v-else-if="activeView === 'agentEdit'"
+              v-if="activeView === 'agentEdit'"
               :agent-id="editingAgentId"
               @cancel="navigateBack('agentRuns')"
               @saved="navigate('agentRuns')"
             />
             <SkillEditorView
-              v-else-if="activeView === 'skillEdit'"
+              v-if="activeView === 'skillEdit'"
               :skill-name="editingSkillName"
               @cancel="navigateBack('skills')"
               @saved="onSkillSaved"
             />
-            <WikiView v-else-if="activeView === 'wiki'" />
-            <SettingsView v-else />
           </div>
         </main>
       </div>

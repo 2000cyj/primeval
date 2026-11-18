@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, type Component } from 'vue'
+import { computed, onActivated, onMounted, ref, type Component } from 'vue'
 import { NButton, NCheckbox, NIcon, NModal, NSpace, NSwitch, NTag, useMessage } from 'naive-ui'
 import { Plus, RefreshCw } from 'lucide-vue-next'
 import { Github } from 'lucide-vue-next'
@@ -22,6 +22,7 @@ import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
+import { skillsRevision } from '@/data/dataRevision'
 import { formatDateTime } from '@/utils/datetime'
 
 /**
@@ -42,6 +43,9 @@ const query = ref('')
  */
 const skillList = ref<Skill[]>([])
 const loading = ref(false)
+
+/** 上次加载时 Skill 数据的版本号 —— 激活时比对要不要重载。 */
+let loadedRevision = -1
 const loadError = ref('')
 
 /** 勾选中的 skill 名 */
@@ -311,10 +315,26 @@ const loadWorkspaceSkills = async () => {
     skillList.value = []
   } finally {
     loading.value = false
+    // 记下这次读的是哪个版本的数据 —— 激活时靠它比对要不要重载
+    loadedRevision = skillsRevision.value
   }
 }
 
 onMounted(() => {
+  void loadWorkspaceSkills()
+})
+
+/**
+ * 切回这个页面时看看要不要重新加载。
+ *
+ * 这个页面被 KeepAlive 缓存着（切走不卸载），所以**不会**再触发 onMounted。
+ * 但别的页面可能改了 skill —— 比如 skill 编辑页保存、Wiki 里发布成 Skill、
+ * 设置页导入备份。那些地方会 +1 版本号，这里比对到变了才重新加载。
+ *
+ * 没变就不重载 —— 切回来是瞬时的，滚动位置和筛选条件都还在。
+ */
+onActivated(() => {
+  if (skillsRevision.value === loadedRevision) return
   void loadWorkspaceSkills()
 })
 

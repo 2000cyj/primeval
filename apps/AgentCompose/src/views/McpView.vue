@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, type Component } from 'vue'
+import { onActivated, onMounted, onUnmounted, ref, type Component } from 'vue'
 import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, NTooltip, useMessage } from 'naive-ui'
 import {
   CircleAlert,
@@ -48,6 +48,7 @@ import McpRegistryModal from '@/components/McpRegistryModal.vue'
 import McpServerModal from '@/components/McpServerModal.vue'
 import McpExposureDrawer from '@/components/McpExposureDrawer.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
+import { mcpRevision } from '@/data/dataRevision'
 
 const message = useMessage()
 
@@ -59,6 +60,8 @@ const exposure = ref<McpExposure>(defaultExposure())
 const loading = ref(false)
 /** 加载失败时的原因（sidecar 没起来等），用于页面顶部提示 */
 const loadError = ref('')
+/** 上次加载时 MCP 数据的版本号 —— 激活时比对要不要重载。 */
+let loadedRevision = -1
 
 /** 新增 / 编辑弹窗 */
 const showServerModal = ref(false)
@@ -252,10 +255,26 @@ const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
     if (!options.quiet) message.error(detail)
   } finally {
     if (!options.quiet) loading.value = false
+    // 记下这次读的是哪个版本的数据 —— 激活时靠它比对要不要重载
+    loadedRevision = mcpRevision.value
   }
 }
 
 onMounted(() => {
+  void load()
+})
+
+/**
+ * 切回这个页面时看看要不要重新加载。
+ *
+ * 这个页面被 KeepAlive 缓存着（切走不卸载），所以**不会**再触发 onMounted。
+ * 数据可能从别的页面变 —— 目前只有设置页导入备份会带进新的 MCP server，
+ * 那时候会 +1 版本号，这里比对到变了才重新加载。
+ *
+ * 没变就不重载 —— 加载会顺带把上游重新连一遍，代价不小。
+ */
+onActivated(() => {
+  if (mcpRevision.value === loadedRevision) return
   void load()
 })
 
