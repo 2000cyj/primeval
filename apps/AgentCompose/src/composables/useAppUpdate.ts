@@ -35,6 +35,18 @@ type Messenger = {
   info: (message: string) => unknown
 }
 
+/** 检查的额外选项。 */
+type CheckOptions = {
+  /**
+   * 静默检查。
+   *
+   * 后台自动查的时候用 —— 查不到就当没查过，不弹提示、不报错。
+   * 也不能把**已经查到的状态**弄丢：后台复查失败时，之前查到的
+   * 「有新版本」还得留着。
+   */
+  silent?: boolean
+}
+
 /** 检测状态。 */
 type UpdateState = 'idle' | 'checking' | 'latest' | 'update'
 
@@ -107,8 +119,17 @@ const loadCurrentVersion = async (): Promise<void> => {
   }
 }
 
-/** 检查最新版本。 */
-const checkLatestVersion = async (message?: Messenger): Promise<void> => {
+/**
+ * 检查最新版本。
+ *
+ * `options.silent` 为真时：查不到不报错、不弹提示，
+ * 且**不会把已经查到的状态弄丢**（后台复查失败时，之前查到的
+ * 「有新版本」还得留着）。
+ */
+const checkLatestVersion = async (message?: Messenger, options?: CheckOptions): Promise<void> => {
+  const silent = options?.silent ?? false
+  // 记下原来的状态 —— 静默检查失败时要还原回去。
+  const previousState = updateState.value
   updateState.value = 'checking'
   checkError.value = ''
   try {
@@ -116,12 +137,17 @@ const checkLatestVersion = async (message?: Messenger): Promise<void> => {
     updateInfo.value = info
     currentVersion.value = info.currentVersion || currentVersion.value
     updateState.value = info.hasUpdate ? 'update' : 'latest'
-    if (updateState.value === 'latest') {
+    if (updateState.value === 'latest' && !silent) {
       message?.success(`当前已是最新版本 ${currentVersion.value}`)
     }
   } catch (error) {
-    updateState.value = 'idle'
     const text = `检查版本失败：${error instanceof Error ? error.message : String(error)}`
+    if (silent) {
+      // 静默的 —— 状态还原回去，别把已查到的结果弄丢。
+      updateState.value = previousState
+      return
+    }
+    updateState.value = 'idle'
     checkError.value = text
     message?.error(text)
   }

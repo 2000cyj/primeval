@@ -4,10 +4,12 @@ import {
   NConfigProvider,
   NGlobalStyle,
   NMessageProvider,
+  NNotificationProvider,
   type GlobalThemeOverrides,
 } from 'naive-ui'
 import AppSidebar, { type ViewKey } from '@/components/AppSidebar.vue'
 import AppTopbar from '@/components/AppTopbar.vue'
+import UpdateNotifier from '@/components/UpdateNotifier.vue'
 import SkillsView from '@/views/SkillsView.vue'
 import SkillEditorView from '@/views/SkillEditorView.vue'
 import McpView from '@/views/McpView.vue'
@@ -203,68 +205,79 @@ onBeforeUnmount(() => {
   <NConfigProvider :theme-overrides="themeOverrides">
     <NGlobalStyle />
     <NMessageProvider>
-      <div class="shell">
-        <!-- 编辑 skill 时侧边栏仍高亮 Skills —— 它是 Skills 页的一部分 -->
-        <AppSidebar
-          :active="activeView === 'skillEdit' ? 'skills' : activeView"
-          @navigate="navigate"
-        />
+      <!--
+        通知容器 —— 右下角的弹窗（更新提醒那些）。
+        必须在 UpdateNotifier 外面：它靠 inject 拿弹窗 API。
 
-        <main class="main">
-          <AppTopbar />
-          <!--
+        placement 显式写成 bottom-right —— naive-ui 默认是 top-right。
+      -->
+      <NNotificationProvider placement="bottom-right" :max="3">
+        <div class="shell">
+          <!-- 编辑 skill 时侧边栏仍高亮 Skills —— 它是 Skills 页的一部分 -->
+          <AppSidebar
+            :active="activeView === 'skillEdit' ? 'skills' : activeView"
+            @navigate="navigate"
+          />
+
+          <main class="main">
+            <AppTopbar />
+            <!--
             页面内容自己滚，不滚整个窗口。
             整页滚的话滚动条会贯穿整个窗口高度 —— 顶栏那 48px 里也有一条，
             看着像「滑轮顶到头部」。把滚动容器放到顶栏下面就没这问题。
           -->
-          <div class="content">
-            <!--
+            <div class="content">
+              <!--
               页面：缓存住 —— 切走再切回来，滚动位置、筛选条件、展开的行都还在，
               也不会重新加载一遍。
 
               数据变了要重新加载的话，靠 `dataRevision` 的信号（见 `@/data/dataRevision`）：
               别的页面改了数据会 +1，这里激活时比对到变了才重载。
             -->
-            <KeepAlive>
-              <SkillsView v-if="activeView === 'skills'" @edit="onSkillEdit" />
-              <McpView v-else-if="activeView === 'mcp'" />
-              <AgentsView v-else-if="activeView === 'agents'" />
-              <ExtensionsView v-else-if="activeView === 'extensions'" />
-              <AgentRunsView
-                v-else-if="activeView === 'agentRuns'"
-                @create="navigate('agentCreate')"
-                @edit="onAgentEdit"
-              />
-              <WikiView v-else-if="activeView === 'wiki'" />
-              <SettingsView v-else-if="activeView === 'settings'" />
-            </KeepAlive>
+              <KeepAlive>
+                <SkillsView v-if="activeView === 'skills'" @edit="onSkillEdit" />
+                <McpView v-else-if="activeView === 'mcp'" />
+                <AgentsView v-else-if="activeView === 'agents'" />
+                <ExtensionsView v-else-if="activeView === 'extensions'" />
+                <AgentRunsView
+                  v-else-if="activeView === 'agentRuns'"
+                  @create="navigate('agentCreate')"
+                  @edit="onAgentEdit"
+                />
+                <WikiView v-else-if="activeView === 'wiki'" />
+                <SettingsView v-else-if="activeView === 'settings'" />
+              </KeepAlive>
 
-            <!--
+              <!--
               编辑器 / 向导：**不缓存**。
 
               它们是临时表单 —— 每次进来都该是干净的。而且 skill 编辑器有
               「未保存提醒」，缓存的实例带着上一轮没保存的草稿回来会让人迷糊。
             -->
-            <AgentCreateWizard
-              v-if="activeView === 'agentCreate'"
-              @cancel="navigateBack()"
-              @done="onAgentCreated"
-            />
-            <AgentEditView
-              v-if="activeView === 'agentEdit'"
-              :agent-id="editingAgentId"
-              @cancel="navigateBack('agentRuns')"
-              @saved="navigate('agentRuns')"
-            />
-            <SkillEditorView
-              v-if="activeView === 'skillEdit'"
-              :skill-name="editingSkillName"
-              @cancel="navigateBack('skills')"
-              @saved="onSkillSaved"
-            />
-          </div>
-        </main>
-      </div>
+              <AgentCreateWizard
+                v-if="activeView === 'agentCreate'"
+                @cancel="navigateBack()"
+                @done="onAgentCreated"
+              />
+              <AgentEditView
+                v-if="activeView === 'agentEdit'"
+                :agent-id="editingAgentId"
+                @cancel="navigateBack('agentRuns')"
+                @saved="navigate('agentRuns')"
+              />
+              <SkillEditorView
+                v-if="activeView === 'skillEdit'"
+                :skill-name="editingSkillName"
+                @cancel="navigateBack('skills')"
+                @saved="onSkillSaved"
+              />
+            </div>
+          </main>
+        </div>
+
+        <!-- 更新提醒：启动时后台查一次，有新版本就弹一下 -->
+        <UpdateNotifier />
+      </NNotificationProvider>
     </NMessageProvider>
   </NConfigProvider>
 </template>

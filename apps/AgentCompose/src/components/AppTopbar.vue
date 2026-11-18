@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { NButton, NIcon, NPopover, NTooltip } from 'naive-ui'
 import { Bell, CircleAlert, CircleCheck, CircleHelp, Loader2, X } from 'lucide-vue-next'
 import { useNotifications } from '@/composables/useNotifications'
 import { useWindowChrome } from '@/composables/useWindowChrome'
+import { useHelpCenter } from '@/composables/useHelpCenter'
 import HelpModal from '@/components/HelpModal.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import { formatDateTime } from '@/utils/datetime'
@@ -13,8 +14,12 @@ const { notices, runningCount, dismiss, clear } = useNotifications()
 /** Windows 上没有系统标题栏，窗口按钮由我们画 */
 const { enabled: customChrome } = useWindowChrome()
 
-/** 帮助弹窗开没开 */
-const helpOpen = ref(false)
+/**
+ * 帮助弹窗开没开。
+ *
+ * 共享状态 —— 右下角更新提醒点开的时候也是开这个（见 `@/composables/useHelpCenter`）。
+ */
+const { helpOpen, openHelp } = useHelpCenter()
 
 /** 角标上的数字：没有就不显示 */
 const badge = computed(() => (notices.value.length > 99 ? '99+' : String(notices.value.length)))
@@ -32,7 +37,7 @@ const timeText = (timestamp: number): string => formatDateTime(timestamp)
   <header class="topbar" data-tauri-drag-region="deep">
     <NTooltip trigger="hover">
       <template #trigger>
-        <NButton quaternary circle size="small" aria-label="帮助" @click="helpOpen = true">
+        <NButton quaternary circle size="small" aria-label="帮助" @click="openHelp()">
           <NIcon :size="16">
             <CircleHelp />
           </NIcon>

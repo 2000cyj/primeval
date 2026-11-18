@@ -18,6 +18,7 @@ import {
 } from 'lucide-vue-next'
 import { commandConventions, commandGroups, helpTopics, pageConventions, pages } from '@/data/help'
 import { useAppUpdate } from '@/composables/useAppUpdate'
+import { useHelpCenter, type HelpTab } from '@/composables/useHelpCenter'
 import MarkdownView from '@/components/MarkdownView.vue'
 
 const props = defineProps<{ show: boolean }>()
@@ -25,8 +26,21 @@ const emit = defineEmits<{ 'update:show': [value: boolean] }>()
 
 /** 搜索词 */
 const keyword = ref('')
-/** 当前页签 */
-const tab = ref('command')
+
+/**
+ * 当前页签 —— 共享状态。
+ *
+ * 放共享的是因为右下角更新提醒点开帮助中心时要直接停在「版本」页签
+ * （见 `@/composables/useHelpCenter`）。可写的计算属性：用户手动切页签时
+ * 共享状态也跟着变，下次打开还在原来那个页签。
+ */
+const { helpTab } = useHelpCenter()
+const tab = computed<HelpTab>({
+  get: () => helpTab.value,
+  set: (value) => {
+    helpTab.value = value
+  },
+})
 
 const needle = computed(() => keyword.value.trim().toLowerCase())
 

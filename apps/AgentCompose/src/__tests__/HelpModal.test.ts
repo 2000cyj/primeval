@@ -1,7 +1,8 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import HelpModal from '../components/HelpModal.vue'
 import { APP_VERSION } from '@/utils/appVersion'
+import { useHelpCenter } from '@/composables/useHelpCenter'
 
 /**
  * 帮助中心弹窗。
@@ -40,6 +41,12 @@ const type = async (text: string): Promise<void> => {
 
 afterEach(() => {
   document.body.innerHTML = ''
+})
+
+// 页签是共享状态 —— 上一个用例切到哪儿，这个用例就从哪儿开始。
+// 每个用例都得从头开始。
+beforeEach(() => {
+  useHelpCenter().resetHelpCenter()
 })
 
 describe('帮助中心', () => {
