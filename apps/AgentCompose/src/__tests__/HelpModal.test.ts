@@ -55,7 +55,20 @@ describe('帮助中心', () => {
     // 知识库与数据管理
     expect(text).toContain('知识库（Wiki）')
     expect(text).toContain('备份与迁移')
-    expect(text).toContain('桌面端自身')
+  })
+
+  it('起智能体与查版本归在同一组', async () => {
+    await mountModal()
+    const text = bodyText()
+    // 「agentspace 自身」这一组里既有起智能体的，也有查版本的
+    expect(text).toContain('agentspace 自身')
+    expect(text).toContain('run <名称>')
+    expect(text).toContain('install <名称>')
+    expect(text).toContain('update <名称>')
+    expect(text).toContain('version')
+    expect(text).toContain('app update')
+    // 旧的分组名不再出现
+    expect(text).not.toContain('桌面端自身')
   })
 
   it('列出知识库与备份的命令', async () => {

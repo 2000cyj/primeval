@@ -42,8 +42,8 @@ export type HelpTopic = {
 
 export const commandGroups: HelpGroup[] = [
   {
-    title: '起一个智能体',
-    hint: '把智能体装进当前目录，再拉起它',
+    title: 'agentspace 自身',
+    hint: '起智能体、查版本 —— 都是这条命令干的',
     commands: [
       {
         cmd: 'run <名称>',
@@ -59,6 +59,16 @@ export const commandGroups: HelpGroup[] = [
         cmd: 'update <名称>',
         desc: '更新当前目录里的智能体，不启动。装的是另一个智能体会问你要不要替换',
         example: 'agentspace update 知识助手',
+      },
+      {
+        cmd: 'version',
+        desc: '版本总览：AgentSpace 自己 + 工具箱里各 CLI 工具的版本（也认 -version / -v）',
+        example: 'agentspace version --check',
+      },
+      {
+        cmd: 'app update',
+        desc: '查桌面端有没有新版本',
+        example: 'agentspace app update',
       },
     ],
   },
@@ -194,18 +204,6 @@ export const commandGroups: HelpGroup[] = [
         cmd: 'backup import <zip>',
         desc: '导入一个 zip 包（--overwrite <key> 覆盖冲突项，--dry-run 只看不动）',
         example: 'agentspace backup import backup.zip --dry-run',
-      },
-    ],
-  },
-  {
-    title: '桌面端自身',
-    hint: '跟 AgentSpace 桌面端有关的事',
-    commands: [
-      { cmd: 'app update', desc: '查桌面端有没有新版本' },
-      {
-        cmd: 'version',
-        desc: '版本总览：AgentSpace 自己 + 工具箱里各 CLI 工具的版本（也认 -version / -v）',
-        example: 'agentspace version --check',
       },
     ],
   },
