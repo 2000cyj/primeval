@@ -30,6 +30,7 @@ import {
   type RuntimeSkillInfo,
   type SkillInfo,
 } from '@/api/skills'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 export type CreateMethod = 'manual' | 'local' | 'url' | 'runtime' | 'github'
 
@@ -457,8 +458,8 @@ watch(
             </NIcon>
           </span>
           <span class="method-text">
-            <span class="method-title">{{ method.title }}</span>
-            <span class="method-desc">{{ method.desc }}</span>
+            <EllipsisText class="method-title" :text="method.title" />
+            <EllipsisText class="method-desc" :text="method.desc" />
           </span>
           <NIcon class="method-arrow" :size="16" color="var(--c-text-4)">
             <ChevronRight />
@@ -605,7 +606,7 @@ watch(
             >
               {{ item.name }}
             </NCheckbox>
-            <span class="repo-desc">{{ item.description || '（无描述）' }}</span>
+            <EllipsisText class="repo-desc" :text="item.description || '（无描述）'" />
           </li>
         </ul>
       </template>

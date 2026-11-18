@@ -271,15 +271,19 @@ const toggleInstalls = async (agent: AgentInfo) => {
                 <div class="cell-text">
                   <span class="cell-title">{{ agent.name }}</span>
                   <div class="cell-path-row">
-                    <button
-                      v-if="agent.path"
-                      class="cell-path mono"
-                      type="button"
-                      title="点击复制路径"
-                      @click="copyPath(agent.path)"
-                    >
-                      {{ agent.path }}
-                    </button>
+                    <NTooltip v-if="agent.path" placement="top" :delay="300">
+                      <template #trigger>
+                        <button
+                          class="cell-path mono"
+                          type="button"
+                          title="点击复制路径"
+                          @click="copyPath(agent.path)"
+                        >
+                          {{ agent.path }}
+                        </button>
+                      </template>
+                      <span class="tip-text">{{ agent.path }}</span>
+                    </NTooltip>
                     <span v-else class="cell-path mono muted">未检测到</span>
                     <button
                       v-if="agent.installs.length > 1"

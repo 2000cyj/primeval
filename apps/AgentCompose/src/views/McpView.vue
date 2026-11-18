@@ -47,6 +47,7 @@ import McpEndpointCard from '@/components/McpEndpointCard.vue'
 import McpRegistryModal from '@/components/McpRegistryModal.vue'
 import McpServerModal from '@/components/McpServerModal.vue'
 import McpExposureDrawer from '@/components/McpExposureDrawer.vue'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 const message = useMessage()
 
@@ -516,13 +517,15 @@ const onSaveExposure = async (next: McpExposure): Promise<void> => {
             </span>
             <div class="server-text">
               <div class="server-title-row">
-                <span class="server-name">{{ server.name }}</span>
+                <EllipsisText class="server-name" :text="server.name" />
                 <NTag size="small" :bordered="false">{{ server.transport }}</NTag>
               </div>
-              <span class="server-sub mono">{{ serverSubtitle(server) }}</span>
-              <span v-if="tokenSourceText(server)" class="server-token">
-                {{ tokenSourceText(server) }}
-              </span>
+              <EllipsisText class="server-sub mono" :text="serverSubtitle(server)" />
+              <EllipsisText
+                v-if="tokenSourceText(server)"
+                class="server-token"
+                :text="tokenSourceText(server)"
+              />
             </div>
           </div>
 

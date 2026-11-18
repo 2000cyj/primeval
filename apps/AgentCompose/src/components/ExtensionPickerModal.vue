@@ -4,6 +4,7 @@ import { NButton, NIcon, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import { Check, Search } from 'lucide-vue-next'
 import ToolboxIcon from '@/components/ToolboxIcon.vue'
 import { listExtensions, type ExtensionInfo } from '@/api/extensions'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 智能体的 Pi 扩展选择弹窗。
@@ -134,7 +135,7 @@ watch(
                 {{ item.name }}
                 <span class="item-tag">{{ item.source === 'npm' ? 'npm' : '自定义' }}</span>
               </span>
-              <code class="item-path mono">{{ extensionRef(item) }}</code>
+              <EllipsisText class="item-path mono" :text="extensionRef(item)" />
             </span>
           </button>
         </li>

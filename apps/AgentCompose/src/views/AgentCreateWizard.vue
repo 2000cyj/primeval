@@ -9,6 +9,7 @@ import { useCreatedAgents } from '@/data/createdAgents'
 import AgentConfigForm from '@/components/AgentConfigForm.vue'
 import PackageOpModal from '@/components/PackageOpModal.vue'
 import { setUpgradeDoneHandler, useCliOps } from '@/composables/useCliOps'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 const emit = defineEmits<{ cancel: []; done: [agent: CreatedAgentInput] }>()
 
@@ -241,7 +242,7 @@ const submit = async (): Promise<void> => {
             <li v-else-if="!piInstalled" class="install-hint">
               <span class="install-text">没检测到 Pi，装一个就能跑智能体了：</span>
               <NButton type="primary" size="tiny" @click="openInstallPi">安装 Pi</NButton>
-              <code class="install-cmd mono">{{ PI_INSTALL_COMMAND }}</code>
+              <EllipsisText class="install-cmd mono" :text="PI_INSTALL_COMMAND" />
               <NButton quaternary size="tiny" aria-label="复制安装命令" @click="copyInstallCommand">
                 <template #icon>
                   <NIcon :size="12">
@@ -268,7 +269,7 @@ const submit = async (): Promise<void> => {
                   <span class="harness-icon" :style="{ background: agentIconBgOf(agent.command) }">
                     <img class="harness-icon-img" :src="agentIconOf(agent.command)" alt="" />
                   </span>
-                  <span class="harness-name">{{ agent.name }}</span>
+                  <EllipsisText class="harness-name" :text="agent.name" />
                   <span class="harness-version mono">
                     {{ agent.version ?? (agent.installed ? '已安装' : '未安装') }}
                   </span>

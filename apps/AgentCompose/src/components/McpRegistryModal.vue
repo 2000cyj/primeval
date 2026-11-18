@@ -4,6 +4,7 @@ import { NButton, NEmpty, NIcon, NInput, NModal, NSpace, NSpin, NTag } from 'nai
 import { CircleAlert, Download, Search } from 'lucide-vue-next'
 import type { McpRegistryEntry, McpServerDef } from '@remote/agent-compose-mcp/types'
 import { registryServerDef, searchRegistry } from '@/api/mcp'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 官方 MCP 目录搜索弹窗。
@@ -172,7 +173,7 @@ const onAdd = (row: RegistryRow): void => {
       <li v-for="row in rows" :key="row.key" class="entry">
         <div class="entry-main">
           <div class="entry-title-row">
-            <span class="entry-title">{{ row.title }}</span>
+            <EllipsisText class="entry-title" :text="row.title" />
             <NTag size="small" :bordered="false">{{ row.transport }}</NTag>
             <NTag v-if="row.official" size="small" :bordered="false">官方</NTag>
           </div>

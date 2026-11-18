@@ -8,6 +8,7 @@ import {
   type BackupExtension,
   type BackupInventory,
 } from '@/api/backup'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 导出弹窗：勾选要带走的智能体 / Skills / MCP server / Pi 扩展，打成一个 zip。
@@ -483,7 +484,7 @@ watch(
               >
                 <span class="row-text">
                   <span class="row-label">{{ row.label }}</span>
-                  <span class="row-hint">{{ row.hint }}</span>
+                  <EllipsisText class="row-hint" :text="row.hint" />
                 </span>
                 <span class="row-check" :class="{ on: isChecked('agent', row.key) }">
                   <Check v-if="isChecked('agent', row.key)" :size="13" />
@@ -531,7 +532,7 @@ watch(
                     {{ row.label }}
                     <span v-if="row.pulled" class="tag">随智能体带出</span>
                   </span>
-                  <span class="row-hint">{{ row.hint }}</span>
+                  <EllipsisText class="row-hint" :text="row.hint" />
                 </span>
                 <span class="row-check" :class="{ on: isChecked('skill', row.key) }">
                   <Check v-if="isChecked('skill', row.key)" :size="13" />
@@ -577,7 +578,7 @@ watch(
                     {{ row.label }}
                     <span v-if="row.pulled" class="tag">随智能体带出</span>
                   </span>
-                  <span class="row-hint">{{ row.hint }}</span>
+                  <EllipsisText class="row-hint" :text="row.hint" />
                 </span>
                 <span class="row-check" :class="{ on: isChecked('mcpServer', row.key) }">
                   <Check v-if="isChecked('mcpServer', row.key)" :size="13" />
@@ -620,7 +621,7 @@ watch(
               >
                 <span class="row-text">
                   <span class="row-label">{{ row.label }}</span>
-                  <span class="row-hint">{{ row.hint }}</span>
+                  <EllipsisText class="row-hint" :text="row.hint" />
                 </span>
                 <span class="row-check" :class="{ on: isChecked('wiki', row.key) }">
                   <Check v-if="isChecked('wiki', row.key)" :size="13" />
@@ -668,7 +669,7 @@ watch(
                     {{ row.label }}
                     <span v-if="row.pulled" class="tag">随智能体带出</span>
                   </span>
-                  <span class="row-hint">{{ row.hint }}</span>
+                  <EllipsisText class="row-hint" :text="row.hint" />
                 </span>
                 <span class="row-check" :class="{ on: isChecked('extension', row.key) }">
                   <Check v-if="isChecked('extension', row.key)" :size="13" />

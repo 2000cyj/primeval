@@ -18,6 +18,7 @@ import {
   type DiscoveredSkill,
   type GitRepo,
 } from '@/api/skills'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ 'update:show': [value: boolean]; imported: [] }>()
@@ -183,7 +184,7 @@ watch(
               </NIcon>
             </span>
             <span class="repo-text">
-              <span class="repo-name">{{ repo.sourceUrl }}</span>
+              <EllipsisText class="repo-name" :text="repo.sourceUrl" />
               <span class="repo-meta">
                 <span v-if="repo.sourceRef" class="repo-ref">{{ repo.sourceRef }}</span>
                 已导入 {{ repo.skills.length }} 个
@@ -241,7 +242,7 @@ watch(
                 {{ item.name }}
                 <span v-if="installedNames.has(item.name)" class="skill-tag">已添加</span>
               </span>
-              <span class="skill-desc">{{ item.description || '（没有描述）' }}</span>
+              <EllipsisText class="skill-desc" :text="item.description || '（没有描述）'" />
             </span>
           </label>
         </div>

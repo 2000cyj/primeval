@@ -6,6 +6,7 @@ import { agentIcons } from '@/data/agentIcons'
 import { useCreatedAgents, type CreatedAgent } from '@/data/createdAgents'
 import AgentRunMenu, { type AgentRunMenuAction } from '@/components/AgentRunMenu.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
+import EllipsisText from '@/components/EllipsisText.vue'
 import { formatRelativeTime } from '@/utils/datetime'
 
 const emit = defineEmits<{ create: []; edit: [id: string] }>()
@@ -109,8 +110,8 @@ const confirmDelete = async () => {
               <img class="cell-icon-img" :src="iconOf()" :alt="run.name" />
             </span>
             <span class="cell-text">
-              <span class="cell-title">{{ run.name }}</span>
-              <span v-if="run.description" class="cell-sub">{{ run.description }}</span>
+              <EllipsisText class="cell-title" :text="run.name" />
+              <EllipsisText v-if="run.description" class="cell-sub" :text="run.description" />
             </span>
           </div>
 

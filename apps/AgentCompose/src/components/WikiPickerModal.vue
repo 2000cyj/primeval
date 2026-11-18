@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, useMessage } from 'naive-ui'
 import { BookOpen, Check, FileText, Search, X } from 'lucide-vue-next'
 import { listWikiPages, type WikiPageMeta } from '@/api/wiki'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 智能体的 wiki 页面选择弹窗。
@@ -160,7 +161,7 @@ watch(
             <FileText :size="16" />
           </span>
           <span class="wiki-text">
-            <span class="wiki-name">{{ page.title }}</span>
+            <EllipsisText class="wiki-name" :text="page.title" />
             <span class="wiki-desc">
               <template v-if="page.tags.length">tags: {{ page.tags.join(', ') }}</template>
               <template v-else-if="childCount(page.slug)">

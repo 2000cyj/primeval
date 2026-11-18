@@ -11,6 +11,7 @@
 import { computed, ref, type Component } from 'vue'
 import { NButton, NIcon, NPopover } from 'naive-ui'
 import { Check, ChevronRight, ListFilter } from 'lucide-vue-next'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 export type FilterOption = {
   /** 选中后记进 modelValue 的值 */
@@ -118,7 +119,7 @@ const summary = (group: FilterGroup): string => {
           :aria-haspopup="true"
           @click="openGroup = openGroup === group.key ? null : group.key"
         >
-          <span class="group-label">{{ group.label }}</span>
+          <EllipsisText class="group-label" :text="group.label" />
           <span v-if="summary(group)" class="group-summary">{{ summary(group) }}</span>
           <NIcon :size="12" class="group-arrow">
             <ChevronRight />
@@ -145,7 +146,7 @@ const summary = (group: FilterGroup): string => {
                 <component :is="option.icon" />
               </NIcon>
             </span>
-            <span class="option-label">{{ option.label }}</span>
+            <EllipsisText class="option-label" :text="option.label" />
             <span class="option-count tnum">{{ option.count }}</span>
           </button>
         </div>

@@ -22,6 +22,7 @@ import {
 
 // md-editor-v3 的样式不在包内自动引入，漏了这一句编辑器就是一堆没样式的标签
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import EllipsisText from '@/components/EllipsisText.vue'
 import {
   createWikiPage,
   deleteWikiPage,
@@ -415,7 +416,7 @@ onMounted(() => {
           <li v-for="hit in hits" :key="`${hit.slug}-${hit.line}`" class="hit">
             <button type="button" class="hit-main" @click="openPage(hit.slug)">
               <span class="hit-title">{{ hit.title }}</span>
-              <span class="hit-snippet">{{ hit.snippet }}</span>
+              <EllipsisText class="hit-snippet" :text="hit.snippet" />
               <span class="hit-line tnum">第 {{ hit.line }} 行</span>
             </button>
           </li>
@@ -448,7 +449,7 @@ onMounted(() => {
 
                 <button type="button" class="node-main" @click="openPage(row.meta.slug)">
                   <FileText :size="13" class="node-icon" aria-hidden="true" />
-                  <span class="node-title">{{ row.meta.title }}</span>
+                  <EllipsisText class="node-title" :text="row.meta.title" />
                 </button>
 
                 <span v-if="row.meta.tags.length" class="node-tags">

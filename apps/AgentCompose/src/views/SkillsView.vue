@@ -21,6 +21,7 @@ import SkillDuplicateModal from '@/components/SkillDuplicateModal.vue'
 import SkillRepoModal from '@/components/SkillRepoModal.vue'
 import FilterMenu, { type FilterGroup, type FilterOption } from '@/components/FilterMenu.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
+import EllipsisText from '@/components/EllipsisText.vue'
 import { formatDateTime } from '@/utils/datetime'
 
 /**
@@ -493,7 +494,7 @@ const onDuplicated = (info: SkillInfo) => {
             </span>
             <span class="cell-text">
               <span class="cell-title">{{ skill.name }}</span>
-              <span class="cell-desc">{{ skill.description }}</span>
+              <EllipsisText class="cell-desc" :text="skill.description" />
             </span>
           </div>
 

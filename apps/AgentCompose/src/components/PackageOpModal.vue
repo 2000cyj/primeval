@@ -9,6 +9,7 @@ import {
   type PackageOp,
   type PackagePlan,
 } from '@/api/agents'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 包操作确认弹窗（安装 / 升级 / 卸载）。
@@ -171,7 +172,7 @@ const confirm = () => {
           </li>
         </ul>
         <div class="upgrade-will">将执行：</div>
-        <code class="upgrade-command">{{ plan.commandLine }}</code>
+        <EllipsisText class="upgrade-command" :text="plan.commandLine" />
       </div>
     </template>
 

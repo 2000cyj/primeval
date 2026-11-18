@@ -238,7 +238,7 @@ const save = (): void => {
                 >
                   <ChevronRight />
                 </NIcon>
-                <span class="group-name">{{ group.server.name }}</span>
+                <EllipsisText class="group-name" :text="group.server.name" />
               </button>
             </div>
             <div class="group-meta">
@@ -255,9 +255,9 @@ const save = (): void => {
                 :checked="isToolSelected(group.server.id, tool.name)"
                 @update:checked="(checked: boolean) => setTool(group.server.id, tool.name, checked)"
               >
-                <span class="tool-name">{{ tool.name }}</span>
+                <EllipsisText class="tool-name" :text="tool.name" />
               </NCheckbox>
-              <span class="tool-desc">{{ tool.description ?? '无描述' }}</span>
+              <EllipsisText class="tool-desc" :text="tool.description ?? '无描述'" />
               <code class="tool-exposed mono">
                 {{ exposedToolName(group.server.id, tool.name) }}
               </code>

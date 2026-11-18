@@ -5,6 +5,7 @@ import { Check, Search, Server, X } from 'lucide-vue-next'
 import { listServers } from '@/api/mcp'
 import { mcpServerRef } from '@/data/agentRefs'
 import type { McpServerDef } from '@remote/agent-compose-mcp/types'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 新建智能体时的 MCP server 选择弹窗。
@@ -141,7 +142,7 @@ watch(
               {{ server.name }}
               <span class="mcp-transport">{{ server.transport }}</span>
             </span>
-            <span class="mcp-desc">{{ describe(server) }}</span>
+            <EllipsisText class="mcp-desc" :text="describe(server)" />
           </span>
           <span class="mcp-check" :class="{ on: isSelected(server.id) }">
             <Check v-if="isSelected(server.id)" :size="13" />

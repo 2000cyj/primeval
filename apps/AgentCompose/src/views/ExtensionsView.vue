@@ -25,6 +25,7 @@ import {
 } from 'lucide-vue-next'
 import PiGlyph from '@/components/PiGlyph.vue'
 import HoverSearch from '@/components/HoverSearch.vue'
+import EllipsisText from '@/components/EllipsisText.vue'
 import {
   extensionTemplate,
   listExtensions,
@@ -212,6 +213,14 @@ const installedNames = computed(() => {
 
 const isInstalled = (name: string): boolean => installedNames.value.has(name)
 
+/** 市场卡片底部的说明文字。 */
+const pkgMetaText = (item: MarketplacePackage): string => {
+  const parts: string[] = []
+  if (item.weeklyDownloads) parts.push(`${item.weeklyDownloads} 次/周`)
+  if (item.author) parts.push(item.author)
+  return parts.join(' · ')
+}
+
 /**
  * 打开包的仓库页。
  *
@@ -359,7 +368,7 @@ onUnmounted(() => {
                       {{ item.name }}
                       <NTag v-if="isBuiltin(item)" size="small" :bordered="false"> Pi 自带 </NTag>
                     </span>
-                    <code class="ext-path mono">{{ item.path }}</code>
+                    <EllipsisText class="ext-path mono" :text="item.path" />
                   </div>
                   <NButton v-if="!isBuiltin(item)" size="tiny" quaternary @click="openEditor(item)">
                     <template #icon>
@@ -429,15 +438,12 @@ onUnmounted(() => {
             <div v-if="packages.length" class="pkg-grid">
               <article v-for="item in packages" :key="item.name" class="card pkg">
                 <header class="pkg-head">
-                  <span class="pkg-name">{{ item.name }}</span>
+                  <EllipsisText class="pkg-name" :text="item.name" />
                   <span class="pkg-version tnum">v{{ item.version }}</span>
                 </header>
                 <p class="pkg-desc">{{ item.description || '（没有描述）' }}</p>
                 <footer class="pkg-foot">
-                  <span class="pkg-meta tnum">
-                    {{ item.weeklyDownloads ? `${item.weeklyDownloads} 次/周` : '' }}
-                    <template v-if="item.author"> · {{ item.author }}</template>
-                  </span>
+                  <EllipsisText class="pkg-meta tnum" :text="pkgMetaText(item)" />
                   <span class="pkg-actions">
                     <button
                       v-if="item.repository"

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, useMessage } from 'naive-ui'
 import { Blocks, Check, Search, X } from 'lucide-vue-next'
 import { listSkills, type SkillInfo } from '@/api/skills'
+import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
  * 新建智能体时的 skill 选择弹窗。
@@ -140,8 +141,11 @@ watch(
             <Blocks :size="17" />
           </span>
           <span class="skill-text">
-            <span class="skill-name">{{ skill.name }}</span>
-            <span class="skill-desc">{{ skill.description || SOURCE_LABEL[skill.source] }}</span>
+            <EllipsisText class="skill-name" :text="skill.name" />
+            <EllipsisText
+              class="skill-desc"
+              :text="skill.description || SOURCE_LABEL[skill.source]"
+            />
           </span>
           <span class="skill-check" :class="{ on: isSelected(skill.relativePath) }">
             <Check v-if="isSelected(skill.relativePath)" :size="13" />
