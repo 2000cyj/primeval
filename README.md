@@ -6,7 +6,7 @@
 [![pnpm](https://img.shields.io/badge/pnpm-10.18.1-F69220?logo=pnpm&logoColor=white)](https://pnpm.io)
 [![Platform](https://img.shields.io/badge/平台-Windows-0078D4?logo=windows&logoColor=white)](https://learn.microsoft.com/windows/)
 
-**AgentSpace 是一个 AI 工具箱** —— 把智能体、Skills、MCP server、Pi 扩展收在一处管，
+**AgentSpace 是一个 AI 工具箱** —— 把智能体、Skills、MCP server、Pi 扩展和知识库收在一处管，
 再用 `agentspace` 命令行把它们铺到任意项目里跑起来。
 
 ```bash
@@ -16,16 +16,21 @@ agentspace run my-agent     # Skills / 指令 / MCP 铺到当前目录，拉起 
 
 ## 功能
 
-| 能力         | 做什么                                                                          |
-| ------------ | ------------------------------------------------------------------------------- |
-| **Skills**   | 统一看本机 Skill 仓库：来源、谁在用、更新时间、启停开关                         |
-| **MCP 管理** | 一个代理地址（`http://127.0.0.1:7801/mcp`）对上所有 agent，上游 server 集中管理 |
-| **工具箱**   | 本机装没装 Claude Code / Codex / Gemini CLI 这些工具，能装、能升级、能看版本    |
-| **Pi 扩展**  | Pi 自带 / npm / 自定义三类扩展，勾选即用                                        |
-| **智能体**   | 把 Skills / MCP / 指令 / Pi 扩展打包成一份配置，`agentspace run` 铺进项目里跑   |
+| 能力         | 做什么                                                                                |
+| ------------ | ------------------------------------------------------------------------------------- |
+| **Skills**   | 统一看本机 Skill 仓库：来源、谁在用、更新时间、启停开关                               |
+| **MCP 管理** | 一个代理地址（`http://127.0.0.1:7801/mcp`）对上所有 agent，上游 server 集中管理       |
+| **Wiki**     | 内部知识库：Markdown 页面之间能互相引用，智能体绑个入口页就能当知识库用               |
+| **工具箱**   | 本机装没装 Claude Code / Codex / Gemini CLI 这些工具，能装、能升级、能看版本          |
+| **Pi 扩展**  | Pi 自带 / npm / 自定义三类扩展，勾选即用                                              |
+| **智能体**   | 把 Skills / MCP / 指令 / Pi 扩展 / Wiki 打包成一份配置，`agentspace run` 铺进项目里跑 |
+| **数据管理** | 把上面这些打包导出，或者从别的机器导进来                                              |
 
 工具箱管的是本机那些 AI 命令行工具本身；智能体管的是一份打包好的配置。
 `agentspace run` 拿这份配置在当前目录铺开，拉起 Pi 就能用。
+
+这些操作 `agentspace` 命令行里都有一份 —— 桌面端和命令行操作的是同一份数据
+（`~/.agent-compose/`）。
 
 ![界面](apps/AgentCompose/docs/images/skills.png)
 
@@ -33,22 +38,22 @@ agentspace run my-agent     # Skills / 指令 / MCP 铺到当前目录，拉起 
 
 ## 技术
 
-| 层         | 选型                                                                       |
-| ---------- | -------------------------------------------------------------------------- |
-| 桌面端     | Tauri 2 + Vue 3 + TypeScript + Naive UI                                    |
-| 桌面端后端 | Rust（skills / agents / extensions / mcp / proxy / history / github 模块） |
-| 命令行     | Rust + clap（`agentspace`）                                                |
-| MCP 代理   | TypeScript sidecar（对上游是 client，对 agent 是 server）                  |
-| 工程化     | pnpm workspace + catalog、turbo、Vitest、ESLint、Prettier、changesets      |
+| 层         | 选型                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| 桌面端     | Tauri 2 + Vue 3 + TypeScript + Naive UI                                                    |
+| 桌面端后端 | Rust（skills / agents / extensions / mcp / wiki / backup / proxy / history / github 模块） |
+| 命令行     | Rust + clap（`agentspace`）                                                                |
+| MCP 代理   | TypeScript sidecar（对上游是 client，对 agent 是 server）                                  |
+| 工程化     | pnpm workspace + catalog、turbo、Vitest、ESLint、Prettier、changesets                      |
 
 ## 仓库结构
 
-| 部件        | 位置                         | 作用                                                     |
-| ----------- | ---------------------------- | -------------------------------------------------------- |
-| 桌面端      | `apps/AgentCompose`          | Tauri + Vue 3，管理智能体 / Skills / MCP / Pi 扩展       |
-| 共享 crate  | `apps/agentspace-core`       | 智能体、Skill、工具箱、代理的落盘逻辑，桌面端与 CLI 共用 |
-| 命令行      | `apps/agentspace-cli`        | `agentspace` —— 按智能体定义准备目录并拉起 Pi            |
-| MCP sidecar | `packages/agent-compose-mcp` | MCP 代理：对上游是 client，对 agent 是 server            |
+| 部件        | 位置                         | 作用                                                                 |
+| ----------- | ---------------------------- | -------------------------------------------------------------------- |
+| 桌面端      | `apps/AgentCompose`          | Tauri + Vue 3，管理智能体 / Skills / MCP / Wiki / Pi 扩展            |
+| 共享 crate  | `apps/agentspace-core`       | 智能体、Skill、工具箱、知识库、数据管理的落盘逻辑，桌面端与 CLI 共用 |
+| 命令行      | `apps/agentspace-cli`        | `agentspace` —— 按智能体定义准备目录并拉起 Pi                        |
+| MCP sidecar | `packages/agent-compose-mcp` | MCP 代理：对上游是 client，对 agent 是 server                        |
 
 ## 快速开始
 
