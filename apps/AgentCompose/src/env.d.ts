@@ -1,11 +1,10 @@
 /**
- * 全局的编译期常量。
+ * 虚拟模块 `virtual:app-version` 的类型声明。
  *
- * `__APP_VERSION__` 由 `vite.config.ts` 从 `src-tauri/tauri.conf.json` 读出来
- * 注入 —— 编译期就定死，前端拿到的永远是真版本。
- *
- * 为什么不用「运行时问后端」：那种做法在拿不到时会退化成写死的兜底值，
- * 结果是界面上显示一个跟实际不符的版本号（曾经显示成 1.0.0，实际是 1.0.4）。
- * 兜底值一旦写死就会过期 —— 这里干脆没有兜底。
+ * 模块内容由构建脚本生成（见 `build/appVersionPlugin.ts`）——
+ * 导出当前应用版本号，值来自 `src-tauri/tauri.conf.json`。
  */
-declare const __APP_VERSION__: string
+declare module 'virtual:app-version' {
+  /** 当前应用版本号。 */
+  export const APP_VERSION: string
+}
