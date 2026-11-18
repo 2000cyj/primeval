@@ -11,6 +11,7 @@
 import { computed } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { openExternal } from '@/api/extensions'
 
 const props = withDefaults(
   defineProps<{
@@ -30,11 +31,36 @@ const html = computed(() => {
     ADD_ATTR: ['target'],
   })
 })
+
+/**
+ * 点链接 —— 交给系统浏览器打开。
+ *
+ * 桌面端的 webview 不是浏览器，链接有两条路：
+ * - 普通链接 → 导航守卫接管（应用不会被带走，链接交给系统浏览器）
+ * - `target="_blank"` 的链接 → 走「新窗口请求」，webview 会静默拒绝，
+ *   点了什么反应都没有
+ *
+ * 所以这里自己拦一层，统一交给系统浏览器处理。
+ *
+ * 只拦 http/https —— 相对链接（应用内部）不管，让它正常走。
+ */
+const onLinkClick = async (event: MouseEvent): Promise<void> => {
+  const anchor = (event.target as HTMLElement | null)?.closest('a')
+  if (!anchor) return
+  const href = anchor.getAttribute('href')
+  if (!href || !/^https?:\/\//i.test(href)) return
+  event.preventDefault()
+  try {
+    await openExternal(href)
+  } catch {
+    // 打不开就算了 —— 总比留一个点了没反应的链接强
+  }
+}
 </script>
 
 <template>
   <!-- eslint-disable vue/no-v-html -- 已经过 DOMPurify 清洗 -->
-  <div class="markdown" v-html="html" />
+  <div class="markdown" @click="onLinkClick" v-html="html" />
 </template>
 
 <style scoped>

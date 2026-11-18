@@ -10,6 +10,7 @@ mod agent_store;
 mod extensions;
 mod github;
 mod history;
+mod navigation_guard;
 mod paths;
 mod backup;
 mod proxy;
@@ -1164,6 +1165,9 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        // 导航守卫：不许 webview 像浏览器一样跑。
+        // 外部链接交给系统浏览器，应用自己不会被导航走。
+        .plugin(navigation_guard::plugin())
         // 应用内更新：官方 updater 插件。下载、验签、安装都在应用内完成，
         // 不再把用户丢到浏览器去自己点链接下载。
         .plugin(tauri_plugin_updater::Builder::new().build())

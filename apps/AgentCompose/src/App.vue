@@ -24,6 +24,7 @@ import { useExtensionOps } from '@/composables/useExtensionOps'
 import { useCreatedAgents } from '@/data/createdAgents'
 import { useWindowChrome } from '@/composables/useWindowChrome'
 import { useSidebar } from '@/composables/useSidebar'
+import { disableBrowserFeatures } from '@/composables/useBrowserFeatures'
 
 const { init: initNotifications } = useNotifications()
 const { bindRetryActions } = useCliOps()
@@ -174,6 +175,9 @@ onMounted(async () => {
   initSidebar()
   // Ctrl+B：收起 / 展开侧边栏
   window.addEventListener('keydown', onKeydown)
+  // 关掉 webview 的浏览器特性：右键菜单、Ctrl+P / Ctrl+F / F12 等快捷键。
+  // 桌面端不该像个浏览器。
+  disableBrowserFeatures()
   // Windows 上关掉系统标题栏，改用应用内标题栏 —— 先问后端要不要画窗口按钮
   void initWindowChrome()
   // 升级历史从磁盘读回来（重启后还在），再给失败的那些绑上「重试」。
