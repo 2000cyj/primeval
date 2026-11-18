@@ -16,8 +16,8 @@
         "title": "AgentSpace",
         "width": 1200,
         "height": 700,
-        "minWidth": 720,
-        "minHeight": 480,
+        "minWidth": 1200,
+        "minHeight": 700,
         "backgroundColor": "#F7F7F5"
       }
     ],
