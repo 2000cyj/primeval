@@ -1,6 +1,6 @@
 [package]
 name = "agentspace-cli"
-version = "1.0.6"
+version = "1.0.7"
 description = "agentspace —— 按智能体定义准备目录并拉起对应的 agent"
 edition = "2021"
 
