@@ -128,6 +128,15 @@ pub struct ManifestSkill {
     /// 远程来源的 ref。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_ref: Option<String>,
+    /// 远程 skill 在**仓库里的相对路径**（如 `skills/engineering/tdd/SKILL.md`）。
+    ///
+    /// 同一个仓库里 skill 放哪儿不统一 —— 有 `skills/<名>/`，
+    /// 有 `skills/<组>/<名>/`，还有的就在仓库根。记下真实路径，
+    /// 导入时照着找，不用猜。
+    ///
+    /// 老包里没这个字段 —— 导入时会退回「按名字在仓库里找」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_path: Option<String>,
     /// 本地来源：包里的文件。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
@@ -563,12 +572,21 @@ pub fn export(
                 .and_then(|o| o.get("source_ref"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            // 记下它在仓库里的真实路径 —— 导入时照着找，不用猜。
+            //
+            // 不记的话，导入端只能猜 `skills/<名>/SKILL.md` 和 `<名>/SKILL.md`，
+            // 分组布局（`skills/engineering/<名>/`）和根目录布局的仓库
+            // 一个都导不回来。
+            let repo_path = source_url.as_deref().and_then(|url| {
+                find_repo_skill_path(paths, url, source_ref.as_deref(), &dir_name)
+            });
             manifest.skills.push(ManifestSkill {
                 name: dir_name.clone(),
                 description: read_skill_description(&dir),
                 kind: SourceKind::Remote,
                 source_url,
                 source_ref,
+                repo_path,
                 files: Vec::new(),
             });
             continue;
@@ -595,6 +613,7 @@ pub fn export(
             kind: SourceKind::Local,
             source_url: None,
             source_ref: None,
+            repo_path: None,
             files: packed,
         });
     }
@@ -728,7 +747,11 @@ pub fn export(
     //
     // Wiki 的正文就是 Markdown 文件 —— 跟 skill 一样原样打包，
     // 不做「远程只记链接」的区分：wiki 是人写的本地内容，没有上游。
-    for slug in &selection.wiki_slugs {
+    //
+    // **连子树一起带** —— 智能体绑的是入口页面，它的子树自动跟着可见。
+    // 只带走入口页的话，子页面就丢了 —— 智能体的知识树少了一半。
+    let wiki_slugs = expand_wiki_subtree(paths, &selection.wiki_slugs);
+    for slug in &wiki_slugs {
         let Ok(page) = crate::wiki::read_page(paths, slug) else {
             continue;
         };
@@ -778,6 +801,63 @@ pub fn export(
             wiki: manifest.wiki.len(),
         },
     })
+}
+
+/// 把选中的 wiki 页面连同它的子树展开。
+///
+/// 智能体绑的是**入口页面**，它的整棵子树自动跟着可见 ——
+/// 所以导出时也得把子树带上，否则子页面就丢了。
+fn expand_wiki_subtree(paths: &Paths, slugs: &[String]) -> Vec<String> {
+    if slugs.is_empty() {
+        return Vec::new();
+    }
+    let expanded = crate::wiki::expand_scope(paths, slugs);
+    if expanded.is_empty() {
+        // 展开失败（页面不存在）—— 退回原来选的，导入端会报「没有它的正文」
+        return slugs.to_vec();
+    }
+    expanded
+}
+
+/// 在本机缓存的仓库里找某个 skill 的相对路径。
+///
+/// 返回形如 `skills/engineering/tdd/SKILL.md` 或 `SKILL.md`。
+///
+/// 仓库没缓存着、或者找不到 —— 返回 `None`（导入端会自己按名字找）。
+fn find_repo_skill_path(
+    paths: &Paths,
+    source_url: &str,
+    source_ref: Option<&str>,
+    skill_name: &str,
+) -> Option<String> {
+    // 只处理 git 源 —— url 源没有「仓库里的路径」这回事
+    let mut source = format!("git:{source_url}");
+    if let Some(reference) = source_ref.filter(|r| !r.is_empty()) {
+        source.push('@');
+        source.push_str(reference);
+    }
+    let parsed = crate::git_source::parse_git_source(&source)?;
+    // 只看本地缓存 —— 导出不该为了找个路径去联网
+    let repo_dir = crate::git_source::git_cache_dir(paths, &parsed);
+    if !repo_dir.is_dir() {
+        return None;
+    }
+    // 候选顺序跟导入端一致 —— 先试常见布局，不中才按名字找。
+    // 顺序反了会挑错文件：有些仓库里同一个 skill 有多份副本
+    // （ponytail 的 `.openclaw/skills/ponytail` 和 `skills/ponytail`）。
+    let preferred = vec![
+        format!("skills/{skill_name}/SKILL.md"),
+        format!("{skill_name}/SKILL.md"),
+    ];
+    let dir = crate::github::find_skill_dir_in_repo(&repo_dir, skill_name, &preferred)?;
+    let rel = dir.strip_prefix(&repo_dir).ok()?;
+    let path = rel.join("SKILL.md").to_string_lossy().replace('\\', "/");
+    let path = path.trim_start_matches('/').to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 /// 读 skill 的描述（从 SKILL.md 的 frontmatter）。
@@ -1422,12 +1502,20 @@ fn import_skill(
                 _ => format!("git:{url}"),
             };
             // 远程 skill 在仓库里的相对路径不知道 —— 只能按名字找。
-            // git 源的仓库布局不统一（有的是 skills/xxx，有的是 xxx）。
-            let candidates = vec![
-                format!("skills/{}/SKILL.md", item.name),
-                format!("{}/SKILL.md", item.name),
-            ];
-            crate::github::skills_import_git(paths, &source, &candidates)
+            // git 源的仓库布局不统一（有的是 skills/xxx，有的是 xxx，
+            // 有的是 skills/engineering/xxx，还有在仓库根）。
+            //
+            // 候选顺序：
+            // 1. 清单里记的 `repoPath` —— 导出时量出来的，最准
+            // 2. 两个常见布局 —— 老包没 repoPath 时用
+            // 3. 按名字在仓库里找 —— 前两条都不中时的兜底
+            let mut candidates: Vec<String> = Vec::new();
+            if let Some(repo_path) = item.repo_path.as_ref().filter(|p| !p.is_empty()) {
+                candidates.push(repo_path.clone());
+            }
+            candidates.push(format!("skills/{}/SKILL.md", item.name));
+            candidates.push(format!("{}/SKILL.md", item.name));
+            crate::github::skills_import_git_by_name(paths, &source, &item.name, &candidates)
                 .map(|items| !items.is_empty())
                 .map_err(|e| e)
         }

@@ -385,8 +385,14 @@ pub fn skills_import_git(
 }
 
 /// 找一个目录下所有带 SKILL.md 的 skill 目录（含下一层）。
+///
+/// **根目录自己也算** —— 有些仓库的 skill 就在根上（`SKILL.md`）。
 fn find_all_skill_dirs(root: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
+    // 根目录自己就是一个 skill（路由型的 skill 常见这种布局）
+    if root.join("SKILL.md").is_file() {
+        out.push(root.to_path_buf());
+    }
     let Ok(entries) = std::fs::read_dir(root) else {
         return out;
     };
@@ -403,6 +409,167 @@ fn find_all_skill_dirs(root: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+/// 在仓库里按**名字**找一个 skill 目录。
+///
+/// # 为什么要按名字找
+///
+/// 同一个仓库里 skill 放哪儿不统一：
+///
+/// - `skills/<名>/SKILL.md` —— 最常见
+/// - `skills/<组>/<名>/SKILL.md` —— 按领域分组的仓库
+/// - `SKILL.md`（就在仓库根）—— 路由型的 skill
+///
+/// 靠猜路径只能覆盖第一种。所以候选路径都对不上时，
+/// 按名字在仓库里找一遍 —— 目录名或 frontmatter 里的 `name` 对上就算。
+pub fn find_skill_dir_by_name(repo_dir: &Path, skill_name: &str) -> Option<PathBuf> {
+    for dir in find_all_skill_dirs(repo_dir) {
+        // 目录名对上 —— 根目录的 SKILL.md 靠这条（父目录就是仓库名）
+        if dir.file_name().map(|n| n == skill_name).unwrap_or(false) {
+            return Some(dir);
+        }
+        // frontmatter 里的 name 对上
+        let Ok(files) = skills::collect_skill_files_public(&dir) else {
+            continue;
+        };
+        let raw = files
+            .iter()
+            .find(|file| file.rel.eq_ignore_ascii_case("SKILL.md"))
+            .map(|file| String::from_utf8_lossy(&file.data).to_string())
+            .unwrap_or_default();
+        let (frontmatter, _) = skills::parse_frontmatter_public(&raw);
+        if skills::fm_get_public(&frontmatter, "name") == skill_name {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+/// 在仓库里找 skill 的目录 —— 先试候选路径，再按名字找。
+///
+/// `preferred` 是猜测的路径（相对仓库根，如 `skills/engineering/tdd/SKILL.md`）。
+///
+/// # 顺序为什么这么排
+///
+/// 仓库里常有**同一个 skill 的多份副本** —— 比如 ponytail 仓库里既有
+/// `skills/ponytail/SKILL.md`，也有 `.openclaw/skills/ponytail/SKILL.md`
+/// （给别的工具链准备的适配版）。两份内容可能不一样。
+///
+/// 所以：**先试明确的候选路径**，命中就用；全都不中才按名字找 ——
+/// 那是没办法的办法，不保证找到的是「正本」。
+pub fn find_skill_dir_in_repo(
+    repo_dir: &Path,
+    skill_name: &str,
+    preferred: &[String],
+) -> Option<PathBuf> {
+    // 1. 明确的候选路径
+    for rel in preferred {
+        let cleaned = rel.trim_start_matches('+');
+        let cleaned = cleaned.strip_prefix("./").unwrap_or(cleaned);
+        let path = repo_dir.join(cleaned);
+        let dir = if path.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
+            match path.parent() {
+                Some(parent) => parent.to_path_buf(),
+                None => continue,
+            }
+        } else {
+            path
+        };
+        if dir.join("SKILL.md").is_file() {
+            return Some(dir);
+        }
+    }
+    // 2. 两个最常见的布局
+    for rel in [
+        format!("skills/{skill_name}/SKILL.md"),
+        format!("{skill_name}/SKILL.md"),
+    ] {
+        let path = repo_dir.join(&rel);
+        if path.is_file() {
+            return path.parent().map(|p| p.to_path_buf());
+        }
+    }
+    // 3. 按名字找（兜底）
+    find_skill_dir_by_name(repo_dir, skill_name)
+}
+
+/// 导入一个 skill —— 路径不确定时按名字找。
+///
+/// `preferred` 是猜测的候选路径（相对仓库根）。有命中的就用命中的；
+/// 全都没命中，就按名字在仓库里找一遍。
+///
+/// # 为什么需要这个
+///
+/// 导出包里的远程 skill 只记了「来自哪个仓库」—— 没记它在仓库里的路径。
+/// 仓库布局不统一，光靠猜（`skills/<名>/SKILL.md`）会漏掉一大半：
+/// 分组布局的仓库（`skills/engineering/<名>/`）和根目录布局的仓库
+/// 全都导不回来。
+pub fn skills_import_git_by_name(
+    paths: &Paths,
+    source: &str,
+    skill_name: &str,
+    preferred: &[String],
+) -> Result<Vec<skills::SkillInfo>, String> {
+    let parsed = crate::git_source::parse_git_source(source)
+        .ok_or_else(|| format!("不是 git 源：{source}"))?;
+    let repo_dir = crate::git_source::ensure_cloned(paths, &parsed)?;
+
+    let dir = find_skill_dir_in_repo(&repo_dir, skill_name, preferred).ok_or_else(|| {
+        format!("{} 里没找到 skill「{skill_name}」", parsed.repo)
+    })?;
+    skills_import_git_from_dir(paths, &parsed, &dir)
+}
+
+/// 把仓库里的一个 skill 目录装到本机。
+fn skills_import_git_from_dir(
+    paths: &Paths,
+    parsed: &crate::git_source::GitSource,
+    dir: &Path,
+) -> Result<Vec<skills::SkillInfo>, String> {
+    let files = match skills::collect_skill_files_public(dir) {
+        Ok(files) => files,
+        Err(_) => return Err("一个都没导进来".to_string()),
+    };
+    let raw = files
+        .iter()
+        .find(|file| file.rel.eq_ignore_ascii_case("SKILL.md"))
+        .map(|file| String::from_utf8_lossy(&file.data).to_string())
+        .unwrap_or_default();
+    let (frontmatter, _) = skills::parse_frontmatter_public(&raw);
+    let declared = skills::fm_get_public(&frontmatter, "name");
+    let name = if declared.is_empty() {
+        dir.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "skill".to_string())
+    } else {
+        declared
+    };
+    let description = skills::fm_get_public(&frontmatter, "description");
+    let mut info = match skills::write_skill_public(paths, &name, &description, "git", files) {
+        Ok(info) => info,
+        // 已存在同名 —— 覆盖它（用户明确要从这个源导入）
+        Err(error) if error.contains("已存在同名 skill") => {
+            let target = paths
+                .skills_root()
+                .join(skills::sanitize_skill_name_public(&name));
+            let _ = std::fs::remove_dir_all(&target);
+            let files = skills::collect_skill_files_public(dir)?;
+            skills::write_skill_public(paths, &name, &description, "git", files)?
+        }
+        Err(error) => return Err(error),
+    };
+    // 记 git 源 —— 刷新时按仓库重新拉
+    skills::set_origin_public(
+        paths,
+        &name,
+        Some(skills::origin_git_public(
+            &parsed.repo,
+            parsed.reference.as_deref(),
+        )),
+    );
+    info.refreshable = true;
+    Ok(vec![info])
 }
 
 /// 从仓库里导入选中的 skill。

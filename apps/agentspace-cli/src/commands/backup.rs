@@ -194,6 +194,45 @@ fn inventory(paths: &Paths, args: ListArgs) -> u8 {
     0
 }
 
+/// 把 `--agent` 给的 id / 名字统一解析成 id。
+///
+/// 两种都认：
+/// - 直接是 id → 原样用
+/// - 是名字 → 按名字找（找不到就当 id 用，让导出结果为空而不是报错）
+fn resolve_agent_ids(paths: &Paths, keys: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for key in keys {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // 先当 id 试 —— 在就直接用
+        if agentspace_core::agent::list(paths)
+            .iter()
+            .any(|agent| agent.id == trimmed)
+        {
+            out.push(trimmed.to_string());
+            continue;
+        }
+        // 再按名字找
+        let found = agentspace_core::agent::find_by_name(paths, trimmed);
+        match found.len() {
+            0 => out.push(trimmed.to_string()),
+            1 => out.push(found[0].id.clone()),
+            _ => {
+                eprintln!(
+                    "智能体名「{trimmed}」匹配到多个（{}）—— 请改用 id",
+                    found.len()
+                );
+                for agent in found {
+                    out.push(agent.id.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
 fn export(paths: &Paths, args: ExportArgs) -> u8 {
     let servers = match current_servers(paths) {
         Ok(servers) => servers,
@@ -203,9 +242,15 @@ fn export(paths: &Paths, args: ExportArgs) -> u8 {
         }
     };
 
+    // --agent 给的可能是 id，也可能是名字。
+    //
+    // 两种都认 —— 只认 id 的话，传了名字会**静默地导不出任何智能体**
+    // （导出结果里就是 0 个，用户还以为包是好的）。
+    let agent_ids = resolve_agent_ids(paths, &args.agent);
+
     // 清单为空又没给 --all → 导出空包没意义。
     let selection = backup::ExportSelection {
-        agent_ids: args.agent.clone(),
+        agent_ids,
         skill_names: args.skill.clone(),
         mcp_server_ids: args.mcp.clone(),
         extension_names: args.extension.clone(),
