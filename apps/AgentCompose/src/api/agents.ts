@@ -6,7 +6,7 @@
  * 并区分「未安装」与「已安装·无法运行」。
  */
 import { invoke } from '@tauri-apps/api/core'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 /** 一处安装 */
 export interface AgentInstall {
@@ -192,13 +192,41 @@ export async function uninstallAgent(command: string): Promise<string> {
  */
 export const agentScan = ref<AgentInfo[]>([])
 
-/** 探测本机已安装的 CLI agents */
+/**
+ * 正在扫描。
+ *
+ * 也放模块级 —— 顶栏的刷新按钮和工具箱页面都要转圈。
+ *
+ * 用计数器而不是布尔：可能同时有多个扫描（顶栏刷新的同时页面在加载），
+ * 先结束的那个不该把另一个的转圈关掉。
+ */
+const scanCount = ref(0)
+export const agentScanning = computed(() => scanCount.value > 0)
+
+/** 扫描失败的原因（共享 —— 谁扫的谁显示）。 */
+export const agentScanError = ref('')
+
+/**
+ * 探测本机已安装的 CLI agents。
+ *
+ * 结果、进行中状态、错误原因都放在模块级 ——
+ * 侧边栏的计数、工具箱页面的列表、顶栏的刷新按钮，
+ * 三处看的都是同一份，不会各扫各的。
+ */
 export async function scanAgents(): Promise<AgentInfo[]> {
+  scanCount.value += 1
+  agentScanError.value = ''
   try {
     const agents = await invoke<AgentInfo[]>(AGENT_COMMANDS.scan)
     agentScan.value = agents
     return agents
   } catch (error) {
+    agentScanError.value = error instanceof Error ? error.message : String(error)
+    // 探测失败就把旧结果清掉 ——
+    // 留着上次的结果会让人以为「现在还是这样」，其实是过期的。
+    agentScan.value = []
     throw fail('探测本机 CLI agents', error)
+  } finally {
+    scanCount.value -= 1
   }
 }

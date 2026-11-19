@@ -6,6 +6,9 @@ import {
   checkUpdates,
   listInstallations,
   scanAgents,
+  agentScan,
+  agentScanError,
+  agentScanning,
   type AgentInfo,
   type PackageOp,
   type PackagePlan,
@@ -19,10 +22,17 @@ const message = useMessage()
 
 const { performOp, opOf, isBusy, hasRunningOp, busyLabel, statusText, failureReason } = useCliOps()
 
-/** 探测结果（真实数据，不带 mock 兜底） */
-const agents = ref<AgentInfo[]>([])
-const scanning = ref(false)
-const scanError = ref('')
+/**
+ * 探测结果（真实数据，不带 mock 兜底）。
+ *
+ * **模块级共享** —— 顶栏的刷新按钮刷的就是这份。
+ * 页面只管显示，不自己存一份 —— 否则顶栏刷完了，页面还显示旧的。
+ */
+const agents = computed(() => agentScan.value)
+/** 正在扫描。 */
+const scanning = computed(() => agentScanning.value)
+/** 扫描失败的原因。 */
+const scanError = computed(() => agentScanError.value)
 
 const intervals = [
   { label: '15 秒', value: '15s' },
@@ -118,17 +128,12 @@ const isNewer = (latest: string, current: string): boolean => {
 /** 重新探测本机安装情况 */
 const runScan = async () => {
   if (scanning.value) return
-  scanning.value = true
-  scanError.value = ''
   try {
-    agents.value = await scanAgents()
+    await scanAgents()
     // 版本查询异步跑，不挡这次扫描。
     void loadUpdates()
-  } catch (error) {
-    scanError.value = error instanceof Error ? error.message : String(error)
-    agents.value = []
-  } finally {
-    scanning.value = false
+  } catch {
+    // 失败的原因在共享状态里（`scanError`），界面自己显示
   }
 }
 

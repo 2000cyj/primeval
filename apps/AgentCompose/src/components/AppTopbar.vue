@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NButton, NIcon, NPopover, NTooltip } from 'naive-ui'
-import { Bell, CircleAlert, CircleCheck, CircleHelp, Loader2, X } from 'lucide-vue-next'
+import { NButton, NIcon, NPopover, NTooltip, useMessage } from 'naive-ui'
+import { Bell, CircleAlert, CircleCheck, CircleHelp, Loader2, RefreshCw, X } from 'lucide-vue-next'
 import { useNotifications } from '@/composables/useNotifications'
 import { useWindowChrome } from '@/composables/useWindowChrome'
 import { useHelpCenter } from '@/composables/useHelpCenter'
+import { scanAgents, agentScanning } from '@/api/agents'
 import HelpModal from '@/components/HelpModal.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import { formatDateTime } from '@/utils/datetime'
@@ -20,6 +21,28 @@ const { enabled: customChrome } = useWindowChrome()
  * 共享状态 —— 右下角更新提醒点开的时候也是开这个（见 `@/composables/useHelpCenter`）。
  */
 const { helpOpen, openHelp } = useHelpCenter()
+
+/** 消息提示 */
+const message = useMessage()
+
+/** 正在刷新工具箱 */
+const refreshing = computed(() => agentScanning.value)
+
+/**
+ * 刷新工具箱 —— 重新探测本机装了哪些 CLI。
+ *
+ * 扫描结果放在模块级（`@/api/agents`）—— 侧边栏的计数、工具箱页面的
+ * 列表、这里刷的，是同一份。所以在这儿刷完，切到工具箱页面看到的就是新的。
+ */
+const refreshToolbox = async (): Promise<void> => {
+  if (refreshing.value) return
+  try {
+    await scanAgents()
+    message.success('工具箱已刷新')
+  } catch (error) {
+    message.error(`刷新失败：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
 
 /** 角标上的数字：没有就不显示 */
 const badge = computed(() => (notices.value.length > 99 ? '99+' : String(notices.value.length)))
@@ -44,6 +67,28 @@ const timeText = (timestamp: number): string => formatDateTime(timestamp)
         </NButton>
       </template>
       帮助中心
+    </NTooltip>
+
+    <!--
+      刷新工具箱 —— 重新探测本机装了哪些 CLI。
+      放在帮助按钮旁边：两者都是「全局的、不属于当前页面」的操作。
+    -->
+    <NTooltip trigger="hover">
+      <template #trigger>
+        <NButton
+          quaternary
+          circle
+          size="small"
+          aria-label="刷新工具箱"
+          :disabled="refreshing"
+          @click="refreshToolbox"
+        >
+          <NIcon :size="16" :class="{ spin: refreshing }">
+            <RefreshCw />
+          </NIcon>
+        </NButton>
+      </template>
+      刷新工具箱
     </NTooltip>
 
     <!-- 铃铛：悬停给个「通知」提示，点击展开通知面板 -->
