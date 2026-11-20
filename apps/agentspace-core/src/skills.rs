@@ -1347,6 +1347,7 @@ pub fn skills_remove(paths: &Paths, name: String) -> Result<(), String> {
 
 /// 从来源更新一个 skill：重新拉取来源内容并覆盖本地副本。
 ///
+/// - git 来源：拉取指定 ref，按仓库路径或名字定位
 /// - url 来源：重新抓一次
 /// - local / runtime 来源：重新读一遍源目录
 /// - 手动创建 / 副本：没有上游，报错
@@ -1362,6 +1363,24 @@ pub async fn skills_refresh(paths: &Paths, name: String) -> Result<SkillInfo, St
     let kind = origin.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     match kind {
+        "git" => {
+            let repo = origin.get("source_url").and_then(|v| v.as_str()).unwrap_or("");
+            if repo.trim().is_empty() {
+                return Err("来源地址为空，无法更新".to_string());
+            }
+            let source = crate::git_source::GitSource {
+                repo: repo.to_string(),
+                reference: origin.get("source_ref").and_then(|v| v.as_str()).map(str::to_string),
+            };
+            let repo_dir = crate::git_source::ensure_cloned(paths, &source)?;
+            let preferred: Vec<String> = origin.get("repo_path")
+                .and_then(|v| v.as_str()).map(str::to_string).into_iter().collect();
+            let root = crate::github::find_skill_dir_in_repo(&repo_dir, &name, &preferred)
+                .ok_or_else(|| format!("{repo} 里没找到 skill「{name}」"))?;
+            // 先收集完整文件，再覆盖；沿用本地名字、启用状态和来源元信息。
+            let files = collect_dir_files(&root)?;
+            overwrite_skill_files(&dir, &name, "", files)?;
+        }
         "url" => {
             let url = origin
                 .get("source_url")

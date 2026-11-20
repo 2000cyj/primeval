@@ -85,19 +85,17 @@ pub fn ensure_cloned(paths: &Paths, source: &GitSource) -> Result<PathBuf, Strin
     if target.join(".git").is_dir() {
         // 已经在本地了 —— 更新到指定 ref
         if let Some(reference) = &source.reference {
-            // tag 不在浅克隆里 —— 先把 ref 拉下来
-            let _ = run_git(&target, &["fetch", "--depth", "1", "origin", reference]);
-            let _ = run_git(&target, &["fetch", "--tags", "--force"]);
-            // `0.6.13` 这种 tag 名有时是 `v0.6.13` —— 两个都试
-            if !checkout(&target, reference) {
+            // checkout 本地分支不会前进到刚 fetch 的提交，必须使用 FETCH_HEAD。
+            if let Err(error) = run_git(&target, &["fetch", "--depth", "1", "origin", reference]) {
                 let alt = format!("v{reference}");
-                if !checkout(&target, &alt) {
-                    return Err(format!(
-                        "仓库里没有 ref「{reference}」（试过 {reference} 和 {alt}）"
-                    ));
-                }
+                run_git(&target, &["fetch", "--depth", "1", "origin", &alt])
+                    .map_err(|alt_error| format!("{error}\n{alt_error}"))?;
             }
+        } else {
+            // 未指定 ref 时也要更新，而不是直接返回旧缓存。
+            run_git(&target, &["fetch", "--depth", "1", "origin", "HEAD"])?;
         }
+        run_git(&target, &["checkout", "--force", "--detach", "FETCH_HEAD"])?;
         return Ok(target);
     }
     if let Some(parent) = target.parent() {

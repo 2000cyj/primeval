@@ -21,6 +21,8 @@ pub mod bridge;
 pub mod extensions;
 /// git 源的解析与克隆 —— 只在 crate 内用（github.rs 调它）。
 pub(crate) mod git_source;
+#[cfg(test)]
+mod git_refresh_tests;
 pub mod github;
 pub mod marketplace;
 pub mod paths;
