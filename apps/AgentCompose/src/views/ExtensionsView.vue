@@ -28,6 +28,8 @@ import HoverSearch from '@/components/HoverSearch.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
 import {
   extensionTemplate,
+  isAutoDiscoveredSource,
+  isToolboxSource,
   listExtensions,
   openExternal,
   readExtension,
@@ -90,40 +92,81 @@ const loadInstalled = async (): Promise<void> => {
   }
 }
 
-/** 按来源分组（Pi 自带 / npm / 自定义） */
-const grouped = computed(() => {
-  const order = ['builtin', 'npm', 'custom']
-  const groups = new Map<string, ExtensionInfo[]>()
-  for (const item of installed.value) {
-    const key = item.source
-    const list = groups.get(key)
-    if (list) list.push(item)
-    else groups.set(key, [item])
-  }
-  return order
-    .filter((key) => groups.has(key))
-    .map((key) => ({
-      key,
-      label: sourceLabel(key as ExtensionInfo['source']),
-      items: groups.get(key)!,
-    }))
-})
-
-const sourceLabel = (source: ExtensionInfo['source']): string => {
-  switch (source) {
-    case 'builtin':
-      return 'Pi 自带'
-    case 'npm':
-      return 'npm'
-    case 'custom':
-      return '自定义'
-    default:
-      return source
-  }
+/**
+ * 一个分组。
+ *
+ * 分两层：**用户级 / 项目级** 各自一组（pi 自动发现的），
+ * **工具箱** 一组（里面再分 npm 和自定义）。
+ */
+interface ExtensionGroup {
+  /** 分组标识 */
+  key: string
+  /** 分组标题 */
+  label: string
+  /** 分组说明 */
+  hint: string
+  /** 组里的扩展 */
+  items: ExtensionInfo[]
 }
 
-/** pi 自带的扩展运行时自己会加载 —— 不能绑也不能删 */
-const isBuiltin = (item: ExtensionInfo): boolean => item.source === 'builtin'
+/**
+ * 按来源分组。
+ *
+ * 三组：用户级 / 项目级 / 工具箱。
+ *
+ * 前两组是 **pi 自动发现** 的 —— 运行时自己会加载，不用绑也不能删。
+ * 工具箱那组是我们自己管的 —— 要绑给智能体才生效。
+ */
+const grouped = computed<ExtensionGroup[]>(() => {
+  const groups: ExtensionGroup[] = [
+    {
+      key: 'user',
+      label: '用户级',
+      hint: 'Pi 自动发现，对所有项目生效',
+      items: [],
+    },
+    {
+      key: 'project',
+      label: '项目级',
+      hint: 'Pi 自动发现，只对本项目生效',
+      items: [],
+    },
+    {
+      key: 'toolbox',
+      label: '工具箱',
+      hint: 'AgentSpace 管理的，绑给智能体后生效',
+      items: [],
+    },
+  ]
+  const byKey = new Map(groups.map((group) => [group.key, group]))
+  for (const item of installed.value) {
+    const key = item.source === 'user' ? 'user' : item.source === 'project' ? 'project' : 'toolbox'
+    byKey.get(key)?.items.push(item)
+  }
+  // 空组不显示
+  return groups.filter((group) => group.items.length > 0)
+})
+
+/**
+ * 组内再按来源分小标题。
+ *
+ * 工具箱那组里 npm 和自定义混在一起不好认 —— 给它们各自的小标题。
+ */
+const groupSubs = (group: ExtensionGroup): { label: string; items: ExtensionInfo[] }[] => {
+  if (group.key !== 'toolbox') return [{ label: '', items: group.items }]
+  const npm = group.items.filter((item) => item.source === 'npm')
+  const custom = group.items.filter((item) => item.source === 'custom')
+  return [
+    { label: 'npm', items: npm },
+    { label: '自定义', items: custom },
+  ].filter((sub) => sub.items.length > 0)
+}
+
+/** 工具箱里的扩展（要绑给智能体才生效）。 */
+const isToolbox = (item: ExtensionInfo): boolean => isToolboxSource(item.source)
+
+/** pi 自动发现的扩展（运行时自己加载，不能绑也不能删）。 */
+const isAutoDiscovered = (item: ExtensionInfo): boolean => isAutoDiscoveredSource(item.source)
 
 /** 停用 / 启用 */
 const toggle = async (item: ExtensionInfo, enabled: boolean): Promise<void> => {
@@ -142,8 +185,8 @@ const toggle = async (item: ExtensionInfo, enabled: boolean): Promise<void> => {
 
 /** 删一个 */
 const remove = async (item: ExtensionInfo): Promise<void> => {
-  if (isBuiltin(item)) {
-    message.warning('Pi 自带的扩展不能在这里删除')
+  if (!isToolbox(item)) {
+    message.warning('Pi 自动发现的扩展不能在这里删除')
     return
   }
   try {
@@ -354,51 +397,68 @@ onUnmounted(() => {
             <section v-for="group in grouped" :key="group.key" class="card group">
               <header class="group-head">
                 <span class="group-name">{{ group.label }}</span>
+                <span class="group-hint">{{ group.hint }}</span>
                 <span class="group-count tnum">{{ group.items.length }}</span>
               </header>
-              <ul class="ext-list">
-                <li v-for="item in group.items" :key="item.path" class="ext">
-                  <span class="ext-icon" aria-hidden="true">
-                    <NIcon :size="14">
-                      <Blocks />
-                    </NIcon>
-                  </span>
-                  <div class="ext-text">
-                    <span class="ext-name">
-                      {{ item.name }}
-                      <NTag v-if="isBuiltin(item)" size="small" :bordered="false"> Pi 自带 </NTag>
+              <!-- 工具箱那组里 npm 和自定义分开列 -->
+              <div v-for="sub in groupSubs(group)" :key="sub.label" class="sub-group">
+                <h4 v-if="sub.label" class="sub-title">{{ sub.label }}</h4>
+                <ul class="ext-list">
+                  <li v-for="item in sub.items" :key="item.path" class="ext">
+                    <span class="ext-icon" aria-hidden="true">
+                      <NIcon :size="14">
+                        <Blocks />
+                      </NIcon>
                     </span>
-                    <EllipsisText class="ext-path mono" :text="item.path" />
-                  </div>
-                  <NButton v-if="!isBuiltin(item)" size="tiny" quaternary @click="openEditor(item)">
-                    <template #icon>
-                      <NIcon :size="12">
-                        <Pencil />
-                      </NIcon>
-                    </template>
-                    编辑
-                  </NButton>
-                  <NButton
-                    v-if="!isBuiltin(item)"
-                    size="tiny"
-                    quaternary
-                    :loading="ops.isBusy(item.name)"
-                    @click="remove(item)"
-                  >
-                    <template #icon>
-                      <NIcon :size="12">
-                        <Trash2 />
-                      </NIcon>
-                    </template>
-                  </NButton>
-                  <NCheckbox
-                    :checked="item.enabled"
-                    @update:checked="(checked: boolean) => toggle(item, checked)"
-                  >
-                    <span class="sr-only">{{ item.name }} 启用</span>
-                  </NCheckbox>
-                </li>
-              </ul>
+                    <div class="ext-text">
+                      <span class="ext-name">
+                        {{ item.name }}
+                        <NTag
+                          v-if="isAutoDiscovered(item)"
+                          size="small"
+                          :bordered="false"
+                          :class="`tag-${item.source}`"
+                        >
+                          {{ item.source === 'user' ? '用户级' : '项目级' }}
+                        </NTag>
+                      </span>
+                      <EllipsisText class="ext-path mono" :text="item.path" />
+                    </div>
+                    <NButton
+                      v-if="isToolbox(item)"
+                      size="tiny"
+                      quaternary
+                      @click="openEditor(item)"
+                    >
+                      <template #icon>
+                        <NIcon :size="12">
+                          <Pencil />
+                        </NIcon>
+                      </template>
+                      编辑
+                    </NButton>
+                    <NButton
+                      v-if="isToolbox(item)"
+                      size="tiny"
+                      quaternary
+                      :loading="ops.isBusy(item.name)"
+                      @click="remove(item)"
+                    >
+                      <template #icon>
+                        <NIcon :size="12">
+                          <Trash2 />
+                        </NIcon>
+                      </template>
+                    </NButton>
+                    <NCheckbox
+                      :checked="item.enabled"
+                      @update:checked="(checked: boolean) => toggle(item, checked)"
+                    >
+                      <span class="sr-only">{{ item.name }} 启用</span>
+                    </NCheckbox>
+                  </li>
+                </ul>
+              </div>
             </section>
           </div>
           <p v-else-if="!installedLoading" class="empty">
@@ -682,7 +742,7 @@ onUnmounted(() => {
 
 .group-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--c-border);
@@ -690,17 +750,51 @@ onUnmounted(() => {
 }
 
 .group-name {
+  flex: none;
   font-size: 12px;
   font-weight: 600;
   color: var(--c-text-2);
 }
 
+/* 分组说明 —— 这组扩展从哪来、什么行为 */
+.group-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--c-text-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .group-count {
+  flex: none;
   padding: 0 5px;
   border-radius: var(--radius-sm);
   background: var(--c-bg);
   font-size: 11px;
   color: var(--c-text-3);
+}
+
+/* 组内的小分组（工具箱里的 npm / 自定义） */
+.sub-group + .sub-group {
+  border-top: 1px solid var(--c-border);
+}
+
+.sub-title {
+  margin: 0;
+  padding: 7px 14px 5px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-text-4);
+  background: var(--c-surface-sunken);
+}
+
+/* 扩展名旁边的来源标签 */
+.tag-user,
+.tag-project {
+  color: var(--c-text-3);
+  background: var(--c-surface-sunken);
 }
 
 .ext-list {

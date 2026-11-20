@@ -26,11 +26,25 @@ use serde::Serialize;
 use crate::paths::Paths;
 
 /// 扩展的来源种类。
+///
+/// 四个来源，按「谁放那儿、能不能绑」分：
+///
+/// | 来源 | 位置 | 运行时自动加载 | 能绑 |
+/// |---|---|---|---|
+/// | 用户级 | `~/.pi/agent/extensions/` | ✅ 全局 | ❌ |
+/// | 项目级 | `<项目>/.pi/extensions/` | ✅ 只本项目 | ❌ |
+/// | npm | 工具箱 `extensions/npm/` | ❌ | ✅ |
+/// | 自定义 | 工具箱 `extensions/custom/` | ❌ | ✅ |
+///
+/// 前两个 Pi 自己会加载 —— 不用（也不能）由我们绑。
+/// 后两个在我们自己的工具箱里，要绑给智能体才会用上。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ExtensionSourceKind {
-    /// pi 自带的（全局目录里直接放的扩展文件）
-    Builtin,
+    /// 用户级的（`~/.pi/agent/extensions/`）—— pi 自动发现，全局生效
+    User,
+    /// 项目级的（`<项目>/.pi/extensions/`）—— pi 自动发现，只对本项目生效
+    Project,
     /// 我们从 npm 装到工具箱里的
     Npm,
     /// 用户自己写放到工具箱里的
@@ -41,17 +55,23 @@ impl ExtensionSourceKind {
     /// 显示名。
     pub fn label(self) -> &'static str {
         match self {
-            ExtensionSourceKind::Builtin => "Pi 自带",
+            ExtensionSourceKind::User => "用户级",
+            ExtensionSourceKind::Project => "项目级",
             ExtensionSourceKind::Npm => "npm",
             ExtensionSourceKind::Custom => "自定义",
         }
     }
 
+    /// 属于「工具箱」吗（工具箱里的扩展要绑给智能体才生效）。
+    pub fn in_toolbox(self) -> bool {
+        matches!(self, ExtensionSourceKind::Npm | ExtensionSourceKind::Custom)
+    }
+
     /// 能不能绑定到智能体。
     ///
-    /// pi 自带的扩展运行时自己会加载 —— 不用（也不能）由我们绑。
+    /// pi 自动发现的扩展运行时自己会加载 —— 不用（也不能）由我们绑。
     pub fn bindable(self) -> bool {
-        matches!(self, ExtensionSourceKind::Npm | ExtensionSourceKind::Custom)
+        self.in_toolbox()
     }
 }
 
@@ -171,8 +191,9 @@ pub fn library_dir(paths: &Paths) -> PathBuf {
 
 /// 列出已安装的扩展。
 ///
-/// 三个来源：
-/// - **Pi 自带**：`~/.pi/agent/extensions/` 里的 —— 只读，运行时自动生效
+/// 四个来源：
+/// - **用户级**：`~/.pi/agent/extensions/` 里的 —— pi 自动发现，全局生效
+/// - **项目级**：`<项目>/.pi/extensions/` 里的 —— pi 自动发现，只对本项目生效
 /// - **npm**：我们装到工具箱里的
 /// - **自定义**：用户自己写放到工具箱里的
 ///
@@ -180,16 +201,17 @@ pub fn library_dir(paths: &Paths) -> PathBuf {
 pub fn list_installed(paths: &Paths, project: Option<&Path>) -> Vec<ExtensionInfo> {
     let mut out: Vec<ExtensionInfo> = Vec::new();
 
-    // 1) pi 自带的 —— 全局目录 + 项目目录
+    // 1) 用户级的 —— `~/.pi/agent/extensions/`
     out.extend(scan_extensions(
         &agent_dir(paths).join("extensions"),
-        ExtensionSourceKind::Builtin,
+        ExtensionSourceKind::User,
         None,
     ));
+    // 2) 项目级的 —— `<项目>/.pi/extensions/`
     if let Some(project) = project {
         out.extend(scan_extensions(
             &project_pi_dir(project).join("extensions"),
-            ExtensionSourceKind::Builtin,
+            ExtensionSourceKind::Project,
             None,
         ));
     }
@@ -493,9 +515,9 @@ pub fn remove_from_library(
             }
             std::fs::remove_dir_all(&dir).map_err(|e| format!("删除失败：{e}"))
         }
-        // pi 自带的不能删 —— 那是 pi 的东西
-        ExtensionSourceKind::Builtin => {
-            Err("Pi 自带的扩展不能在这里删除".to_string())
+        // pi 自动发现的不能删 —— 那是 pi 的东西
+        ExtensionSourceKind::User | ExtensionSourceKind::Project => {
+            Err("Pi 自动发现的扩展不能在这里删除".to_string())
         }
     }
 }
@@ -823,7 +845,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("pkg")).unwrap();
         std::fs::write(dir.join("pkg/index.ts"), "export default function () {}").unwrap();
 
-        let found = scan_extensions(&dir, ExtensionSourceKind::Builtin, None);
+        let found = scan_extensions(&dir, ExtensionSourceKind::User, None);
         let names: Vec<String> = found.iter().map(|item| item.name.clone()).collect();
         assert!(names.contains(&"a".to_string()), "{names:?}");
         assert!(names.contains(&"pkg".to_string()), "{names:?}");
@@ -838,7 +860,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.ts.disabled"), "x").unwrap();
-        let found = scan_extensions(&dir, ExtensionSourceKind::Builtin, None);
+        let found = scan_extensions(&dir, ExtensionSourceKind::User, None);
         assert!(found.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

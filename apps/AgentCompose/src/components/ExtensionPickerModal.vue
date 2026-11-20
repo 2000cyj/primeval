@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import { Check, Search } from 'lucide-vue-next'
 import ToolboxIcon from '@/components/ToolboxIcon.vue'
-import { listExtensions, type ExtensionInfo } from '@/api/extensions'
+import { isToolboxSource, listExtensions, type ExtensionInfo } from '@/api/extensions'
 import EllipsisText from '@/components/EllipsisText.vue'
 
 /**
@@ -42,8 +42,8 @@ const load = async () => {
   loading.value = true
   try {
     const all = await listExtensions()
-    // Pi 自带的运行时自动加载，不用绑
-    extensions.value = all.filter((item) => item.source !== 'builtin')
+    // Pi 自动发现的运行时自己加载，不用绑 —— 只留工具箱里的
+    extensions.value = all.filter((item) => isToolboxSource(item.source))
   } catch (error) {
     message.error(error instanceof Error ? error.message : String(error))
     extensions.value = []

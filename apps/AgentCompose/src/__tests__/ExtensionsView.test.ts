@@ -19,11 +19,20 @@ const listed = [
   {
     name: 'orca-prefill',
     path: 'C:/pi/.pi/agent/extensions/orca-prefill.ts',
-    source: 'builtin',
+    source: 'user',
     package: null,
     enabled: true,
     size: 100,
     updatedAtMs: 1,
+  },
+  {
+    name: 'project-ext',
+    path: 'C:/proj/.pi/extensions/project-ext.ts',
+    source: 'project',
+    package: null,
+    enabled: true,
+    size: 150,
+    updatedAtMs: 4,
   },
   {
     name: 'pi-mcp-adapter',
@@ -127,7 +136,7 @@ describe('Pi 扩展页', () => {
     wrapper.unmount()
   })
 
-  it('已安装的按来源分组，Pi 自带的排在前面', async () => {
+  it('已安装的按来源分组：用户级 / 项目级 / 工具箱', async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === 'extensions_list') return Promise.resolve(listed)
       return Promise.resolve(market)
@@ -135,8 +144,28 @@ describe('Pi 扩展页', () => {
 
     const wrapper = await mountView()
     const groups = wrapper.findAll('.group-name').map((item) => item.text())
-    expect(groups[0]).toBe('Pi 自带')
-    expect(groups).toContain('npm')
-    expect(groups).toContain('自定义')
+    // 三组，顺序固定
+    expect(groups).toEqual(['用户级', '项目级', '工具箱'])
+
+    // 工具箱那组里 npm 和自定义分开列
+    const subs = wrapper.findAll('.sub-title').map((item) => item.text())
+    expect(subs).toEqual(['npm', '自定义'])
+
+    // 扩展名旁边的来源标签
+    const tags = wrapper.findAll('.n-tag').map((item) => item.text())
+    expect(tags).toContain('用户级')
+    expect(tags).toContain('项目级')
+  })
+
+  it('pi 自动发现的扩展不能编辑、不能删', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'extensions_list') return Promise.resolve(listed)
+      return Promise.resolve(market)
+    })
+
+    const wrapper = await mountView()
+    // 「编辑」只给工具箱里的（npm + 自定义）—— 用户级和项目级那两个没有
+    const buttons = wrapper.findAll('button').filter((item) => item.text().includes('编辑'))
+    expect(buttons).toHaveLength(2)
   })
 })

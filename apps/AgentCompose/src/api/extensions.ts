@@ -14,11 +14,22 @@ import { invoke } from '@tauri-apps/api/core'
 /**
  * 扩展的来源种类。
  *
- * - `builtin` —— pi 自带的（运行时自动加载，不能绑到智能体上）
+ * - `user` —— 用户级的（`~/.pi/agent/extensions/`），pi 自动发现，全局生效
+ * - `project` —— 项目级的（`<项目>/.pi/extensions/`），pi 自动发现，只本项目
  * - `npm` —— 我们从 npm 装到工具箱里的
  * - `custom` —— 用户自己写放到工具箱里的
+ *
+ * 前两个 pi 运行时自己会加载 —— 不用（也不能）绑到智能体上。
  */
-export type ExtensionSourceKind = 'builtin' | 'npm' | 'custom'
+export type ExtensionSourceKind = 'user' | 'project' | 'npm' | 'custom'
+
+/** 属于工具箱吗（工具箱里的要绑给智能体才生效）。 */
+export const isToolboxSource = (source: ExtensionSourceKind): boolean =>
+  source === 'npm' || source === 'custom'
+
+/** pi 自动发现的（不用绑，运行时自己加载）。 */
+export const isAutoDiscoveredSource = (source: ExtensionSourceKind): boolean =>
+  !isToolboxSource(source)
 
 /** 一个已安装的扩展 */
 export interface ExtensionInfo {

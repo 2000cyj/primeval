@@ -1,7 +1,8 @@
 //! `agentspace extension ...` —— Pi 扩展管理。
 //!
 //! 对应桌面端的「Pi 扩展」页。三组：
-//! - **Pi 自带**：全局目录里直接放的扩展文件（只读，不能绑、不能删）
+//! - **用户级**：`~/.pi/agent/extensions/` 里的（pi 自动发现，只读，不能绑、不能删）
+//! - **项目级**：`<项目>/.pi/extensions/` 里的（pi 自动发现，只读，不能绑、不能删）
 //! - **npm**：从 npm registry 装到 AgentSpace 工具箱里的
 //! - **自定义**：用户自己写的脚本，放在工具箱的 `custom/` 下
 //!
@@ -55,7 +56,7 @@ pub enum ExtensionCmd {
 
 #[derive(Args, Debug)]
 pub struct ListArgs {
-    /// 只看某一组（builtin / npm / custom）
+    /// 只看某一组（user / project / npm / custom）
     #[arg(long)]
     source: Option<String>,
     /// 输出格式
@@ -240,7 +241,7 @@ fn list(paths: &Paths, args: &ListArgs) -> u8 {
     let mut items = installed(paths);
     if let Some(source) = args.source.as_deref() {
         let Some(kind) = parse_source(source) else {
-            eprintln!("来源只能是 builtin / npm / custom");
+            eprintln!("来源只能是 user / project / npm / custom");
             return EXIT_INVALID;
         };
         items.retain(|item| item.source == kind);
@@ -293,7 +294,14 @@ fn get(paths: &Paths, args: &GetArgs) -> u8 {
     if let Some(package) = &item.package {
         println!("包名：{package}");
     }
-    println!("可绑定：{}", if item.source.bindable() { "是" } else { "否（Pi 自带，运行时自己加载）" });
+    println!(
+        "可绑定：{}",
+        if item.source.bindable() {
+            "是"
+        } else {
+            "否（Pi 自动发现，运行时自己加载）"
+        }
+    );
     EXIT_OK
 }
 
@@ -322,7 +330,7 @@ fn remove(paths: &Paths, args: &RemoveArgs) -> u8 {
     // 按路径删 —— 不限 npm / 自定义
     if let Some(path) = args.path.as_deref() {
         let target = std::path::PathBuf::from(path);
-        // Pi 自带目录里的东西不删 —— 那是 pi 自己的扩展，删了 pi 起不来。
+        // Pi 自动发现的目录里的东西不删 —— 那是 pi 自己的扩展，删了 pi 起不来。
         // 用户想停用它用 `extension disable`（改名加 .disabled）。
         if let Some(pi_dir) = pi_extension_dir(paths) {
             if target.starts_with(&pi_dir) {
@@ -368,14 +376,17 @@ fn remove(paths: &Paths, args: &RemoveArgs) -> u8 {
         Some(source) => match parse_source(source) {
             Some(kind) => kind,
             None => {
-                eprintln!("来源只能是 npm / custom");
+                eprintln!("来源只能是 user / project / npm / custom");
                 return EXIT_INVALID;
             }
         },
         None => match find(&items, name) {
             Some(item) if item.source.bindable() => item.source,
             Some(item) => {
-                eprintln!("{} 是 Pi 自带的扩展，不能在这里删。", item.name);
+                eprintln!(
+                    "{} 是 Pi 自动发现的扩展，不能在这里删。",
+                    item.name
+                );
                 return EXIT_FAIL;
             }
             None => {
@@ -384,8 +395,8 @@ fn remove(paths: &Paths, args: &RemoveArgs) -> u8 {
             }
         },
     };
-    if kind == ExtensionSourceKind::Builtin {
-        eprintln!("Pi 自带的扩展不能在这里删。");
+    if !kind.bindable() {
+        eprintln!("Pi 自动发现的扩展不能在这里删。");
         return EXIT_FAIL;
     }
     match extensions::remove_from_library(paths, kind, name) {
@@ -576,9 +587,10 @@ fn search(args: &SearchArgs) -> u8 {
 
 fn parse_source(source: &str) -> Option<ExtensionSourceKind> {
     match source.trim().to_ascii_lowercase().as_str() {
-        "builtin" | "built-in" | "pi" => Some(ExtensionSourceKind::Builtin),
+        "user" | "用户级" => Some(ExtensionSourceKind::User),
+        "project" | "项目级" => Some(ExtensionSourceKind::Project),
         "npm" => Some(ExtensionSourceKind::Npm),
-        "custom" => Some(ExtensionSourceKind::Custom),
+        "custom" | "自定义" => Some(ExtensionSourceKind::Custom),
         _ => None,
     }
 }
@@ -613,7 +625,8 @@ mod tests {
     fn parses_source_kinds() {
         assert_eq!(parse_source("npm"), Some(ExtensionSourceKind::Npm));
         assert_eq!(parse_source("Custom"), Some(ExtensionSourceKind::Custom));
-        assert_eq!(parse_source("builtin"), Some(ExtensionSourceKind::Builtin));
+        assert_eq!(parse_source("user"), Some(ExtensionSourceKind::User));
+        assert_eq!(parse_source("项目级"), Some(ExtensionSourceKind::Project));
         assert_eq!(parse_source("乱写"), None);
     }
 
