@@ -62,7 +62,14 @@ const SOURCE_LABEL: Record<SkillInfo['source'], string> = {
 
 const isSelected = (ref: string) => props.selected.includes(ref)
 
+/** 这个 skill 是不是停用了 */
+const isDisabled = (ref: string): boolean =>
+  skills.value.find((skill) => skill.relativePath === ref)?.enabled === false
+
 const toggle = (ref: string) => {
+  // 停用的不让新选 —— 用户在 skills 页把它关了，就是不想让 agent 用它。
+  // 但已经选中的还能取消 —— 不然就再也解绑不了了。
+  if (isDisabled(ref) && !isSelected(ref)) return
   const next = isSelected(ref)
     ? props.selected.filter((item) => item !== ref)
     : [...props.selected, ref]
@@ -70,9 +77,10 @@ const toggle = (ref: string) => {
 }
 
 const selectAll = () => {
+  // 全选也不带停用的
   emit(
     'update:selected',
-    visibleSkills.value.map((skill) => skill.relativePath),
+    visibleSkills.value.filter((skill) => skill.enabled).map((skill) => skill.relativePath),
   )
 }
 
@@ -81,6 +89,9 @@ const clearAll = () => {
 }
 
 // 每次打开时清空搜索并重新拉一次
+//
+// `immediate: true` —— 弹窗一挂载就拉，
+// 免得「以打开状态挂载」时列表是空的（其它选择弹窗也都是这么做的）。
 watch(
   () => props.show,
   (show) => {
@@ -89,6 +100,7 @@ watch(
       void load()
     }
   },
+  { immediate: true },
 )
 </script>
 
@@ -133,15 +145,22 @@ watch(
         <button
           type="button"
           class="skill-option"
-          :class="{ checked: isSelected(skill.relativePath) }"
+          :class="{
+            checked: isSelected(skill.relativePath),
+            disabled: !skill.enabled,
+          }"
           :aria-pressed="isSelected(skill.relativePath)"
+          :aria-disabled="!skill.enabled"
           @click="toggle(skill.relativePath)"
         >
           <span class="skill-icon">
             <Blocks :size="17" />
           </span>
           <span class="skill-text">
-            <EllipsisText class="skill-name" :text="skill.name" />
+            <span class="skill-name-row">
+              <EllipsisText class="skill-name" :text="skill.name" />
+              <span v-if="!skill.enabled" class="skill-off">已停用</span>
+            </span>
             <EllipsisText
               class="skill-desc"
               :text="skill.description || SOURCE_LABEL[skill.source]"
@@ -240,6 +259,37 @@ watch(
 .skill-option.checked {
   background: #f5f5f3;
   border-color: #dcdcd6;
+}
+
+/* 停用的 skill：置灰，不让新选 */
+.skill-option.disabled {
+  opacity: 0.45;
+}
+
+.skill-option.disabled:hover {
+  border-color: var(--c-border);
+}
+
+.skill-option.disabled.checked {
+  /* 已经选中的停用 skill —— 保留勾选状态，只置灰 */
+  opacity: 0.6;
+}
+
+.skill-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.skill-off {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--c-surface-sunken);
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--c-text-4);
 }
 
 .skill-icon {

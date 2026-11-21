@@ -824,6 +824,20 @@ fn read_meta(dir: &Path) -> serde_json::Value {
         .unwrap_or_else(|| json!({}))
 }
 
+/// 某个 skill 是不是启用着。
+///
+/// **停用的 skill 不该被装进项目** —— 用户在 skills 页把它关了，
+/// 就是不想让 agent 用它。落地时得跳过。
+///
+/// 读不出来（没元信息 / 文件坏了）就当启用着 ——
+/// 宁可多装一个，也不能因为元信息坏了就把能力弄丢。
+pub fn skill_enabled(dir: &Path) -> bool {
+    read_meta(dir)
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
 /// 写入 sidecar 里的元信息。
 fn write_meta(dir: &Path, meta: &serde_json::Value) -> Result<(), String> {
     fs::write(
@@ -2113,6 +2127,30 @@ fn name_from_url(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_enabled_reads_the_meta_file() {
+        let dir = std::env::temp_dir().join(format!("agentspace-core-enabled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 没有元信息 → 当启用着（宁可多装，也不能丢能力）
+        assert!(skill_enabled(&dir), "没有元信息时该当启用着");
+
+        // 显式停用
+        std::fs::write(dir.join(SOURCE_FILE), r#"{"enabled":false}"#).unwrap();
+        assert!(!skill_enabled(&dir), "元信息说停了就是停了");
+
+        // 显式启用
+        std::fs::write(dir.join(SOURCE_FILE), r#"{"enabled":true}"#).unwrap();
+        assert!(skill_enabled(&dir));
+
+        // 元信息坏了 → 还是当启用着
+        std::fs::write(dir.join(SOURCE_FILE), "{ 这不是 json").unwrap();
+        assert!(skill_enabled(&dir), "元信息坏了不该把能力弄丢");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn broken_frontmatter_does_not_snowball() {

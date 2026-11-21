@@ -355,19 +355,32 @@ fn find_header_end(raw: &[u8]) -> Option<usize> {
     raw.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+/// 上游探测的结果。
+#[derive(Clone, Debug, Default)]
+pub struct ProbeResult {
+    /// 连上的上游数
+    pub connected: usize,
+    /// 连不上的说明
+    pub failures: Vec<String>,
+    /// 停用的上游 id。
+    ///
+    /// 用户在 MCP 页把它关了 —— 这种不该写进项目的 mcp.json，
+    /// 写了 agent 也会去连一个连不上的上游。
+    pub disabled: Vec<String>,
+}
+
 /// 让代理把绑定的上游连起来。
 ///
 /// 上游是**惰性连接**的：代理启动后不会自己连，只有「测试连接」接口会触发。
 /// 不主动连的话，agent 拿到的工具清单是空的（看起来像 MCP 配错了）。
 ///
 /// 返回 (连上的 server 数, 连不上的说明)。
-pub fn probe_servers(endpoint: &Endpoint, server_ids: &[String]) -> (usize, Vec<String>) {
-    let mut connected = 0usize;
-    let mut failures = Vec::new();
+pub fn probe_servers(endpoint: &Endpoint, server_ids: &[String]) -> ProbeResult {
+    let mut result = ProbeResult::default();
     for id in server_ids {
         let path = format!("/admin/servers/{id}/test");
         let Some(body) = admin_post(endpoint, &path, Duration::from_secs(30)) else {
-            failures.push(format!("{id}（代理没响应）"));
+            result.failures.push(format!("{id}（代理没响应）"));
             continue;
         };
         let value = serde_json::from_str::<serde_json::Value>(&body).ok();
@@ -376,6 +389,11 @@ pub fn probe_servers(endpoint: &Endpoint, server_ids: &[String]) -> (usize, Vec<
             .and_then(|v| v.get("state"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
+        // 停用的单独记 —— 它不是「连不上」，是用户主动关的。
+        if state == "disabled" {
+            result.disabled.push(id.clone());
+            continue;
+        }
         let tool_count = value
             .as_ref()
             .and_then(|v| v.get("tools"))
@@ -383,9 +401,9 @@ pub fn probe_servers(endpoint: &Endpoint, server_ids: &[String]) -> (usize, Vec<
             .map(|list| list.len())
             .unwrap_or(0);
         if state == "ready" {
-            connected += 1;
+            result.connected += 1;
             if tool_count == 0 {
-                failures.push(format!("{id}（连上了但没有工具）"));
+                result.failures.push(format!("{id}（连上了但没有工具）"));
             }
         } else {
             let detail = value
@@ -393,8 +411,8 @@ pub fn probe_servers(endpoint: &Endpoint, server_ids: &[String]) -> (usize, Vec<
                 .and_then(|v| v.get("error"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(state);
-            failures.push(format!("{id}：{detail}"));
+            result.failures.push(format!("{id}：{detail}"));
         }
     }
-    (connected, failures)
+    result
 }

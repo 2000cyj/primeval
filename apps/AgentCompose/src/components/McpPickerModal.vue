@@ -58,7 +58,14 @@ const describe = (server: McpServerDef): string => {
 
 const isSelected = (id: string) => props.selected.includes(mcpServerRef(id))
 
+/** 这个 server 是不是停用了 */
+const isDisabled = (id: string): boolean =>
+  servers.value.find((server) => server.id === id)?.enabled === false
+
 const toggle = (id: string) => {
+  // 停用的不让新选 —— 用户在 MCP 页把它关了，就是不想让 agent 用它。
+  // 但已经选中的还能取消 —— 不然就再也解绑不了了。
+  if (isDisabled(id) && !isSelected(id)) return
   const ref = mcpServerRef(id)
   const next = isSelected(id)
     ? props.selected.filter((item) => item !== ref)
@@ -67,9 +74,12 @@ const toggle = (id: string) => {
 }
 
 const selectAll = () => {
+  // 全选也不带停用的
   emit(
     'update:selected',
-    visibleServers.value.map((server) => mcpServerRef(server.id)),
+    visibleServers.value
+      .filter((server) => server.enabled)
+      .map((server) => mcpServerRef(server.id)),
   )
 }
 
@@ -78,6 +88,9 @@ const clearAll = () => {
 }
 
 // 每次打开时清空搜索并重新拉一次
+//
+// `immediate: true` —— 弹窗一挂载就拉，
+// 免得「以打开状态挂载」时列表是空的（其它选择弹窗也都是这么做的）。
 watch(
   () => props.show,
   (show) => {
@@ -86,6 +99,7 @@ watch(
       void load()
     }
   },
+  { immediate: true },
 )
 </script>
 
@@ -130,8 +144,12 @@ watch(
         <button
           type="button"
           class="mcp-option"
-          :class="{ checked: isSelected(server.id) }"
+          :class="{
+            checked: isSelected(server.id),
+            disabled: !server.enabled,
+          }"
           :aria-pressed="isSelected(server.id)"
+          :aria-disabled="!server.enabled"
           @click="toggle(server.id)"
         >
           <span class="mcp-icon">
@@ -141,6 +159,7 @@ watch(
             <span class="mcp-name">
               {{ server.name }}
               <span class="mcp-transport">{{ server.transport }}</span>
+              <span v-if="!server.enabled" class="mcp-off">已停用</span>
             </span>
             <EllipsisText class="mcp-desc" :text="describe(server)" />
           </span>
@@ -237,6 +256,30 @@ watch(
 .mcp-option.checked {
   background: #f5f5f3;
   border-color: #dcdcd6;
+}
+
+/* 停用的 server：置灰，不让新选 */
+.mcp-option.disabled {
+  opacity: 0.45;
+}
+
+.mcp-option.disabled:hover {
+  border-color: var(--c-border);
+}
+
+.mcp-option.disabled.checked {
+  /* 已经选中的停用 server —— 保留勾选状态，只置灰 */
+  opacity: 0.6;
+}
+
+.mcp-off {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--c-surface-sunken);
+  font-family: var(--c-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--c-text-4);
 }
 
 .mcp-icon {

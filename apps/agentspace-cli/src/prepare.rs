@@ -489,6 +489,16 @@ pub fn land_with(
     // 删的是「上次确实是我们写的」（落地记录里的）——
     // 用户自己放在 skills 目录里的不在这名单上，不动。
     let skills_dir = runtime.skills_dir(cwd);
+
+    // 绑着但停用的 skill —— 当作没绑。
+    //
+    // 用户在 skills 页把它关了，就是不想让 agent 用它。
+    // 装了它，agent 会看到一份本该不存在的能力。
+    let bound_skills: Vec<PathBuf> = agentspace_core::agent::skill_dirs(paths, agent)
+        .into_iter()
+        .filter(|dir| agentspace_core::skills::skill_enabled(dir))
+        .collect();
+
     let skill_prefix = format!("{}/", relative_to(cwd, &skills_dir));
     let stale_skills: Vec<String> = previous
         .as_ref()
@@ -504,11 +514,10 @@ pub fn land_with(
             Some(rest)
         })
         .filter(|name| {
-            // 这次还绑着的，留着
-            !agent
-                .skills
-                .iter()
-                .any(|item| item.strip_prefix("skills/").map(|rest| rest == name).unwrap_or(false))
+            // 这次还绑着（且没停用）的，留着
+            !bound_skills.iter().any(|dir| {
+                dir.file_name().map(|n| n.to_string_lossy().to_string()).as_deref() == Some(name)
+            })
         })
         .filter(|name| {
             // 只删目录 —— 落地记录里也有文件（运行时的 agentspace.ts），
@@ -520,7 +529,7 @@ pub fn land_with(
         let _ = fs::remove_dir_all(skills_dir.join(name));
     }
 
-    for dir in agentspace_core::agent::skill_dirs(paths, agent) {
+    for dir in &bound_skills {
         let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
             continue;
         };
@@ -528,7 +537,7 @@ pub fn land_with(
             eprintln!("跳过：找不到 skill 的 SKILL.md（{}）", dir.display());
             continue;
         }
-        match land_skill(&skills_dir, &dir) {
+        match land_skill(&skills_dir, dir) {
             Ok(target) => {
                 skill_names.push(name);
                 files.push(relative_to(cwd, &target));
@@ -650,16 +659,26 @@ pub fn land_with(
             match mcp::ensure_running() {
                 Ok(endpoint) => {
                     // 上游是惰性连接的：不主动连，agent 拿到的工具清单是空的
-                    let (connected, failures) = mcp::probe_servers(&endpoint, &server_ids);
-                    if connected > 0 {
-                        println!("MCP 已连接 {connected} 个上游。");
+                    let probe = mcp::probe_servers(&endpoint, &server_ids);
+                    if probe.connected > 0 {
+                        println!("MCP 已连接 {} 个上游。", probe.connected);
                     }
-                    for failure in failures {
+                    for failure in probe.failures {
                         eprintln!("提示：MCP {failure} —— 这个上游这次可能用不了。");
                     }
+                    // 停用的上游不写进 mcp.json ——
+                    // 用户在 MCP 页关了它，就是不想让 agent 用。
+                    for id in &probe.disabled {
+                        eprintln!("提示：MCP {id} 已停用 —— 不带进项目。");
+                    }
+                    let active_ids: Vec<String> = server_ids
+                        .iter()
+                        .filter(|id| !probe.disabled.contains(id))
+                        .cloned()
+                        .collect();
                     // 每个上游一条配置，不合成一条 ——
                     // 这样在运行时的 MCP 列表里能一眼看到绑了哪几个。
-                    let entries: Vec<(String, serde_json::Value)> = server_ids
+                    let entries: Vec<(String, serde_json::Value)> = active_ids
                         .iter()
                         .map(|id| {
                             (
@@ -676,7 +695,7 @@ pub fn land_with(
                     let remove: Vec<String> = stale
                         .into_iter()
                         .filter(|name| {
-                            !server_ids
+                            !active_ids
                                 .iter()
                                 .any(|id| runtime.mcp_entry_name(id) == *name)
                         })
@@ -692,7 +711,7 @@ pub fn land_with(
                     }
                     // 曝光提醒：绑了但没暴露 → agent 那边一个工具都看不到
                     let exposed = mcp::exposed_server_ids();
-                    let missing: Vec<&String> = server_ids
+                    let missing: Vec<&String> = active_ids
                         .iter()
                         .filter(|id| !exposed.contains(id))
                         .collect();
@@ -1269,6 +1288,74 @@ mod tests {
         let project = dir.join("project");
         fs::create_dir_all(&project).unwrap();
         (paths, project)
+    }
+
+    /// 把某个 skill 停用（写 .agent-compose.json 的 enabled=false）。
+    fn disable_skill(paths: &Paths, name: &str) {
+        let dir = paths.skills_root().join(name);
+        fs::write(
+            dir.join(agentspace_core::skills::SOURCE_FILE),
+            r#"{"enabled":false}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn land_skips_disabled_skill() {
+        let (paths, project) = skill_sandbox("disabled", &["alpha", "beta"]);
+        // beta 停用 —— 用户在 skills 页关了它
+        disable_skill(&paths, "beta");
+        let runtime = PiRuntime::new();
+
+        // 两个都绑着，但 beta 停了
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha", "beta"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        assert!(
+            project.join(".pi").join("skills").join("alpha").is_dir(),
+            "启用的 skill 该落地"
+        );
+        assert!(
+            !project.join(".pi").join("skills").join("beta").exists(),
+            "停用的 skill 不该装进项目 —— 装了 agent 就会用上它"
+        );
+    }
+
+    #[test]
+    fn land_drops_skill_disabled_after_it_was_landed() {
+        let (paths, project) = skill_sandbox("disabled-after", &["alpha", "beta"]);
+        let runtime = PiRuntime::new();
+
+        // 先落两个
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha", "beta"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+        assert!(project.join(".pi").join("skills").join("beta").is_dir());
+
+        // 停用 beta（还绑着），再落一次
+        disable_skill(&paths, "beta");
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha", "beta"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        assert!(
+            !project.join(".pi").join("skills").join("beta").exists(),
+            "停用后应该把项目里那份也清掉"
+        );
+        assert!(project.join(".pi").join("skills").join("alpha").is_dir());
     }
 
     #[test]
