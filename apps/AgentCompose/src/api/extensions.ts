@@ -18,13 +18,23 @@ import { invoke } from '@tauri-apps/api/core'
  * - `project` —— 项目级的（`<项目>/.pi/extensions/`），pi 自动发现，只本项目
  * - `npm` —— 我们从 npm 装到工具箱里的
  * - `custom` —— 用户自己写放到工具箱里的
+ * - `builtin` —— AgentSpace 自带的（工具箱 `extensions/builtin/`），可改
  *
  * 前两个 pi 运行时自己会加载 —— 不用（也不能）绑到智能体上。
  */
-export type ExtensionSourceKind = 'user' | 'project' | 'npm' | 'custom'
+export type ExtensionSourceKind = 'user' | 'project' | 'npm' | 'custom' | 'builtin'
 
-/** 属于工具箱吗（工具箱里的要绑给智能体才生效）。 */
+/** 在工具箱里吗（工具箱里的扩展我们自己管，代码可以改）。 */
 export const isToolboxSource = (source: ExtensionSourceKind): boolean =>
+  source === 'npm' || source === 'custom' || source === 'builtin'
+
+/**
+ * 能绑给智能体吗。
+ *
+ * 内置扩展不用绑 —— 它们要么自动落地到每个项目（运行时扩展），
+ * 要么本来就是绑着用的（桥接扩展）。
+ */
+export const isBindableSource = (source: ExtensionSourceKind): boolean =>
   source === 'npm' || source === 'custom'
 
 /** pi 自动发现的（不用绑，运行时自己加载）。 */
@@ -39,6 +49,8 @@ export interface ExtensionInfo {
   path: string
   /** 来源种类 */
   source: ExtensionSourceKind
+  /** 是不是 AgentSpace 自带的（内置） */
+  builtin: boolean
   /** 来自哪个包（来源是 package 时有值） */
   package: string | null
   /** 是否启用 */
@@ -95,6 +107,7 @@ export const EXTENSION_COMMANDS = {
   setEnabled: 'extensions_set_enabled',
   remove: 'extensions_remove',
   save: 'extensions_save',
+  saveSource: 'extensions_save_source',
   template: 'extensions_template',
   marketSearch: 'extensions_market_search',
   installNpm: 'extensions_install_npm',
@@ -163,6 +176,19 @@ export async function removeExtension(path: string): Promise<CommandOutput> {
 export async function saveExtension(name: string, code: string): Promise<CommandOutput> {
   try {
     return await invoke<CommandOutput>(EXTENSION_COMMANDS.save, { name, code })
+  } catch (error) {
+    throw fail('保存扩展', error)
+  }
+}
+
+/**
+ * 改一个已装扩展的源码 —— 写回它原来所在的地方。
+ *
+ * 内置扩展改的是工具箱里的母本，下次落地到项目就生效。
+ */
+export async function saveExtensionSource(path: string, code: string): Promise<CommandOutput> {
+  try {
+    return await invoke<CommandOutput>(EXTENSION_COMMANDS.saveSource, { path, code })
   } catch (error) {
     throw fail('保存扩展', error)
   }

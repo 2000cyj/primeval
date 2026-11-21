@@ -1208,6 +1208,7 @@ pub fn run() {
             extensions::extensions_set_enabled,
             extensions::extensions_remove,
             extensions::extensions_save,
+            extensions::extensions_save_source,
             extensions::extensions_template,
             extensions::extensions_market_search,
             extensions::extensions_install_npm,

@@ -43,8 +43,11 @@ fn fail(message: impl Into<String>) -> CommandOutput {
 /// 列出已安装的扩展。
 #[tauri::command]
 pub fn extensions_list(app: AppHandle) -> Vec<ExtensionInfo> {
+    let paths = paths::of(&app);
+    // 内置扩展的母本缺了就补一份出厂的 —— 这样界面里看得到、也改得动。
+    let _ = extensions::ensure_builtin_sources(&paths);
     let project = std::env::current_dir().ok();
-    extensions::list_installed(&paths::of(&app), project.as_deref())
+    extensions::list_installed(&paths, project.as_deref())
 }
 
 /// 读一个扩展的源码。
@@ -87,6 +90,24 @@ pub fn extensions_save(
     }
 }
 
+/// 改一个已装扩展的源码 —— **写回它原来所在的地方**。
+///
+/// 「编辑」改的是原件，不是另存一份：
+/// - 内置扩展 → 改工具箱里的母本，下次落地到项目就生效
+/// - npm / 自定义 → 改它自己的文件
+#[tauri::command]
+pub fn extensions_save_source(
+    app: AppHandle,
+    path: String,
+    code: String,
+) -> Result<CommandOutput, String> {
+    let target = std::path::PathBuf::from(path);
+    match extensions::write_source_in_place(&paths::of(&app), &target, &code) {
+        Ok(()) => Ok(ok(format!("已保存：{}", target.display()))),
+        Err(error) => Ok(fail(error)),
+    }
+}
+
 /// 从 npm 装一个扩展到工具箱。
 #[tauri::command]
 pub async fn extensions_install_npm(
@@ -115,7 +136,8 @@ pub fn extensions_remove_library(
     let kind = match source.as_str() {
         "npm" => extensions::ExtensionSourceKind::Npm,
         "custom" => extensions::ExtensionSourceKind::Custom,
-        _ => return Ok(fail("只能删 npm 或自定义的扩展")),
+        "builtin" => extensions::ExtensionSourceKind::Builtin,
+        _ => return Ok(fail("只能删 npm、自定义或内置的扩展")),
     };
     match extensions::remove_from_library(&paths::of(&app), kind, &name) {
         Ok(()) => Ok(ok("已删除")),

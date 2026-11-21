@@ -9,7 +9,6 @@ import {
   NSpin,
   NTabPane,
   NTabs,
-  NTag,
   useMessage,
 } from 'naive-ui'
 import {
@@ -28,7 +27,6 @@ import HoverSearch from '@/components/HoverSearch.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
 import {
   extensionTemplate,
-  isAutoDiscoveredSource,
   isToolboxSource,
   listExtensions,
   openExternal,
@@ -36,6 +34,7 @@ import {
   repoLink,
   removeExtension,
   saveExtension,
+  saveExtensionSource,
   searchMarketplace,
   setExtensionEnabled,
   type ExtensionInfo,
@@ -96,7 +95,7 @@ const loadInstalled = async (): Promise<void> => {
  * 一个分组。
  *
  * 分两层：**用户级 / 项目级** 各自一组（pi 自动发现的），
- * **工具箱** 一组（里面再分 npm 和自定义）。
+ * **工具箱** 一组（里面再分 npm / 自定义 / 内置三个小标题）。
  */
 interface ExtensionGroup {
   /** 分组标识 */
@@ -114,8 +113,11 @@ interface ExtensionGroup {
  *
  * 三组：用户级 / 项目级 / 工具箱。
  *
+ * **工具箱** 里再分三个小标题：npm / 自定义 / 内置。
+ * 内置的是 AgentSpace 自带的（`agentspace.ts`、`agentspace-mcp-bridge`）——
+ * 代码可以直接改，改完下次落地到项目就生效。
+ *
  * 前两组是 **pi 自动发现** 的 —— 运行时自己会加载，不用绑也不能删。
- * 工具箱那组是我们自己管的 —— 要绑给智能体才生效。
  */
 const grouped = computed<ExtensionGroup[]>(() => {
   const groups: ExtensionGroup[] = [
@@ -150,23 +152,26 @@ const grouped = computed<ExtensionGroup[]>(() => {
 /**
  * 组内再按来源分小标题。
  *
- * 工具箱那组里 npm 和自定义混在一起不好认 —— 给它们各自的小标题。
+ * 工具箱那组里 npm / 自定义 / 内置混在一起不好认 —— 给它们各自的小标题。
  */
 const groupSubs = (group: ExtensionGroup): { label: string; items: ExtensionInfo[] }[] => {
   if (group.key !== 'toolbox') return [{ label: '', items: group.items }]
   const npm = group.items.filter((item) => item.source === 'npm')
-  const custom = group.items.filter((item) => item.source === 'custom')
+  const custom = group.items.filter((item) => item.source === 'custom' && !item.builtin)
+  const builtin = group.items.filter((item) => item.builtin || item.source === 'builtin')
   return [
     { label: 'npm', items: npm },
     { label: '自定义', items: custom },
+    { label: '内置', items: builtin },
   ].filter((sub) => sub.items.length > 0)
 }
 
-/** 工具箱里的扩展（要绑给智能体才生效）。 */
+/**
+ * 能不能改代码。
+ *
+ * 工具箱里的都行 —— 内置的母本也在工具箱里，改了就是改了。
+ */
 const isToolbox = (item: ExtensionInfo): boolean => isToolboxSource(item.source)
-
-/** pi 自动发现的扩展（运行时自己加载，不能绑也不能删）。 */
-const isAutoDiscovered = (item: ExtensionInfo): boolean => isAutoDiscoveredSource(item.source)
 
 /** 停用 / 启用 */
 const toggle = async (item: ExtensionInfo, enabled: boolean): Promise<void> => {
@@ -187,6 +192,10 @@ const toggle = async (item: ExtensionInfo, enabled: boolean): Promise<void> => {
 const remove = async (item: ExtensionInfo): Promise<void> => {
   if (!isToolbox(item)) {
     message.warning('Pi 自动发现的扩展不能在这里删除')
+    return
+  }
+  if (item.builtin) {
+    message.warning('内置扩展不能删除，可以直接改它的代码')
     return
   }
   try {
@@ -289,7 +298,7 @@ const install = async (item: MarketplacePackage): Promise<void> => {
   }
 }
 
-// ── 自定义扩展 ──
+// ── 扩展编辑器 ──
 
 /** 编辑器弹窗 */
 const editorOpen = ref(false)
@@ -319,6 +328,15 @@ const openEditor = async (item?: ExtensionInfo): Promise<void> => {
   }
 }
 
+/**
+ * 保存。
+ *
+ * 改已有的 → **写回它原来所在的地方**：
+ * 内置扩展改的是工具箱里的母本（下次落地到项目就生效），
+ * npm / 自定义改的是它自己的文件。
+ *
+ * 新建的 → 放进工具箱 `custom/` 下。
+ */
 const saveCustom = async (): Promise<void> => {
   const name = editorName.value.trim()
   if (!name) {
@@ -326,7 +344,9 @@ const saveCustom = async (): Promise<void> => {
     return
   }
   try {
-    const result = await saveExtension(name, editorCode.value)
+    const result = editorOriginalPath.value
+      ? await saveExtensionSource(editorOriginalPath.value, editorCode.value)
+      : await saveExtension(name, editorCode.value)
     if (!result.ok) {
       message.error(result.message)
       return
@@ -400,7 +420,7 @@ onUnmounted(() => {
                 <span class="group-hint">{{ group.hint }}</span>
                 <span class="group-count tnum">{{ group.items.length }}</span>
               </header>
-              <!-- 工具箱那组里 npm 和自定义分开列 -->
+              <!-- 工具箱那组里 npm / 自定义 / 内置 分开列 -->
               <div v-for="sub in groupSubs(group)" :key="sub.label" class="sub-group">
                 <h4 v-if="sub.label" class="sub-title">{{ sub.label }}</h4>
                 <ul class="ext-list">
@@ -411,17 +431,7 @@ onUnmounted(() => {
                       </NIcon>
                     </span>
                     <div class="ext-text">
-                      <span class="ext-name">
-                        {{ item.name }}
-                        <NTag
-                          v-if="isAutoDiscovered(item)"
-                          size="small"
-                          :bordered="false"
-                          :class="`tag-${item.source}`"
-                        >
-                          {{ item.source === 'user' ? '用户级' : '项目级' }}
-                        </NTag>
-                      </span>
+                      <span class="ext-name">{{ item.name }}</span>
                       <EllipsisText class="ext-path mono" :text="item.path" />
                     </div>
                     <NButton
@@ -438,7 +448,7 @@ onUnmounted(() => {
                       编辑
                     </NButton>
                     <NButton
-                      v-if="isToolbox(item)"
+                      v-if="isToolbox(item) && !item.builtin"
                       size="tiny"
                       quaternary
                       :loading="ops.isBusy(item.name)"
@@ -790,13 +800,6 @@ onUnmounted(() => {
   background: var(--c-surface-sunken);
 }
 
-/* 扩展名旁边的来源标签 */
-.tag-user,
-.tag-project {
-  color: var(--c-text-3);
-  background: var(--c-surface-sunken);
-}
-
 .ext-list {
   margin: 0;
   padding: 0;
@@ -833,9 +836,6 @@ onUnmounted(() => {
 }
 
 .ext-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   font-size: 13px;
 }
 

@@ -46,7 +46,7 @@ agentspace run my-agent     # 把绑定的 Skills / 指令 / MCP 铺到当前目
 | Skill 装在 `~/.claude/skills`、`~/.pi/skills`… 到处散着装 | 一个 Skills 页统一看：来源、谁在用、更新时间、启停开关                 |
 | MCP server 的配置文件要塞进各个 agent 的配置目录          | 一个 MCP 代理对外只暴露一个地址，各 agent 指向它，上游 server 集中管理 |
 | 本机装了 5 个 CLI agent，哪个能跑、哪个要升级？           | Agents 页自动探测 PATH 与常见安装目录，能装能升级能看版本              |
-| Pi 扩展要手动往 `extensions/` 目录里拷                    | Pi 扩展页按「Pi 自带 / npm / 自定义」分组，勾选即用                    |
+| Pi 扩展要手动往 `extensions/` 目录里拷                    | Pi 扩展页按「内置 / 用户级 / 项目级 / 工具箱」分组，勾选即用                    |
 | 换项目要重新配一遍 Skills、指令、MCP                      | 智能体 = 一份可复用的配置；`agentspace run <名字>` 一键铺到当前目录    |
 
 一句话：**把"环境"变成"可点两下的配置"，把"配置"变成"一条命令"。**
@@ -59,7 +59,7 @@ agentspace run my-agent     # 把绑定的 Skills / 指令 / MCP 铺到当前目
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | ![Skills](docs/images/skills.png)<br/>**Skills** — 统一管理本机 Skill 仓库          | ![Skill 详情](docs/images/skill-detail.png)<br/>**Skill 详情** — 描述、来源、文件数、占用空间 |
 | ![MCP](docs/images/mcp.png)<br/>**MCP 管理** — 一个代理地址 + 上游 server 列表      | ![Agents](docs/images/agents.png)<br/>**Agents** — 探测本机 CLI agent 并就地升级              |
-| ![Pi 扩展](docs/images/extensions.png)<br/>**Pi 扩展** — Pi 自带 / npm / 自定义分组 | ![智能体](docs/images/agent-runs.png)<br/>**智能体** — 可复用配置的一览                       |
+| ![Pi 扩展](docs/images/extensions.png)<br/>**Pi 扩展** — 内置 / 用户级 / 项目级 / 工具箱分组 | ![智能体](docs/images/agent-runs.png)<br/>**智能体** — 可复用配置的一览                       |
 | ![帮助中心](docs/images/help.png)<br/>**帮助中心** — 命令行与界面用法，可搜索       | ![系统设置](docs/images/settings.png)<br/>**系统设置** — 版本检测、命令行、网络代理           |
 
 ---
@@ -99,11 +99,16 @@ AgentSpace 内置 MCP sidecar：对上游是 client，对 agent 是 server。
 
 ![Agents](docs/images/agents.png)
 
-### Pi 扩展 —— 运行时扩展的三种来源
+### Pi 扩展 —— 按来源分组
 
-- **Pi 自带**：Pi 运行时自动加载，这里只读展示
-- **npm**：从 npm 装扩展（`@owner/pkg`），带编辑与卸载
-- **自定义**：本地目录里的扩展文件
+- **用户级**：`~/.pi/agent/extensions/` 里的，Pi 运行时自动加载，这里只读展示
+- **项目级**：`<项目>/.pi/extensions/` 里的，只对当前项目生效
+- **工具箱**：AgentSpace 管理的扩展 —— 内部再分三个小标题：
+  - `npm` —— 装的第三方包（`@owner/pkg`）
+  - `自定义` —— 你自己写的
+  - `内置` —— AgentSpace 自带的（`agentspace.ts`、`agentspace-mcp-bridge`），
+    **代码可以直接改**，改完下次落地到项目就用你改过的版本；
+    内置的不能删——删了下次又补回来
 - 扩展 = TypeScript 文件，导出默认工厂函数，Pi 启动时自动加载它们
 
 ![Pi 扩展](docs/images/extensions.png)
