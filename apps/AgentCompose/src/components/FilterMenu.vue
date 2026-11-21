@@ -8,7 +8,7 @@
  * 用 NPopover 而不是 NDropdown：NDropdown 的选项是命令式的（选完就关），
  * 这里需要多选、还要显示勾选状态和计数。
  */
-import { computed, ref, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Component } from 'vue'
 import { NButton, NIcon, NPopover } from 'naive-ui'
 import { Check, ChevronRight, ListFilter } from 'lucide-vue-next'
 import EllipsisText from '@/components/EllipsisText.vue'
@@ -46,6 +46,76 @@ const emit = defineEmits<{
 
 /** 当前展开的维度（二级菜单） */
 const openGroup = ref<string | null>(null)
+
+/** 二级菜单往哪边飞：'right' | 'left' */
+const submenuSide = ref<'right' | 'left'>('right')
+
+/** 弹层面板（用来量它离窗口右边多远） */
+const panelEl = ref<HTMLElement | null>(null)
+
+/** 二级菜单大概要这么宽（min-width 168 + 间隙 4 + 余量） */
+const SUBMENU_WIDTH = 190
+
+/**
+ * 量一下二级菜单该往哪边飞。
+ *
+ * 筛选按钮在工具栏最右边 —— 二级菜单默认往右飞会直接飞出窗口，
+ * 用户只能看到「使用状态 / 数据来源 / 被谁使用」三个标题，
+ * 真正的选项（启用 / 停用、哪个 agent……）全在屏幕外。
+ *
+ * 所以量一量：右边放不下就往左飞。
+ */
+const measureSubmenuSide = (): void => {
+  const el = panelEl.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  const roomRight = window.innerWidth - rect.right
+  const roomLeft = rect.left
+  if (roomRight >= SUBMENU_WIDTH) {
+    submenuSide.value = 'right'
+  } else if (roomLeft >= SUBMENU_WIDTH) {
+    submenuSide.value = 'left'
+  } else {
+    // 两边都放不下 —— 挑宽敞的那边，至少别整个看不见
+    submenuSide.value = roomRight >= roomLeft ? 'right' : 'left'
+  }
+}
+
+/** 弹层打开时重新量一次（面板位置变了） */
+const onShow = (show: boolean): void => {
+  if (!show) return
+  // 等弹层布局完、位置定了再量 —— nextTick 只等渲染，位置可能还没落
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      measureSubmenuSide()
+    })
+  })
+}
+
+/** 展开某个维度 —— 顺便再量一次（面板可能刚移动过） */
+const showGroup = (key: string): void => {
+  openGroup.value = key
+  measureSubmenuSide()
+}
+
+/** 点标题展开 / 收起 —— 也得重新量 */
+const toggleGroup = (key: string): void => {
+  openGroup.value = openGroup.value === key ? null : key
+  measureSubmenuSide()
+}
+
+/** 窗口尺寸变了，重新决定往哪边飞 */
+const onResize = (): void => {
+  measureSubmenuSide()
+}
+
+onMounted(() => {
+  window.addEventListener('resize', onResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+})
 
 /** 一共选了多少项 */
 const activeCount = computed(() =>
@@ -86,7 +156,7 @@ const summary = (group: FilterGroup): string => {
 </script>
 
 <template>
-  <NPopover trigger="click" placement="bottom-start" :show-arrow="false" raw>
+  <NPopover trigger="click" placement="bottom-start" :show-arrow="false" raw @update:show="onShow">
     <template #trigger>
       <NButton
         size="small"
@@ -103,13 +173,19 @@ const summary = (group: FilterGroup): string => {
       </NButton>
     </template>
 
-    <div class="filter-menu" role="menu" aria-label="筛选">
+    <div
+      ref="panelEl"
+      class="filter-menu"
+      :class="`submenu-${submenuSide}`"
+      role="menu"
+      aria-label="筛选"
+    >
       <div
         v-for="group in groups"
         :key="group.key"
         class="filter-group"
         :class="{ open: openGroup === group.key }"
-        @mouseenter="openGroup = group.key"
+        @mouseenter="showGroup(group.key)"
       >
         <button
           type="button"
@@ -117,7 +193,7 @@ const summary = (group: FilterGroup): string => {
           role="menuitem"
           :aria-expanded="openGroup === group.key"
           :aria-haspopup="true"
-          @click="openGroup = openGroup === group.key ? null : group.key"
+          @click="toggleGroup(group.key)"
         >
           <EllipsisText class="group-label" :text="group.label" />
           <span v-if="summary(group)" class="group-summary">{{ summary(group) }}</span>
@@ -234,6 +310,17 @@ const summary = (group: FilterGroup): string => {
   border-radius: var(--radius-sm);
   background: var(--c-surface);
   box-shadow: 0 6px 20px rgba(28, 28, 26, 0.12);
+}
+
+/* 右边放不下时改往左飞 —— 否则整个飞出窗口，用户只看到三个标题 */
+.submenu-left .group-sub {
+  left: auto;
+  right: calc(100% + 4px);
+}
+
+/* 往左飞时箭头也要翻过来 */
+.submenu-left .group-arrow {
+  transform: rotate(180deg);
 }
 
 .filter-group:hover > .group-sub,
