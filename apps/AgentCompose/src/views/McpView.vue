@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onActivated, onMounted, onUnmounted, ref, type Component } from 'vue'
+import { onActivated, onDeactivated, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
 import { NButton, NIcon, NModal, NSpace, NSwitch, NTag, NTooltip, useMessage } from 'naive-ui'
 import {
   CircleAlert,
@@ -48,6 +48,7 @@ import McpRegistryModal from '@/components/McpRegistryModal.vue'
 import McpServerModal from '@/components/McpServerModal.vue'
 import McpExposureDrawer from '@/components/McpExposureDrawer.vue'
 import EllipsisText from '@/components/EllipsisText.vue'
+import { mcpReloadTick } from '@/api/mcp'
 import { mcpRevision } from '@/data/dataRevision'
 
 const message = useMessage()
@@ -62,6 +63,23 @@ const loading = ref(false)
 const loadError = ref('')
 /** 上次加载时 MCP 数据的版本号 —— 激活时比对要不要重载。 */
 let loadedRevision = -1
+
+/**
+ * 页面当前是不是激活的。
+ *
+ * KeepAlive 缓存着的页面**停用时 watcher 照样会触发** ——
+ * 不盯着这个标志，顶栏一按刷新，MCP 页在后台就会重连一遍上游，
+ * 用户根本没看那个页面。
+ */
+let isActive = false
+
+/**
+ * 停用期间收到过刷新请求。
+ *
+ * 页面没开着的时候没法重载（重载会重连上游，用户看不到就是白干），
+ * 记下来等到激活时补上。
+ */
+let pendingReload = false
 
 /** 新增 / 编辑弹窗 */
 const showServerModal = ref(false)
@@ -261,7 +279,32 @@ const load = async (options: { quiet?: boolean } = {}): Promise<void> => {
 }
 
 onMounted(() => {
+  // 首次挂载 —— 这个页面是激活的
+  isActive = true
   void load()
+})
+
+/**
+ * 顶栏的「刷新工具箱」要刷新 MCP 列表。
+ *
+ * 顶栏和这个页面没有父子关系 —— 信号放在模块级（`@/api/mcp`），
+ * 这里 watch 它。
+ *
+ * **只在页面开着的时候重载** —— KeepAlive 停用的页面 watcher 照样触发，
+ * 不盯着的话，用户在别的页面按刷新，MCP 这边会白白重连一遍上游。
+ *
+ * 停用时的刷新会等到重新激活时才补上（见下面的 onActivated）。
+ *
+ * **静默重载**（`quiet`）—— 用户刚按了顶栏的刷新键，
+ * 那边已经报过「工具箱已刷新」了，这边不用再弹一次错误。
+ */
+watch(mcpReloadTick, () => {
+  if (!isActive) {
+    // 页面没开着 —— 记下来，激活时补
+    pendingReload = true
+    return
+  }
+  void load({ quiet: true })
 })
 
 /**
@@ -274,8 +317,19 @@ onMounted(() => {
  * 没变就不重载 —— 加载会顺带把上游重新连一遍，代价不小。
  */
 onActivated(() => {
+  isActive = true
+  // 停用期间顶栏按过刷新 —— 补上
+  if (pendingReload) {
+    pendingReload = false
+    void load()
+    return
+  }
   if (mcpRevision.value === loadedRevision) return
   void load()
+})
+
+onDeactivated(() => {
+  isActive = false
 })
 
 onUnmounted(() => {

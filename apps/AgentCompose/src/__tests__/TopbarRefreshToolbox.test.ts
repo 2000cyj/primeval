@@ -5,6 +5,8 @@ import { h } from 'vue'
 import AppTopbar from '../components/AppTopbar.vue'
 import AgentsView from '../views/AgentsView.vue'
 import { agentScan, agentScanError } from '@/api/agents'
+import { mcpReloadTick } from '@/api/mcp'
+import { skillReloadTick } from '@/api/skills'
 
 /**
  * 顶栏的「刷新工具箱」按钮。
@@ -108,6 +110,37 @@ describe('顶栏的刷新工具箱按钮', () => {
     expect(agentScanError.value).toContain('sidecar 未运行')
     // 失败不留旧数据 —— 留着会让人以为「现在还是这样」
     expect(agentScan.value).toEqual([])
+
+    wrapper.unmount()
+  })
+
+  it('也会让 MCP 页重新拉数据', async () => {
+    const wrapper = mountTopbar()
+    await flushPromises()
+
+    const before = mcpReloadTick.value
+
+    const button = document.querySelector<HTMLButtonElement>('[aria-label="刷新工具箱"]')
+    button?.click()
+    await flushPromises()
+
+    // 顶栏的刷新是全局动作 —— MCP 列表也得跟着刷
+    expect(mcpReloadTick.value).toBeGreaterThan(before)
+
+    wrapper.unmount()
+  })
+
+  it('也会让 Skills 页重新拉数据', async () => {
+    const wrapper = mountTopbar()
+    await flushPromises()
+
+    const before = skillReloadTick.value
+
+    const button = document.querySelector<HTMLButtonElement>('[aria-label="刷新工具箱"]')
+    button?.click()
+    await flushPromises()
+
+    expect(skillReloadTick.value).toBeGreaterThan(before)
 
     wrapper.unmount()
   })

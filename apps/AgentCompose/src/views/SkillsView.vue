@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref, type Component } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, ref, watch, type Component } from 'vue'
 import { NButton, NCheckbox, NIcon, NModal, NSpace, NSwitch, NTag, useMessage } from 'naive-ui'
 import { Plus, RefreshCw } from 'lucide-vue-next'
 import { Github } from 'lucide-vue-next'
@@ -11,6 +11,7 @@ import {
   refreshSkill,
   removeSkill,
   setSkillEnabled,
+  skillReloadTick,
   type SkillInfo,
   type SkillSource,
 } from '@/api/skills'
@@ -47,6 +48,22 @@ const loading = ref(false)
 /** 上次加载时 Skill 数据的版本号 —— 激活时比对要不要重载。 */
 let loadedRevision = -1
 const loadError = ref('')
+
+/**
+ * 页面当前是不是激活的。
+ *
+ * KeepAlive 缓存着的页面**停用时 watcher 照样会触发** ——
+ * 不盯着这个标志，顶栏一按刷新，Skills 页在后台就会白拉一遍。
+ */
+let isActive = false
+
+/**
+ * 停用期间收到过刷新请求。
+ *
+ * 页面没开着的时候不拉（拉了用户也看不到），
+ * 记下来等到激活时补上。
+ */
+let pendingReload = false
 
 /** 勾选中的 skill 名 */
 const selected = ref<string[]>([])
@@ -321,6 +338,28 @@ const loadWorkspaceSkills = async () => {
 }
 
 onMounted(() => {
+  // 首次挂载 —— 这个页面是激活的
+  isActive = true
+  void loadWorkspaceSkills()
+})
+
+/**
+ * 顶栏的「刷新工具箱」要刷新 Skills 列表。
+ *
+ * 顶栏和这个页面没有父子关系 —— 信号放在模块级（`@/api/skills`），
+ * 这里 watch 它。
+ *
+ * **只在页面开着的时候重载** —— KeepAlive 停用的页面 watcher 照样触发，
+ * 不盯着的话，用户在别的页面按刷新，这边会白拉一遍。
+ *
+ * 停用时的刷新会等到重新激活时才补上（见下面的 onActivated）。
+ */
+watch(skillReloadTick, () => {
+  if (!isActive) {
+    // 页面没开着 —— 记下来，激活时补
+    pendingReload = true
+    return
+  }
   void loadWorkspaceSkills()
 })
 
@@ -334,8 +373,19 @@ onMounted(() => {
  * 没变就不重载 —— 切回来是瞬时的，滚动位置和筛选条件都还在。
  */
 onActivated(() => {
+  isActive = true
+  // 停用期间顶栏按过刷新 —— 补上
+  if (pendingReload) {
+    pendingReload = false
+    void loadWorkspaceSkills()
+    return
+  }
   if (skillsRevision.value === loadedRevision) return
   void loadWorkspaceSkills()
+})
+
+onDeactivated(() => {
+  isActive = false
 })
 
 const openDetail = (skillName: string) => {

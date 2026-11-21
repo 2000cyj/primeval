@@ -6,6 +6,8 @@ import { useNotifications } from '@/composables/useNotifications'
 import { useWindowChrome } from '@/composables/useWindowChrome'
 import { useHelpCenter } from '@/composables/useHelpCenter'
 import { scanAgents, agentScanning } from '@/api/agents'
+import { requestMcpReload } from '@/api/mcp'
+import { requestSkillReload } from '@/api/skills'
 import HelpModal from '@/components/HelpModal.vue'
 import WindowControls from '@/components/WindowControls.vue'
 import { formatDateTime } from '@/utils/datetime'
@@ -33,11 +35,17 @@ const refreshing = computed(() => agentScanning.value)
  *
  * 扫描结果放在模块级（`@/api/agents`）—— 侧边栏的计数、工具箱页面的
  * 列表、这里刷的，是同一份。所以在这儿刷完，切到工具箱页面看到的就是新的。
+ *
+ * **Skills / MCP 列表也一起刷** —— 顶栏的刷新是全局动作，
+ * 不该只管 CLI 而放着别的不管（`requestSkillReload` / `requestMcpReload`
+ * 各发一个信号，对应页面收到就重新拉）。
  */
 const refreshToolbox = async (): Promise<void> => {
   if (refreshing.value) return
   try {
     await scanAgents()
+    requestSkillReload()
+    requestMcpReload()
     message.success('工具箱已刷新')
   } catch (error) {
     message.error(`刷新失败：${error instanceof Error ? error.message : String(error)}`)

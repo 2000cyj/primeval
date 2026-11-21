@@ -11,6 +11,7 @@
  * command 名一律取自 SKILL_COMMANDS，不在此处硬编码字符串。
  */
 import { invoke } from '@tauri-apps/api/core'
+import { ref } from 'vue'
 
 /** skill 的来源 */
 export type SkillSource = 'manual' | 'url' | 'local' | 'runtime' | 'duplicate' | 'git'
@@ -327,4 +328,22 @@ export async function listGitRepos(): Promise<GitRepo[]> {
   } catch (error) {
     throw fail('读取仓库列表', error)
   }
+}
+
+/**
+ * Skill 数据重载信号。
+ *
+ * 顶栏的「刷新工具箱」是全局动作 —— Skills 页也得跟着重新拉一次。
+ * 顶栏和页面之间没有父子关系，所以信号放模块级（跟 MCP 一个路子）。
+ *
+ * 用计数器而不是布尔：连续按两次要能刷两次。
+ */
+const reloadTick = ref(0)
+
+/** 当前的重载信号 —— Skills 页 watch 它。 */
+export const skillReloadTick = reloadTick
+
+/** 请求重新拉 Skill 数据（顶栏的「刷新工具箱」调它）。 */
+export const requestSkillReload = (): void => {
+  reloadTick.value += 1
 }

@@ -1,7 +1,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
+import { ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import McpView from '../views/McpView.vue'
+import { requestMcpReload } from '@/api/mcp'
 
 /**
  * 页面的数据全部来自 tauri command，不再有 mock 兜底。
@@ -61,19 +63,68 @@ const stubCommands = (): void => {
   })
 }
 
+/**
+ * 挂着的 wrapper —— 测完要拆掉。
+ *
+ * 不拆的话，它会一直 watch 那个模块级的刷新信号 ——
+ * 下一个用例按刷新时，这个旧实例也跟着重载，计数就乱了。
+ */
+const mounted: { unmount: () => void }[] = []
+
 const mountView = async () => {
   const wrapper = mount({
     components: { NMessageProvider, McpView },
     template: '<NMessageProvider><McpView /></NMessageProvider>',
   })
+  mounted.push(wrapper)
   await flushPromises()
   await wrapper.vm.$nextTick()
   return wrapper
 }
 
+/**
+ * 挂一个 KeepAlive 里的 MCP 页 —— 能真的停用它。
+ *
+ * KeepAlive 停用时 **watcher 照样会触发**，
+ * 而激活时又得补上停用期间欠下的刷新 —— 这两件事都得测到。
+ */
+const mountCachedView = async () => {
+  const show = ref(true)
+  const wrapper = mount({
+    components: { NMessageProvider, McpView },
+    template: `
+      <NMessageProvider>
+        <KeepAlive>
+          <McpView v-if="show" />
+        </KeepAlive>
+      </NMessageProvider>
+    `,
+    setup: () => ({ show }),
+  })
+  mounted.push(wrapper)
+  await flushPromises()
+  await wrapper.vm.$nextTick()
+  return {
+    wrapper,
+    /** 停用（切走） */
+    deactivate: async () => {
+      show.value = false
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+    },
+    /** 重新激活（切回） */
+    activate: async () => {
+      show.value = true
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+    },
+  }
+}
+
 const serverRows = (wrapper: Awaited<ReturnType<typeof mountView>>) => wrapper.findAll('.server')
 
 afterEach(() => {
+  for (const wrapper of mounted.splice(0)) wrapper.unmount()
   invokeMock.mockReset()
   document.body.innerHTML = ''
 })
@@ -159,5 +210,56 @@ describe('McpView', () => {
 
     // 弹窗被 teleport 到 body
     expect(document.body.textContent).toContain('传输')
+  })
+
+  it('顶栏的「刷新工具箱」会刷新 MCP 列表', async () => {
+    stubCommands()
+    await mountView()
+
+    const before = invokeMock.mock.calls.filter((item) => item[0] === 'mcp_list_servers').length
+    expect(before).toBe(1)
+
+    // 顶栏按刷新 —— 发信号
+    requestMcpReload()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const after = invokeMock.mock.calls.filter((item) => item[0] === 'mcp_list_servers').length
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('页面停用时不重载 —— 用户没看那个页面，别白连一遍上游', async () => {
+    stubCommands()
+    const view = await mountCachedView()
+
+    const before = invokeMock.mock.calls.filter((item) => item[0] === 'mcp_list_servers').length
+
+    // 切走（KeepAlive 停用时 watcher 照样触发）
+    await view.deactivate()
+    requestMcpReload()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const after = invokeMock.mock.calls.filter((item) => item[0] === 'mcp_list_servers').length
+    expect(after).toBe(before)
+  })
+
+  it('停用期间按的刷新，切回来时补上', async () => {
+    stubCommands()
+    const view = await mountCachedView()
+
+    await view.deactivate()
+    requestMcpReload()
+    await flushPromises()
+
+    const before = invokeMock.mock.calls.filter((item) => item[0] === 'mcp_list_servers').length
+
+    // 切回来 —— 该补上那次刷新
+    await view.activate()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const after = invokeMock.mock.calls.filter((item) => item[0] === 'mcp_list_servers').length
+    expect(after).toBeGreaterThan(before)
   })
 })

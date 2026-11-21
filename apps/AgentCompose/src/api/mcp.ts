@@ -7,6 +7,7 @@
  * 假数据会让人以为配置已经生效，实际什么都没存 —— 那比报错更糟。
  */
 import { invoke } from '@tauri-apps/api/core'
+import { ref } from 'vue'
 import {
   MCP_COMMANDS,
   type McpExposure,
@@ -19,6 +20,25 @@ import {
 function fail(action: string, error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error)
   return new Error(`${action}失败：${detail}`, { cause: error })
+}
+
+/**
+ * MCP 数据重载信号。
+ *
+ * 顶栏的「刷新工具箱」是全局动作 —— MCP 页也得跟着重新拉一次。
+ * 顶栏和 MCP 页之间没有父子关系，所以信号放模块级（跟 `api/agents` 的
+ * 扫描结果一个路子）。
+ *
+ * 用计数器而不是布尔：连续按两次要能刷两次。
+ */
+const reloadTick = ref(0)
+
+/** 当前的重载信号 —— MCP 页 watch 它。 */
+export const mcpReloadTick = reloadTick
+
+/** 请求重新拉 MCP 数据（顶栏的「刷新工具箱」调它）。 */
+export const requestMcpReload = (): void => {
+  reloadTick.value += 1
 }
 
 /**

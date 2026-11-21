@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SkillsView from '../views/SkillsView.vue'
+import { requestSkillReload } from '@/api/skills'
 
 /**
  * 页面数据全部来自 tauri command（Skill 仓库里真实落盘的 skill），不再有 mock 兜底。
@@ -67,14 +68,24 @@ const mountView = async () => {
     components: { NMessageProvider, SkillsView },
     template: '<NMessageProvider><SkillsView /></NMessageProvider>',
   })
+  mounted.push(wrapper)
   await flushPromises()
   await wrapper.vm.$nextTick()
   return wrapper
 }
 
+/**
+ * 挂着的 wrapper —— 测完要拆掉。
+ *
+ * 不拆的话，它会一直 watch 那个模块级的刷新信号 ——
+ * 下一个用例按刷新时，这个旧实例也跟着重拉，计数就乱了。
+ */
+const mounted: { unmount: () => void }[] = []
+
 const rows = (wrapper: Awaited<ReturnType<typeof mountView>>) => wrapper.findAll('.skill-row')
 
 afterEach(() => {
+  for (const wrapper of mounted.splice(0)) wrapper.unmount()
   invokeMock.mockReset()
   document.body.innerHTML = ''
 })
@@ -243,5 +254,22 @@ describe('SkillsView', () => {
 
     expect(rows(wrapper)).toHaveLength(0)
     expect(wrapper.get('.empty').text()).toContain('没有匹配的 Skill')
+  })
+
+  it('顶栏的「刷新工具箱」会刷新 Skills 列表', async () => {
+    invokeMock.mockImplementation((command: string) =>
+      command === 'skills_list' ? Promise.resolve(storedSkills) : Promise.resolve(null),
+    )
+    await mountView()
+
+    const before = invokeMock.mock.calls.filter((item) => item[0] === 'skills_list').length
+
+    // 顶栏按刷新 —— 发信号
+    requestSkillReload()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const after = invokeMock.mock.calls.filter((item) => item[0] === 'skills_list').length
+    expect(after).toBeGreaterThan(before)
   })
 })
