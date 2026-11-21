@@ -138,6 +138,9 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
 ///
 /// 名字用 skill 目录名 —— 跟运行时自己的发现规则一致。
 /// 同名怎么办由运行时决定（它先到先得），这里不额外做避让。
+///
+/// **先清空再拷** —— 直接盖的话，上游删掉的文件会留在项目里。
+/// skill 更新后少了个文件，项目里那份还带着，agent 读到的就是旧的。
 pub fn land_skill(skills_dir: &Path, skill_dir: &Path) -> std::io::Result<PathBuf> {
     let name = skill_dir
         .file_name()
@@ -147,6 +150,8 @@ pub fn land_skill(skills_dir: &Path, skill_dir: &Path) -> std::io::Result<PathBu
         return Err(std::io::Error::other("skill 目录名无效"));
     }
     let target = skills_dir.join(&name);
+    // 先清掉旧的 —— 盖上去的话上游删的文件会留着
+    let _ = fs::remove_dir_all(&target);
     copy_dir(skill_dir, &target)?;
     Ok(target)
 }
@@ -475,7 +480,46 @@ pub fn land_with(
     let mut files: Vec<String> = Vec::new();
 
     // ── skill ──────────────────────────────────────────────
+    //
+    // 先删上次落地、这次不再绑的，再把当前绑的拷进去。
+    //
+    // 不删的话：解绑了 skill，项目里那份还在，pi 照样会加载它 ——
+    // 看着像解绑了，其实没解绑。
+    //
+    // 删的是「上次确实是我们写的」（落地记录里的）——
+    // 用户自己放在 skills 目录里的不在这名单上，不动。
     let skills_dir = runtime.skills_dir(cwd);
+    let skill_prefix = format!("{}/", relative_to(cwd, &skills_dir));
+    let stale_skills: Vec<String> = previous
+        .as_ref()
+        .map(|item| item.files.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|file| {
+            let rest = file.strip_prefix(&skill_prefix)?.to_string();
+            // 只认一级 —— skills/<名字>
+            if rest.is_empty() || rest.contains('/') {
+                return None;
+            }
+            Some(rest)
+        })
+        .filter(|name| {
+            // 这次还绑着的，留着
+            !agent
+                .skills
+                .iter()
+                .any(|item| item.strip_prefix("skills/").map(|rest| rest == name).unwrap_or(false))
+        })
+        .filter(|name| {
+            // 只删目录 —— 落地记录里也有文件（运行时的 agentspace.ts），
+            // 那些不是「解绑的 skill」
+            skills_dir.join(name).is_dir()
+        })
+        .collect();
+    for name in &stale_skills {
+        let _ = fs::remove_dir_all(skills_dir.join(name));
+    }
+
     for dir in agentspace_core::agent::skill_dirs(paths, agent) {
         let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
             continue;
@@ -552,8 +596,38 @@ pub fn land_with(
     //   （从扩展文件往上找 node_modules）。不带上就会报
     //   "Cannot find module 'yaml'"。
     let ext_dirs = agentspace_core::agent::extension_dirs(paths, agent);
+    let target_root = cwd.join(".pi").join("extensions");
+    // 上次落地、这次不再绑的 → 删掉（同 skill：只删我们写的）
+    //
+    // 名单从落地记录里的 files 推 —— 跟 skill 同一个路子。
+    let ext_prefix = format!("{}/", relative_to(cwd, &target_root));
+    let bound_exts: Vec<String> = ext_dirs
+        .iter()
+        .filter_map(|dir| dir.file_name().map(|n| n.to_string_lossy().to_string()))
+        .collect();
+    let stale_extensions: Vec<String> = previous
+        .as_ref()
+        .map(|item| item.files.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|file| {
+            let rest = file.strip_prefix(&ext_prefix)?.to_string();
+            // 只认一级 —— extensions/<名字>
+            if rest.is_empty() || rest.contains('/') {
+                return None;
+            }
+            Some(rest)
+        })
+        .filter(|name| !bound_exts.contains(name))
+        .filter(|name| {
+            // 只删目录 —— 运行时的 agentspace.ts 是个文件，不该动
+            target_root.join(name).is_dir()
+        })
+        .collect();
+    for name in &stale_extensions {
+        let _ = std::fs::remove_dir_all(target_root.join(name));
+    }
     if !ext_dirs.is_empty() {
-        let target_root = cwd.join(".pi").join("extensions");
         for dir in &ext_dirs {
             let Some(name) = dir.file_name().map(|n| n.to_string_lossy().to_string()) else {
                 continue;
@@ -1143,6 +1217,173 @@ mod tests {
 
         assert_eq!(target, target_root.join("kb"));
         assert!(target.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn land_skill_replaces_target_so_stale_files_dont_linger() {
+        let dir = std::env::temp_dir().join("agentspace-cli-skill-stale");
+        let _ = fs::remove_dir_all(&dir);
+        let src = dir.join("src").join("kb");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("SKILL.md"), "# kb").unwrap();
+        fs::write(src.join("old.md"), "上游已删").unwrap();
+        let target_root = dir.join("out").join("skills");
+
+        // 先落一次
+        land_skill(&target_root, &src).unwrap();
+        assert!(target_root.join("kb").join("old.md").is_file());
+
+        // 上游把这个文件删了，再落一次
+        fs::remove_file(src.join("old.md")).unwrap();
+        land_skill(&target_root, &src).unwrap();
+
+        assert!(
+            !target_root.join("kb").join("old.md").exists(),
+            "上游删掉的文件不该留在项目里"
+        );
+        assert!(target_root.join("kb").join("SKILL.md").is_file());
+    }
+
+    // ── 落地时的清理 ──────────────────────────────────────
+
+    /// 造一个可落地的智能体。
+    fn agent_with_skills(skills: &[&str]) -> CreatedAgent {
+        CreatedAgent {
+            id: "a1".into(),
+            name: "知识助手".into(),
+            skills: skills.iter().map(|item| format!("skills/{item}")).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// 造一个带 skill 的临时家目录 + 项目目录。
+    fn skill_sandbox(tag: &str, names: &[&str]) -> (Paths, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("agentspace-cli-land-{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        let paths = Paths::new(dir.join("home"));
+        for name in names {
+            let skill = paths.skills_root().join(name);
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("SKILL.md"), format!("# {name}")).unwrap();
+        }
+        let project = dir.join("project");
+        fs::create_dir_all(&project).unwrap();
+        (paths, project)
+    }
+
+    #[test]
+    fn land_drops_skill_unbound_since_last_land() {
+        let (paths, project) = skill_sandbox("unbind", &["alpha", "beta"]);
+        let runtime = PiRuntime::new();
+
+        // 先落两个
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha", "beta"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+        assert!(project.join(".pi").join("skills").join("beta").is_dir());
+
+        // 解绑 beta，再落一次
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        assert!(
+            !project.join(".pi").join("skills").join("beta").exists(),
+            "解绑的 skill 该从项目里清掉 —— 不清的话 pi 照样会加载它"
+        );
+        assert!(project.join(".pi").join("skills").join("alpha").is_dir());
+    }
+
+    #[test]
+    fn land_keeps_skill_user_put_themselves() {
+        let (paths, project) = skill_sandbox("foreign", &["alpha", "beta"]);
+        let runtime = PiRuntime::new();
+
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha", "beta"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        // 用户自己在项目里放了一个 skill —— 不是我们落的，不该动
+        let own = project.join(".pi").join("skills").join("my-own");
+        fs::create_dir_all(&own).unwrap();
+        fs::write(own.join("SKILL.md"), "# 我自己写的").unwrap();
+
+        // 解绑 beta，再落一次
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        assert!(
+            own.join("SKILL.md").is_file(),
+            "用户自己放的 skill 不该被删"
+        );
+        assert!(!project.join(".pi").join("skills").join("beta").exists());
+    }
+
+    #[test]
+    fn land_records_what_it_landed() {
+        let (paths, project) = skill_sandbox("record", &["alpha"]);
+        let runtime = PiRuntime::new();
+
+        let state = land_with(
+            &runtime,
+            &agent_with_skills(&["alpha"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        assert!(
+            state.files.iter().any(|file| file == ".pi/skills/alpha"),
+            "落地记录里要有 skill 目录 —— 下次靠它认出自家的目录"
+        );
+    }
+
+    #[test]
+    fn land_cleans_up_after_old_state_without_new_fields() {
+        // 老版本的落地记录 —— 只有 files，没有新字段。
+        // 解绑的 skill 该从项目里清掉（不能因为字段缺失就永远留着）。
+        let (paths, project) = skill_sandbox("old-state", &["alpha", "beta"]);
+        let runtime = PiRuntime::new();
+
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha", "beta"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+        assert!(project.join(".pi").join("skills").join("beta").is_dir());
+
+        // 解绑 beta，再落一次
+        land_with(
+            &runtime,
+            &agent_with_skills(&["alpha"]),
+            &project,
+            &paths,
+            LandPolicy::Always,
+        );
+
+        assert!(
+            !project.join(".pi").join("skills").join("beta").exists(),
+            "解绑的 skill 该从项目里清掉"
+        );
     }
 
     #[test]
