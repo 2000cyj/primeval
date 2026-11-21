@@ -77,6 +77,15 @@ type RecordPayload = {
 /** 全部通知，最新的在最前 */
 const notices = ref<Notice[]>([])
 
+/**
+ * 有没有操作正在跑（装 / 升 / 卸）。
+ *
+ * 放模块级 —— 「查更新」在多处要用（`api/agents` 与 `useCliOps`），
+ * 各自算一遍容易漏。
+ */
+export const hasRunningOp = (): boolean =>
+  notices.value.some((notice) => notice.status === 'running')
+
 /** 自增序号：同毫秒内发多条也不会撞 id */
 let seq = 0
 

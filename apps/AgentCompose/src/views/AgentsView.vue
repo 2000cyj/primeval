@@ -3,12 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NIcon, NSelect, NTag, NTooltip, useMessage } from 'naive-ui'
 import { ChevronDown, ChevronUp, CircleAlert, Download, Loader2, RefreshCw } from 'lucide-vue-next'
 import {
-  checkUpdates,
   listInstallations,
   scanAgents,
   agentScan,
   agentScanError,
   agentScanning,
+  checkingUpdates,
   type AgentInfo,
   type PackageOp,
   type PackagePlan,
@@ -20,7 +20,7 @@ import { setUpgradeDoneHandler, useCliOps } from '@/composables/useCliOps'
 
 const message = useMessage()
 
-const { performOp, opOf, isBusy, hasRunningOp, busyLabel, statusText, failureReason } = useCliOps()
+const { performOp, opOf, isBusy, busyLabel, statusText, failureReason } = useCliOps()
 
 /**
  * 探测结果（真实数据，不带 mock 兜底）。
@@ -65,73 +65,16 @@ interface PendingOp {
 
 const pendingOp = ref<PendingOp | null>(null)
 
-/** 正在查最新版本 */
-const checkingUpdates = ref(false)
-
-/**
- * 查最新版本 —— 在「本地可用 agent」探测出来之后才做，且只查装上了的。
- *
- * registry 在慢网络下要好几秒，结果晚到就晚到；
- * 没装的工具压根不去问 registry。
- *
- * 升级期间不查：升级完自然会重新扫一遍，那时再查才有意义。
- */
-const loadUpdates = async () => {
-  if (checkingUpdates.value) return
-  // 有操作在跑就不查：装完 / 升完自然会重新扫一遍，那时再查才有意义。
-  if (hasRunningOp()) return
-  // 只查本地确实装上、且是 npm 分发的
-  const targets = agents.value
-    .filter((agent) => agent.installed && agent.package)
-    .map((agent) => agent.command)
-  if (!targets.length) {
-    checkingUpdates.value = false
-    return
-  }
-  checkingUpdates.value = true
-  try {
-    const latest = await checkUpdates(targets)
-    for (const item of latest) {
-      const agent = agents.value.find((entry) => entry.command === item.command)
-      if (!agent || !item.latestVersion) continue
-      // 本地版本更高就不提示（预发布通道领先的情况）。
-      if (!agent.version || isNewer(item.latestVersion, agent.version)) {
-        agent.latestVersion = item.latestVersion
-      }
-    }
-  } catch {
-    // 查不到就当没有新版本
-  } finally {
-    checkingUpdates.value = false
-  }
-}
-
-/** 比较版本号（只比数字段） */
-const isNewer = (latest: string, current: string): boolean => {
-  const parse = (value: string) =>
-    value
-      .trimStart()
-      .replace(/^[vV]/, '')
-      .split(/[^0-9]+/)
-      .filter(Boolean)
-      .map((part) => Number(part))
-  const left = parse(latest)
-  const right = parse(current)
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const a = left[index] ?? 0
-    const b = right[index] ?? 0
-    if (a !== b) return a > b
-  }
-  return false
-}
+/** 正在查最新版本（共享 —— 版本检查由 api/agents 触发） */
+const checking = computed(() => checkingUpdates.value)
 
 /** 重新探测本机安装情况 */
 const runScan = async () => {
   if (scanning.value) return
   try {
     await scanAgents()
-    // 版本查询异步跑，不挡这次扫描。
-    void loadUpdates()
+    // 版本查询由 scanAgents 自己带（异步跑，不挡扫描）——
+    // 放在共享层，任何人触发扫描都会跟着查一遍。
   } catch {
     // 失败的原因在共享状态里（`scanError`），界面自己显示
   }
@@ -228,7 +171,7 @@ const toggleInstalls = async (agent: AgentInfo) => {
         <h1 class="page-title">Agents</h1>
         <p class="page-sub">
           检测本机已安装的 CLI agents 及其版本
-          <span v-if="checkingUpdates" class="page-sub-hint">正在检查更新…</span>
+          <span v-if="checking" class="page-sub-hint">正在检查更新…</span>
         </p>
       </div>
     </header>

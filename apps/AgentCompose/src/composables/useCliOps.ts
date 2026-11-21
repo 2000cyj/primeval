@@ -7,7 +7,7 @@
  * 即使用户没打开 Agents 页，那条通知也得能重试。
  */
 import { installAgent, uninstallAgent, upgradeAgent } from '@/api/agents'
-import { useNotifications, type NoticeOp } from '@/composables/useNotifications'
+import { hasRunningOp, useNotifications, type NoticeOp } from '@/composables/useNotifications'
 
 /** 一次操作要记的东西 */
 export interface CliOpTarget {
@@ -118,9 +118,6 @@ export const useCliOps = () => {
   /** 某个 agent 是不是有操作在跑 */
   const isBusy = (command: string): boolean => opOf(command)?.status === 'running'
 
-  /** 有没有操作正在跑（有就别去查更新了） */
-  const hasRunningOp = (): boolean => notices.value.some((notice) => notice.status === 'running')
-
   /** 按钮上的忙态文案：安装中 / 升级中 / 卸载中 */
   const busyLabel = (command: string): string => {
     const notice = opOf(command)
@@ -159,6 +156,7 @@ export const useCliOps = () => {
     bindRetryActions,
     opOf,
     isBusy,
+    /** 有没有操作正在跑（有就别去查更新了）—— 定义在 useNotifications，模块级共享 */
     hasRunningOp,
     busyLabel,
     statusText,

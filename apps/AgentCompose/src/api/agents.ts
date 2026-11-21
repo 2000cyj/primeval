@@ -7,6 +7,7 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import { computed, ref } from 'vue'
+import { hasRunningOp } from '@/composables/useNotifications'
 
 /** 一处安装 */
 export interface AgentInstall {
@@ -206,6 +207,72 @@ export const agentScanning = computed(() => scanCount.value > 0)
 /** 扫描失败的原因（共享 —— 谁扫的谁显示）。 */
 export const agentScanError = ref('')
 
+/** 正在查 registry 上的最新版本（共享 —— 版本列的「正在检查更新…」提示）。 */
+export const checkingUpdates = ref(false)
+
+/** 比较版本号（只比数字段） */
+const isNewer = (latest: string, current: string): boolean => {
+  const parse = (value: string) =>
+    value
+      .trimStart()
+      .replace(/^[vV]/, '')
+      .split(/[^0-9]+/)
+      .filter(Boolean)
+      .map((part) => Number(part))
+  const left = parse(latest)
+  const right = parse(current)
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const a = left[index] ?? 0
+    const b = right[index] ?? 0
+    if (a !== b) return a > b
+  }
+  return false
+}
+
+/**
+ * 查 registry 上的最新版本 —— 结果写回扫描结果里。
+ *
+ * **每次扫描后都跑** —— 扫描会把结果换成一批新对象，
+ * `latestVersion` 也就没了。不跟着补一次的话，
+ * 顶栏的「刷新工具箱」一按，版本列的「有新版本」就消失了。
+ *
+ * registry 在慢网络下要好几秒，结果晚到就晚到；
+ * 没装的工具压根不去问 registry。
+ *
+ * 升级期间不查：升级完自然会重新扫一遍，那时再查才有意义。
+ */
+const loadUpdates = async (): Promise<void> => {
+  if (checkingUpdates.value) return
+  // 有操作在跑就不查：装完 / 升完自然会重新扫一遍，那时再查才有意义。
+  if (hasRunningOp()) return
+  // 只查本地确实装上、且是 npm 分发的
+  const targets = agentScan.value
+    .filter((agent) => agent.installed && agent.package)
+    .map((agent) => agent.command)
+  if (!targets.length) {
+    checkingUpdates.value = false
+    return
+  }
+  checkingUpdates.value = true
+  try {
+    const latest = await checkUpdates(targets)
+    for (const item of latest) {
+      // 取的是当前扫描结果 —— 扫描期间又刷了一次的话，
+      // 结果落到最新那批对象上，而不是被换掉的那批
+      const agent = agentScan.value.find((entry) => entry.command === item.command)
+      if (!agent || !item.latestVersion) continue
+      // 本地版本更高就不提示（预发布通道领先的情况）。
+      if (!agent.version || isNewer(item.latestVersion, agent.version)) {
+        agent.latestVersion = item.latestVersion
+      }
+    }
+  } catch {
+    // 查不到就当没有新版本
+  } finally {
+    checkingUpdates.value = false
+  }
+}
+
 /**
  * 探测本机已安装的 CLI agents。
  *
@@ -219,6 +286,12 @@ export async function scanAgents(): Promise<AgentInfo[]> {
   try {
     const agents = await invoke<AgentInfo[]>(AGENT_COMMANDS.scan)
     agentScan.value = agents
+    // 版本查询异步跑，不挡这次扫描。
+    //
+    // 跟着扫描跑，而不是靠调用方记得调 —— 扫描换掉的是一批新对象，
+    // `latestVersion` 也跟着没了。不补一次的话，
+    // 顶栏的「刷新工具箱」一按，版本列的「有新版本」就消失了。
+    void loadUpdates()
     return agents
   } catch (error) {
     agentScanError.value = error instanceof Error ? error.message : String(error)

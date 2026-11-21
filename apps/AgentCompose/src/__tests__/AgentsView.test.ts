@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NMessageProvider } from 'naive-ui'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import AgentsView from '../views/AgentsView.vue'
+import { scanAgents } from '@/api/agents'
 import { useNotifications } from '../composables/useNotifications'
 import clawIcon from '@/assets/agent-icons/claw.svg'
 import piIcon from '@/assets/agent-icons/pi.svg'
@@ -255,6 +256,42 @@ describe('AgentsView', () => {
     const call = invokeMock.mock.calls.find((item) => item[0] === 'agents_check_updates')
     // gemini 没装，不该去问 registry
     expect(call?.[1]).toEqual({ commands: ['claude', 'codex'] })
+  })
+
+  it('顶栏刷新工具箱后，版本检查要跟着重跑', async () => {
+    // 扫描返回的对象不带 latestVersion —— 后端不知道 registry 上的版本，
+    // 那是前端查出来写进去的。刷完不补查，「有新版本」就没了。
+    const fresh = detected.map((item) => ({ ...item, latestVersion: null }))
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'agents_scan') return Promise.resolve(fresh)
+      if (command === 'agents_check_updates') {
+        return Promise.resolve([{ command: 'claude', latestVersion: '2.1.319' }])
+      }
+      return Promise.resolve(null)
+    })
+
+    await mountView()
+    await flushPromises()
+
+    // 第一次查过
+    expect(invokeMock.mock.calls.some((item) => item[0] === 'agents_check_updates')).toBe(true)
+
+    // 顶栏刷一次 —— 扫描换了新对象，得再查一遍版本
+    invokeMock.mockClear()
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'agents_scan') return Promise.resolve(fresh)
+      if (command === 'agents_check_updates') {
+        return Promise.resolve([{ command: 'claude', latestVersion: '2.1.319' }])
+      }
+      return Promise.resolve(null)
+    })
+    await scanAgents()
+    await flushPromises()
+
+    expect(invokeMock.mock.calls.some((item) => item[0] === 'agents_check_updates')).toBe(true)
+    // 结果写回了新那批对象 —— 版本列该显示「有新版本」
+    const { agentScan } = await import('@/api/agents')
+    expect(agentScan.value.find((item) => item.command === 'claude')?.latestVersion).toBe('2.1.319')
   })
 
   it('探测失败时展示真实原因，不展示假数据', async () => {
