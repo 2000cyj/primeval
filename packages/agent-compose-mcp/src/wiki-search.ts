@@ -1,7 +1,7 @@
 /**
  * Wiki 检索的共用逻辑。
  *
- * 跟 `apps/agentspace-cli/assets/agentspace-extension.ts` 里的同名逻辑
+ * 跟 `apps/agentspace-core/assets/agentspace-extension.ts` 里的同名逻辑
  * **必须保持一致** —— 那边是 Pi 扩展（单文件、零依赖，不能 import 本包），
  * 所以只能各写一份，用 `scripts/wiki-e2e.mts` 这个契约测试盯着两边不漂移。
  *

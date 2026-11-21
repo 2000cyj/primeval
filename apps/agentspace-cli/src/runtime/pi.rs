@@ -25,9 +25,9 @@ use crate::trust;
 
 /// agentspace 的 Pi 扩展：把 `.pi/AGENTS.md` 注入 system prompt。
 ///
-/// 用 `include_str!` 打包进来 —— CLI 是个独立 crate，不带前端资源目录，
-/// 也没必要为一个文件引入打包流程。源码在 `assets/agentspace-extension.ts`。
-const EXTENSION_SOURCE: &str = include_str!("../../assets/agentspace-extension.ts");
+/// 源码放在共享的 core crate 里（`agentspace-core/assets/`）——
+/// 桌面端也要用它（建立可编辑的母本），放一份就够了。
+const EXTENSION_SOURCE: &str = agentspace_core::extensions::BUILTIN_AGENTSPACE_SOURCE;
 
 /// 扩展在项目里的落点（相对 `.pi/`）。
 ///

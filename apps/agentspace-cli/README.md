@@ -47,7 +47,7 @@ agentspace
 │   ├── enable / disable / test / connect / status / probe
 │   ├── exposure get|set
 │   └── refresh-token
-├── extension               Pi 扩展（Pi 自带 / npm / 自定义）
+├── extension               Pi 扩展（内置 / 用户级 / 项目级 / npm / 自定义）
 │   ├── list / get / install / remove
 │   ├── create / read / write / template
 │   ├── enable / disable
@@ -64,7 +64,7 @@ agentspace
 桌面端的「Pi 扩展」页在命令行里也有：
 
 ```bash
-agentspace extension list                      # 已装的扩展（Pi 自带 / npm / 自定义）
+agentspace extension list                      # 已装的扩展（内置 / 用户级 / 项目级 / npm / 自定义）
 agentspace extension install pi-subagents      # 从 npm 装
 agentspace extension search "context"          # 搜市场
 agentspace extension create my-ext             # 新建自定义扩展
@@ -90,6 +90,17 @@ agentspace extension deps agentspace-mcp-bridge @modelcontextprotocol/sdk typebo
 agentspace extension write agentspace-mcp-bridge --file assets/agentspace-mcp-bridge.ts
 agentspace agent update <智能体名> --extension extensions/custom/agentspace-mcp-bridge
 ```
+
+### 内置扩展的母本
+
+`agentspace.ts`（运行时扩展）的**母本**在工具箱里：
+
+```text
+~/.agent-compose/extensions/builtin/agentspace/index.ts
+```
+
+改它，下次 `agentspace run` 落地到项目的就是你改过的版本。
+母本缺了会自动补一份出厂版的（**不会覆盖你改过的**）。
 
 ## 给 agent 用
 

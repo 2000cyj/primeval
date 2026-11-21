@@ -426,6 +426,9 @@ pub fn extension_dirs(paths: &Paths, agent: &CreatedAgent) -> Vec<PathBuf> {
                 }
             }
             Some(("custom", name)) => root.join("custom").join(name),
+            // 内置扩展（如 agentspace-mcp-bridge）——
+            // 它们在工具箱的 builtin/ 目录下，绑定后随智能体一起复制过去。
+            Some(("builtin", name)) => root.join("builtin").join(name),
             _ => continue,
         };
         // 一个包可能有多个入口文件 —— 按目录去重，别复制两遍

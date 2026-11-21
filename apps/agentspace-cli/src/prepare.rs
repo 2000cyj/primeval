@@ -524,9 +524,19 @@ pub fn land_with(
     }
 
     // ── 扩展 ──────────────────────────────────────────────
+    //
+    // 内置扩展用**用户改过的母本**（工具箱 extensions/builtin/）——
+    // 没改过就用出厂那份。用户改了什么，这里落地什么。
+    //
+    // 母本缺了就先用出厂内容补一份（补的是出厂版，不会覆盖用户的修改）。
+    if let Err(error) = agentspace_core::extensions::ensure_builtin_sources(paths) {
+        eprintln!("准备内置扩展母本失败：{error}");
+    }
     if let Some(asset) = runtime.extension() {
         let path = extension_path(runtime, cwd, asset.relative_path);
-        match write_extension(&path, asset.source) {
+        let source = agentspace_core::extensions::builtin_master(paths, "agentspace")
+            .unwrap_or_else(|| asset.source.to_string());
+        match write_extension(&path, &source) {
             Ok(()) => files.push(relative_to(cwd, &path)),
             Err(error) => eprintln!("写扩展失败（{}）：{error}", path.display()),
         }

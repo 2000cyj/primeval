@@ -19,6 +19,7 @@
 //! pi 的 `listConfiguredPackages()` 只给「配置了哪些包」，
 //! 不给「包里有哪些扩展」。要看到扩展本身就得自己扫目录。
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -29,15 +30,21 @@ use crate::paths::Paths;
 ///
 /// 四个来源，按「谁放那儿、能不能绑」分：
 ///
-/// | 来源 | 位置 | 运行时自动加载 | 能绑 |
-/// |---|---|---|---|
-/// | 用户级 | `~/.pi/agent/extensions/` | ✅ 全局 | ❌ |
-/// | 项目级 | `<项目>/.pi/extensions/` | ✅ 只本项目 | ❌ |
-/// | npm | 工具箱 `extensions/npm/` | ❌ | ✅ |
-/// | 自定义 | 工具箱 `extensions/custom/` | ❌ | ✅ |
+/// | 来源 | 位置 | 运行时自动加载 | 能绑 | 能改 |
+/// |---|---|---|---|---|
+/// | 用户级 | `~/.pi/agent/extensions/` | ✅ 全局 | ❌ | ❌ |
+/// | 项目级 | `<项目>/.pi/extensions/` | ✅ 只本项目 | ❌ | ❌ |
+/// | npm | 工具箱 `extensions/npm/` | ❌ | ✅ | ✅ |
+/// | 自定义 | 工具箱 `extensions/custom/` | ❌ | ✅ | ✅ |
+/// | 内置 | 工具箱 `extensions/builtin/` | ❌ | ❌ | ✅ |
 ///
 /// 前两个 Pi 自己会加载 —— 不用（也不能）由我们绑。
-/// 后两个在我们自己的工具箱里，要绑给智能体才会用上。
+/// npm / 自定义要绑给智能体才会用上。
+/// 内置的母本改了就生效（下次落地到项目时用改后的），
+/// 但它不用绑 —— 运行时扩展自己会附带。
+///
+/// 「是不是 AgentSpace 自带的」另有一个标记（见 `builtin` 字段）：
+/// `agentspace-mcp-bridge` 就是 AgentSpace 附带的，即使被放在自定义目录下。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ExtensionSourceKind {
@@ -49,6 +56,8 @@ pub enum ExtensionSourceKind {
     Npm,
     /// 用户自己写放到工具箱里的
     Custom,
+    /// AgentSpace 自带的（工具箱 `extensions/builtin/`）—— 母本，可改
+    Builtin,
 }
 
 impl ExtensionSourceKind {
@@ -59,21 +68,136 @@ impl ExtensionSourceKind {
             ExtensionSourceKind::Project => "项目级",
             ExtensionSourceKind::Npm => "npm",
             ExtensionSourceKind::Custom => "自定义",
+            ExtensionSourceKind::Builtin => "内置",
         }
     }
 
-    /// 属于「工具箱」吗（工具箱里的扩展要绑给智能体才生效）。
+    /// 属于「工具箱」吗（工具箱里的扩展我们自己管，代码能改）。
     pub fn in_toolbox(self) -> bool {
-        matches!(self, ExtensionSourceKind::Npm | ExtensionSourceKind::Custom)
+        matches!(
+            self,
+            ExtensionSourceKind::Npm | ExtensionSourceKind::Custom | ExtensionSourceKind::Builtin
+        )
     }
 
     /// 能不能绑定到智能体。
     ///
     /// pi 自动发现的扩展运行时自己会加载 —— 不用（也不能）由我们绑。
+    /// 内置的 `agentspace.ts` 每次落地都会带过去 —— 也不用绑。
     pub fn bindable(self) -> bool {
-        self.in_toolbox()
+        matches!(self, ExtensionSourceKind::Npm | ExtensionSourceKind::Custom)
     }
 }
+
+/// AgentSpace 自带的扩展。
+///
+/// 这些是**产品的一部分** —— 不是用户装的，也不是 npm 上的：
+/// - `agentspace` —— CLI 落到项目 `.pi/extensions/agentspace.ts` 的运行时扩展
+/// - `agentspace-mcp-bridge` —— MCP 桥接扩展（装在工具箱 `custom/` 下）
+///
+/// 认名字就够了：这两个名字都是我们自己写死的，用户改不了。
+/// 位置（source）另说 —— 内置扩展照样分项目级、工具箱两处，
+/// 「能不能绑」看的还是它落在哪儿。
+pub const BUILTIN_EXTENSIONS: &[&str] = &["agentspace", "agentspace-mcp-bridge"];
+
+/// 内置扩展的「母本」目录。
+///
+/// AgentSpace 自带扩展的**可编辑副本**放这儿 —— 改的是母本，
+/// 下次落地到项目时用改后的那份。
+///
+/// ```text
+/// ~/.agent-compose/extensions/builtin/
+///   agentspace/
+///     index.ts        ← 运行时扩展的母本（改这儿）
+/// ```
+pub fn builtin_dir(paths: &Paths) -> PathBuf {
+    library_dir(paths).join("builtin")
+}
+
+/// 运行时扩展的出厂内容。
+///
+/// 母本不存在时用它兜底 —— 装上就有得用。
+pub const BUILTIN_AGENTSPACE_SOURCE: &str = include_str!("../assets/agentspace-extension.ts");
+
+/// 确保内置扩展的母本在库里（缺了就用出厂内容写一份）。
+///
+/// **只补缺的，不改已存在的** —— 用户改过的母本不能被覆盖。
+pub fn ensure_builtin_sources(paths: &Paths) -> Result<(), String> {
+    let dir = builtin_dir(paths).join("agentspace");
+    let master = dir.join("index.ts");
+    if master.is_file() {
+        return Ok(());
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    fs::write(&master, BUILTIN_AGENTSPACE_SOURCE).map_err(|e| format!("写入失败：{e}"))
+}
+
+/// 读内置扩展的母本（用户改过的那份）。
+///
+/// 没有母本就返回 `None` —— 调用方自己决定用不用出厂内容。
+pub fn builtin_master(paths: &Paths, name: &str) -> Option<String> {
+    let master = builtin_master_path(paths, name);
+    fs::read_to_string(master).ok()
+}
+
+/// 内置扩展母本的路径（用于写回、删除、显示）。
+pub fn builtin_master_path(paths: &Paths, name: &str) -> PathBuf {
+    builtin_dir(paths).join(name).join("index.ts")
+}
+
+/// 写一个扩展的源码 —— 按它现在所在的位置写回去。
+///
+/// 目录 → 写 `index.ts`；文件 → 就写那个文件。
+pub fn write_source(path: &Path, code: &str) -> Result<(), String> {
+    let target = if path.is_dir() {
+        path.join("index.ts")
+    } else {
+        path.to_path_buf()
+    };
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    fs::write(&target, code).map_err(|e| format!("写入 {} 失败：{e}", target.display()))
+}
+
+/// 写一个扩展的源码 —— 但只允许写扩展该在的地方。
+///
+/// 界面上「编辑」会把路径传回来，不能由着它写任意文件。
+/// 只放行这三个地方：
+/// - 工具箱 `~/.agent-compose/extensions/`
+/// - Pi 全局目录 `~/.pi/agent/extensions/`
+/// - 项目的 `.pi/extensions/`
+pub fn write_source_in_place(paths: &Paths, path: &Path, code: &str) -> Result<(), String> {
+    let target = if path.is_dir() {
+        path.join("index.ts")
+    } else {
+        path.to_path_buf()
+    };
+    let text = target.to_string_lossy().replace('\\', "/");
+    let library = library_dir(paths).to_string_lossy().replace('\\', "/");
+    let agent = agent_dir(paths).to_string_lossy().replace('\\', "/");
+    let allowed = text.starts_with(&library)
+        || text.starts_with(&agent)
+        || text.contains("/.pi/extensions/");
+    if !allowed {
+        return Err("只能改扩展所在目录里的文件".to_string());
+    }
+    // 只改脚本 —— 别把配置文件也改了
+    let is_script = target
+        .extension()
+        .map(|ext| ext.eq_ignore_ascii_case("ts") || ext.eq_ignore_ascii_case("js"))
+        .unwrap_or(false);
+    if !is_script {
+        return Err("只能改扩展脚本（.ts / .js）".to_string());
+    }
+    write_source(&target, code)
+}
+
+/// 是不是 AgentSpace 自带的扩展。
+pub fn is_builtin_extension(name: &str) -> bool {
+    BUILTIN_EXTENSIONS.contains(&name)
+}
+
 
 /// 一个已安装的扩展。
 #[derive(Clone, Debug, Serialize)]
@@ -85,6 +209,8 @@ pub struct ExtensionInfo {
     pub path: PathBuf,
     /// 来源种类。
     pub source: ExtensionSourceKind,
+    /// 是不是 AgentSpace 自带的（内置）。
+    pub builtin: bool,
     /// 来自哪个包（来源是 package 时有值）。
     pub package: Option<String>,
     /// 是否启用（Pi 没有「禁用」机制 —— 停用靠移走文件）。
@@ -138,12 +264,13 @@ fn scan_extensions(dir: &Path, kind: ExtensionSourceKind, package: Option<String
             path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or(name.clone())
         };
         out.push(ExtensionInfo {
-            name: stem,
+            name: stem.clone(),
             size: dir_size(&path),
             updated_at_ms: file_modified_ms(&path),
             enabled: true,
             path,
             source: kind,
+            builtin: is_builtin_extension(&stem),
             package: package.clone(),
         });
     }
@@ -208,12 +335,20 @@ pub fn list_installed(paths: &Paths, project: Option<&Path>) -> Vec<ExtensionInf
         None,
     ));
     // 2) 项目级的 —— `<项目>/.pi/extensions/`
+    //
+    // 内置扩展的**落地副本**跳过 —— 它是内置母本部署过去的，
+    // 重复列出来只会让人以为装了两份。
     if let Some(project) = project {
-        out.extend(scan_extensions(
+        let found = scan_extensions(
             &project_pi_dir(project).join("extensions"),
             ExtensionSourceKind::Project,
             None,
-        ));
+        );
+        out.extend(
+            found
+                .into_iter()
+                .filter(|item| !is_builtin_extension(&item.name)),
+        );
     }
 
     // 2) 工具箱里的 npm 包
@@ -249,6 +384,21 @@ pub fn list_installed(paths: &Paths, project: Option<&Path>) -> Vec<ExtensionInf
         }
     }
 
+    // 4) 内置扩展的母本 —— `extensions/builtin/<name>/`
+    //
+    // 这些是 AgentSpace 自带的：用户改了母本，下次落地就用改后的。
+    let builtin_root = builtin_dir(paths);
+    if let Ok(entries) = std::fs::read_dir(&builtin_root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            out.extend(scan_package(&path, ExtensionSourceKind::Builtin, Some(name)));
+        }
+    }
+
     out.sort_by(|a, b| {
         a.source
             .label()
@@ -277,8 +427,10 @@ fn scan_package(
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
+        let item_name = name.clone().unwrap_or(stem);
         out.push(ExtensionInfo {
-            name: name.clone().unwrap_or(stem),
+            builtin: is_builtin_extension(&item_name),
+            name: item_name,
             size: dir_size(&path),
             updated_at_ms: file_modified_ms(&path),
             enabled: true,
@@ -302,8 +454,10 @@ fn scan_package(
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
+        let item_name = name.clone().unwrap_or(stem);
         out.push(ExtensionInfo {
-            name: name.clone().unwrap_or(stem),
+            builtin: is_builtin_extension(&item_name),
+            name: item_name,
             size: dir_size(&path),
             updated_at_ms: file_modified_ms(&path),
             enabled: true,
@@ -514,6 +668,11 @@ pub fn remove_from_library(
                 return Ok(());
             }
             std::fs::remove_dir_all(&dir).map_err(|e| format!("删除失败：{e}"))
+        }
+        // 内置扩展的母本不能删 —— 删了下次启动又会补回来。
+        // 要改就改（编辑是开放的）。
+        ExtensionSourceKind::Builtin => {
+            Err("内置扩展不能删除，可以直接改它的代码".to_string())
         }
         // pi 自动发现的不能删 —— 那是 pi 的东西
         ExtensionSourceKind::User | ExtensionSourceKind::Project => {
@@ -863,6 +1022,87 @@ mod tests {
         let found = scan_extensions(&dir, ExtensionSourceKind::User, None);
         assert!(found.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agentspace_extensions_are_marked_builtin() {
+        // 项目目录里的运行时扩展
+        let dir = std::env::temp_dir().join(format!("agentspace-core-ext3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("agentspace.ts"), "export default function () {}").unwrap();
+        std::fs::write(dir.join("other.ts"), "export default function () {}").unwrap();
+        let found = scan_extensions(&dir, ExtensionSourceKind::Project, None);
+        let by_name: std::collections::HashMap<String, bool> =
+            found.iter().map(|item| (item.name.clone(), item.builtin)).collect();
+        assert_eq!(by_name.get("agentspace"), Some(&true));
+        assert_eq!(by_name.get("other"), Some(&false));
+
+        // 工具箱里的桥接扩展
+        let pkg = dir.join("agentspace-mcp-bridge");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("index.ts"), "export default function () {}").unwrap();
+        let found = scan_package(&pkg, ExtensionSourceKind::Custom, Some("agentspace-mcp-bridge".into()));
+        assert!(found.iter().any(|item| item.builtin));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn builtin_master_is_created_once_and_never_overwritten() {
+        let home = std::env::temp_dir().join(format!("agentspace-core-builtin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let paths = Paths::new(&home);
+
+        // 第一次：用出厂内容补一份母本
+        ensure_builtin_sources(&paths).unwrap();
+        let master = builtin_master_path(&paths, "agentspace");
+        assert!(master.is_file());
+        assert_eq!(
+            std::fs::read_to_string(&master).unwrap(),
+            BUILTIN_AGENTSPACE_SOURCE
+        );
+
+        // 用户改了 —— 再跑不能覆盖
+        std::fs::write(&master, "// 我改的").unwrap();
+        ensure_builtin_sources(&paths).unwrap();
+        assert_eq!(std::fs::read_to_string(&master).unwrap(), "// 我改的");
+
+        // 读出来的就是改过的那份
+        assert_eq!(
+            builtin_master(&paths, "agentspace").unwrap(),
+            "// 我改的"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn write_source_in_place_only_touches_extension_scripts() {
+        let home = std::env::temp_dir().join(format!("agentspace-core-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let paths = Paths::new(&home);
+
+        // 工具箱里的扩展 —— 可以改
+        let dir = library_dir(&paths).join("custom").join("demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.ts"), "old").unwrap();
+        write_source_in_place(&paths, &dir.join("index.ts"), "new").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("index.ts")).unwrap(), "new");
+
+        // 扩展目录下的非脚本文件 —— 不能动
+        let pkg = library_dir(&paths).join("npm").join("demo");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), "{}").unwrap();
+        assert!(write_source_in_place(&paths, &pkg.join("package.json"), "{}").is_err());
+
+        // 工具箱之外的文件 —— 不能动
+        let outside = home.join("elsewhere.ts");
+        std::fs::write(&outside, "x").unwrap();
+        assert!(write_source_in_place(&paths, &outside, "y").is_err());
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "x");
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
 

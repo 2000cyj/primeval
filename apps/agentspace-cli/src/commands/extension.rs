@@ -56,7 +56,7 @@ pub enum ExtensionCmd {
 
 #[derive(Args, Debug)]
 pub struct ListArgs {
-    /// 只看某一组（user / project / npm / custom）
+    /// 只看某一组（user / project / npm / custom / builtin）
     #[arg(long)]
     source: Option<String>,
     /// 输出格式
@@ -204,6 +204,8 @@ fn pi_extension_dir(paths: &Paths) -> Option<std::path::PathBuf> {
 
 /// 已安装的扩展（当前目录的项目扩展也算）。
 fn installed(paths: &Paths) -> Vec<ExtensionInfo> {
+    // 内置扩展的母本缺了就补一份出厂的 —— 这样「内置」那组总是看得到。
+    let _ = extensions::ensure_builtin_sources(paths);
     let project = std::env::current_dir().ok();
     extensions::list_installed(paths, project.as_deref())
 }
@@ -240,11 +242,16 @@ fn find<'a>(installed: &'a [ExtensionInfo], name: &str) -> Option<&'a ExtensionI
 fn list(paths: &Paths, args: &ListArgs) -> u8 {
     let mut items = installed(paths);
     if let Some(source) = args.source.as_deref() {
-        let Some(kind) = parse_source(source) else {
-            eprintln!("来源只能是 user / project / npm / custom");
-            return EXIT_INVALID;
-        };
-        items.retain(|item| item.source == kind);
+        // 内置是「归属」不是「来源」 —— 单独一档，按标记过滤
+        if source == "builtin" || source == "内置" {
+            items.retain(|item| item.builtin);
+        } else {
+            let Some(kind) = parse_source(source) else {
+                eprintln!("来源只能是 user / project / npm / custom / builtin");
+                return EXIT_INVALID;
+            };
+            items.retain(|item| item.source == kind);
+        }
     }
     if output::wants_json(args.format, args.json) {
         output::json(&items);
@@ -260,13 +267,17 @@ fn list(paths: &Paths, args: &ListArgs) -> u8 {
             vec![
                 item.name.clone(),
                 item.source.label().to_string(),
+                if item.builtin { "内置".to_string() } else { String::new() },
                 if item.enabled { "启用" } else { "停用" }.to_string(),
                 format_size(item.size),
                 item.path.display().to_string(),
             ]
         })
         .collect();
-    output::table(&["名称", "来源", "状态", "大小", "路径"], &rows);
+    output::table(
+        &["名称", "来源", "归属", "状态", "大小", "路径"],
+        &rows,
+    );
     println!();
     println!("共 {} 个扩展。", items.len());
     EXIT_OK
@@ -288,6 +299,10 @@ fn get(paths: &Paths, args: &GetArgs) -> u8 {
     }
     println!("名称：{}", item.name);
     println!("来源：{}", item.source.label());
+    println!(
+        "归属：{}",
+        if item.builtin { "AgentSpace 内置" } else { "用户/第三方" }
+    );
     println!("状态：{}", if item.enabled { "启用" } else { "停用" });
     println!("大小：{}", format_size(item.size));
     println!("路径：{}", item.path.display());
@@ -376,12 +391,16 @@ fn remove(paths: &Paths, args: &RemoveArgs) -> u8 {
         Some(source) => match parse_source(source) {
             Some(kind) => kind,
             None => {
-                eprintln!("来源只能是 user / project / npm / custom");
+                eprintln!("来源只能是 user / project / npm / custom / builtin");
                 return EXIT_INVALID;
             }
         },
         None => match find(&items, name) {
             Some(item) if item.source.bindable() => item.source,
+            Some(item) if item.builtin => {
+                eprintln!("{}是内置扩展，不能删——要改就直接改它的代码。", item.name);
+                return EXIT_FAIL;
+            }
             Some(item) => {
                 eprintln!(
                     "{} 是 Pi 自动发现的扩展，不能在这里删。",
@@ -395,6 +414,10 @@ fn remove(paths: &Paths, args: &RemoveArgs) -> u8 {
             }
         },
     };
+    if kind == ExtensionSourceKind::Builtin {
+        eprintln!("内置扩展不能删——要改就直接改它的代码。");
+        return EXIT_FAIL;
+    }
     if !kind.bindable() {
         eprintln!("Pi 自动发现的扩展不能在这里删。");
         return EXIT_FAIL;
@@ -591,6 +614,7 @@ fn parse_source(source: &str) -> Option<ExtensionSourceKind> {
         "project" | "项目级" => Some(ExtensionSourceKind::Project),
         "npm" => Some(ExtensionSourceKind::Npm),
         "custom" | "自定义" => Some(ExtensionSourceKind::Custom),
+        "builtin" | "内置" => Some(ExtensionSourceKind::Builtin),
         _ => None,
     }
 }

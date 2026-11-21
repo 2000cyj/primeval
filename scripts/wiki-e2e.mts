@@ -3,7 +3,7 @@
 // 同一批页面，三个地方各写了一遍：
 // - Rust 侧（apps/agentspace-core/src/wiki.rs）—— 桌面端读写
 // - TS 侧（packages/agent-compose-mcp/src/wiki.ts）—— sidecar 给外部 agent 读
-// - Pi 扩展（apps/agentspace-cli/assets/agentspace-extension.ts）—— 给 Pi agent 读
+// - Pi 扩展（apps/agentspace-core/assets/agentspace-extension.ts）—— 给 Pi agent 读
 //
 // 扩展是单文件、不能 import 别的包，所以只能各写一份。
 // 这个脚本就是盯着它们别漂移的护栏 —— 改一边记得跑它。
@@ -65,7 +65,7 @@ await writeFile(join(root, rollback, 'page.md'), '# 回滚流程\n\n出问题时
 const { createWikiTools, readWikiPage, searchWiki } = await import(
   '../packages/agent-compose-mcp/src/wiki.ts'
 )
-const extension = await import('../apps/agentspace-cli/assets/agentspace-extension.ts')
+const extension = await import('../apps/agentspace-core/assets/agentspace-extension.ts')
 
 let failures = 0
 /** 断言并记账 —— 失败不立刻退出，好一次看全。 */
