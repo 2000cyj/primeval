@@ -1,16 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import {
-  NButton,
-  NCheckbox,
-  NIcon,
-  NInput,
-  NModal,
-  NSpin,
-  NTabPane,
-  NTabs,
-  useMessage,
-} from 'naive-ui'
+import { NButton, NIcon, NInput, NModal, NSpin, NTabPane, NTabs, useMessage } from 'naive-ui'
 import {
   ArrowUpRight,
   Blocks,
@@ -36,7 +26,6 @@ import {
   saveExtension,
   saveExtensionSource,
   searchMarketplace,
-  setExtensionEnabled,
   type ExtensionInfo,
   type MarketplacePackage,
 } from '@/api/extensions'
@@ -172,21 +161,6 @@ const groupSubs = (group: ExtensionGroup): { label: string; items: ExtensionInfo
  * 工具箱里的都行 —— 内置的母本也在工具箱里，改了就是改了。
  */
 const isToolbox = (item: ExtensionInfo): boolean => isToolboxSource(item.source)
-
-/** 停用 / 启用 */
-const toggle = async (item: ExtensionInfo, enabled: boolean): Promise<void> => {
-  try {
-    const result = await setExtensionEnabled(item.path, enabled)
-    if (!result.ok) {
-      message.error(result.message)
-      return
-    }
-    message.success(enabled ? '已启用' : '已停用')
-    await loadInstalled()
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : String(error))
-  }
-}
 
 /** 删一个 */
 const remove = async (item: ExtensionInfo): Promise<void> => {
@@ -460,12 +434,6 @@ onUnmounted(() => {
                         </NIcon>
                       </template>
                     </NButton>
-                    <NCheckbox
-                      :checked="item.enabled"
-                      @update:checked="(checked: boolean) => toggle(item, checked)"
-                    >
-                      <span class="sr-only">{{ item.name }} 启用</span>
-                    </NCheckbox>
                   </li>
                 </ul>
               </div>

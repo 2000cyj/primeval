@@ -1205,7 +1205,6 @@ pub fn run() {
             github::skills_repo_import,
             extensions::extensions_list,
             extensions::extensions_read,
-            extensions::extensions_set_enabled,
             extensions::extensions_remove,
             extensions::extensions_save,
             extensions::extensions_save_source,

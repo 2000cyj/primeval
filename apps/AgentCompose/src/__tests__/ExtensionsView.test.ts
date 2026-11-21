@@ -210,7 +210,7 @@ describe('Pi 扩展页', () => {
     expect(buttons).toHaveLength(4)
   })
 
-  it('内置扩展没有删除按钮', async () => {
+  it('内置扩展没有删除按钮，也不能停用', async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === 'extensions_list') return Promise.resolve(listed)
       return Promise.resolve(market)
@@ -231,6 +231,8 @@ describe('Pi 扩展页', () => {
       expect(row.findAll('button').length).toBe(1)
       expect(row.find('button')!.text()).toContain('编辑')
     }
+    // 整页都没有启用/停用勾选框了
+    expect(wrapper.findAll('.n-checkbox').length).toBe(0)
   })
 
   it('npm 和自定义的扩展还有删除按钮', async () => {

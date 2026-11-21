@@ -104,7 +104,6 @@ export interface CommandOutput {
 export const EXTENSION_COMMANDS = {
   list: 'extensions_list',
   read: 'extensions_read',
-  setEnabled: 'extensions_set_enabled',
   remove: 'extensions_remove',
   save: 'extensions_save',
   saveSource: 'extensions_save_source',
@@ -151,15 +150,6 @@ export async function readExtension(path: string): Promise<string> {
     return await invoke<string>(EXTENSION_COMMANDS.read, { path })
   } catch (error) {
     throw fail('读取扩展源码', error)
-  }
-}
-
-/** 启用 / 停用一个扩展 */
-export async function setExtensionEnabled(path: string, enabled: boolean): Promise<CommandOutput> {
-  try {
-    return await invoke<CommandOutput>(EXTENSION_COMMANDS.setEnabled, { path, enabled })
-  } catch (error) {
-    throw fail('更新扩展状态', error)
   }
 }
 

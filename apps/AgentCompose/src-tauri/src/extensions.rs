@@ -56,18 +56,6 @@ pub fn extensions_read(path: String) -> Result<String, String> {
     extensions::read_source(&PathBuf::from(path))
 }
 
-/// 启用 / 停用一个扩展。
-///
-/// pi 没有「禁用某个扩展」的机制 —— 它按目录里的文件加载。
-/// 所以停用 = 把文件改名加 `.disabled` 后缀。
-#[tauri::command]
-pub fn extensions_set_enabled(path: String, enabled: bool) -> Result<CommandOutput, String> {
-    match extensions::set_enabled(&PathBuf::from(path), enabled) {
-        Ok(()) => Ok(ok(if enabled { "已启用" } else { "已停用" })),
-        Err(error) => Ok(fail(error)),
-    }
-}
-
 /// 删掉一个扩展。
 #[tauri::command]
 pub fn extensions_remove(path: String) -> Result<CommandOutput, String> {
